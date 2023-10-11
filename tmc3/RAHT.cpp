@@ -65,8 +65,8 @@ reduceUnique(
   int numAttrs,
   std::vector<UrahtNode>* weightsIn,
   std::vector<UrahtNode>* weightsOut,
-  std::vector<int>* attrsIn,
-  std::vector<int>* attrsOut)
+  std::vector<int64_t>* attrsIn,
+  std::vector<int64_t>* attrsOut)
 {
   // process a single level of the tree
   int64_t posPrev = -1;
@@ -109,8 +109,8 @@ reduceLevel(
   int numAttrs,
   std::vector<UrahtNode>* weightsIn,
   std::vector<UrahtNode>* weightsOut,
-  std::vector<int>* attrsIn,
-  std::vector<int>* attrsOut)
+  std::vector<int64_t>* attrsIn,
+  std::vector<int64_t>* attrsOut)
 {
   // process a single level of the tree
   int64_t posPrev = -1;
@@ -154,8 +154,8 @@ expandLevel(
   int numAttrs,
   std::vector<UrahtNode>* weightsIn,   // expand by numNodes before expand
   std::vector<UrahtNode>* weightsOut,  // shrink after expand
-  std::vector<int>* attrsIn,
-  std::vector<int>* attrsOut)
+  std::vector<int64_t>* attrsIn,
+  std::vector<int64_t>* attrsOut)
 {
   if (numNodes == 0)
     return;
@@ -601,7 +601,7 @@ uraht_process(
   }
 
   std::vector<UrahtNode> weightsLf, weightsHf;
-  std::vector<int> attrsLf, attrsHf;
+  std::vector<int64_t> attrsLf, attrsHf;
 
   weightsLf.reserve(numPoints);
   attrsLf.reserve(numPoints * numAttrs);
