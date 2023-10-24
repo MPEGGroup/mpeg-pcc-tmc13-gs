@@ -1616,7 +1616,8 @@ sanitizeEncoderOpts(
       }
 
       if (
-        (attr_aps.lod_decimation_type != LodDecimationMethod::kNone)
+        (lod > 0)
+        && (attr_aps.lod_decimation_type != LodDecimationMethod::kNone)
         && attr_aps.lodSamplingPeriod.empty()) {
         err.error() << it.first
                     << ".lodSamplingPeriod must contain at least one entry\n";
