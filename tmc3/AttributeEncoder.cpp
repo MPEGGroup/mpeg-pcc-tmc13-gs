@@ -1219,15 +1219,15 @@ AttributeEncoder::encodeColorsLift(
 
       const int64_t iQuantWeight = irsqrt(weights[predictorIndex]);
       const int64_t quantWeight =
-        divExp2RoundHalfUp(weights[predictorIndex] * iQuantWeight, 40);
+        divExp2RoundHalfUp(weights[predictorIndex] * iQuantWeight, 36);
 
       auto& color = colors[predictorIndex];
       int values[3];
-      values[0] = quant[0].quantize(color[0] * quantWeight >> 4);
+      values[0] = quant[0].quantize(color[0] * quantWeight >> 8);
       int64_t scaled = quant[0].scale(values[0]);
       color[0] = divExp2RoundHalfInf(scaled * iQuantWeight, 36);
 
-      values[1] = quant[1].quantize(color[1] * quantWeight >> 4);
+      values[1] = quant[1].quantize(color[1] * quantWeight >> 8);
       scaled = quant[1].scale(values[1]);
       color[1] = divExp2RoundHalfInf(scaled * iQuantWeight, 36);
 
@@ -1235,7 +1235,7 @@ AttributeEncoder::encodeColorsLift(
       scaled *= lastCompPredCoeff;
       scaled >>= 2;
 
-      values[2] = quant[1].quantize(color[2] * quantWeight >> 4);
+      values[2] = quant[1].quantize(color[2] * quantWeight >> 8);
       scaled += quant[1].scale(values[2]);
       color[2] = divExp2RoundHalfInf(scaled * iQuantWeight, 36);
 
@@ -1367,10 +1367,10 @@ AttributeEncoder::encodeReflectancesLift(
 
       const int64_t iQuantWeight = irsqrt(weights[predictorIndex]);
       const int64_t quantWeight =
-        (weights[predictorIndex] * iQuantWeight + (1ull << 39)) >> 40;
+        (weights[predictorIndex] * iQuantWeight + (1ull << 35)) >> 36;
 
       auto& reflectance = reflectances[predictorIndex];
-      const int64_t delta = quant[0].quantize(reflectance * quantWeight >> 4);
+      const int64_t delta = quant[0].quantize(reflectance * quantWeight >> 8);
       const auto detail = delta;
       const int64_t reconstructedDelta = quant[0].scale(delta);
       reflectance = divExp2RoundHalfInf(reconstructedDelta * iQuantWeight, 36);
