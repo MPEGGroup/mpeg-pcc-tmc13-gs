@@ -62,6 +62,8 @@ struct DecoderParams {
 
   // Number of fractional bits used in output position representation.
   int outputFpBits;
+
+  bool gs_ext = false;
 };
 
 //============================================================================
