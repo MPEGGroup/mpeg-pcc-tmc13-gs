@@ -134,6 +134,12 @@ ply::write(
   if (cloud.hasFrameIndex()) {
     fout << "property uint8 frameindex" << std::endl;
   }
+  if (cloud.hasGSInfo()){
+    auto gskeys = GSHelper::getGSKeys();
+    for (auto key : gskeys){
+      fout << "property float " << key << std::endl;
+    }
+  }
   fout << "element face 0" << std::endl;
   fout << "property list uint8 int32 vertex_index" << std::endl;
   fout << "end_header" << std::endl;
@@ -154,6 +160,14 @@ ply::write(
       }
       if (cloud.hasFrameIndex()) {
         fout << " " << static_cast<int>(cloud.getFrameIndex(i));
+      }
+      if (cloud.hasGSInfo()){
+        for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
+          auto key = GSHelper::getGSKey(n);
+          gs_t attr = gs_t(cloud.getGSInfo(i,key));
+          float buf = float(attr) / GS_PROPERTY_SCALE;
+          fout << " " << buf;
+        }
       }
       fout << std::endl;
     }
@@ -178,6 +192,15 @@ ply::write(
       if (cloud.hasFrameIndex()) {
         const uint16_t& findex = cloud.getFrameIndex(i);
         fout.write(reinterpret_cast<const char*>(&findex), sizeof(uint16_t));
+      }
+      if (cloud.hasGSInfo()){
+        for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
+          auto key = GSHelper::getGSKey(n);
+          gs_t attr = gs_t(cloud.getGSInfo(i,key));
+          float buf = float(attr) / GS_PROPERTY_SCALE;
+          // val = val / GS_PROPERTY_SCALE;
+          fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
+        }
       }
     }
   }
@@ -215,6 +238,7 @@ ply::read(
     std::string name;
     AttributeType type;
     size_t byteCount;
+    size_t index;
   };
 
   std::vector<AttributeInfo> attributesInfo;
@@ -323,9 +347,10 @@ ply::read(
   size_t indexNX = PCC_UNDEFINED_INDEX;
   size_t indexNY = PCC_UNDEFINED_INDEX;
   size_t indexNZ = PCC_UNDEFINED_INDEX;
+  std::unordered_map<size_t,std::string> bytepos2gskey;
   const size_t attributeCount = attributesInfo.size();
   for (size_t a = 0; a < attributeCount; ++a) {
-    const auto& attributeInfo = attributesInfo[a];
+    auto& attributeInfo = attributesInfo[a];
     if (
       attributeInfo.name == attributeNames.position[0]
       && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
@@ -363,6 +388,8 @@ ply::read(
       attributeInfo.name == "nz"
       && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
       indexNZ = a;
+    } else if (GSHelper::isExist(attributeInfo.name)){
+      bytepos2gskey[a] = attributeInfo.name;
     }
   }
   if (
@@ -375,8 +402,9 @@ ply::read(
     && indexG != PCC_UNDEFINED_INDEX && indexB != PCC_UNDEFINED_INDEX;
   bool withReflectances = indexReflectance != PCC_UNDEFINED_INDEX;
   bool withFrameIndex = indexFrame != PCC_UNDEFINED_INDEX;
+  bool withGSInfo = bytepos2gskey.size() > 0;
 
-  cloud.addRemoveAttributes(withColors, withReflectances);
+  cloud.addRemoveAttributes(withColors, withReflectances, withGSInfo);
   if (withFrameIndex)
     cloud.addFrameIndex();
   else
@@ -480,6 +508,14 @@ ply::read(
             ifs.read(reinterpret_cast<char*>(&findex), sizeof(uint16_t));
             cloud.getFrameIndex(pointCounter) = uint8_t(findex);
           }
+        } else if ( bytepos2gskey.find(a) != bytepos2gskey.end()){
+          auto key = bytepos2gskey[a];
+          assert(attributeInfo.name == key);
+          assert(attributeInfo.byteCount == 4);
+          float buf;
+          ifs.read(reinterpret_cast<char*>(&buf), sizeof(float));
+          gs_t attr = buf * GS_PROPERTY_SCALE;
+          cloud.getGSInfo(pointCounter,key) = gs_t(attr);
         } else {
           char buffer[128];
           ifs.read(buffer, attributeInfo.byteCount);

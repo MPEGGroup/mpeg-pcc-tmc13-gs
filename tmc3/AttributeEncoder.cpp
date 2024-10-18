@@ -1044,8 +1044,14 @@ AttributeEncoder::encodeReflectancesTransformRaht(
   // Populate input arrays.
   for (int n = 0; n < voxelCount; n++) {
     mortonCode[n] = packedVoxel[n].mortonCode;
-    const auto reflectance = pointCloud.getReflectance(packedVoxel[n].index);
-    attributes[attribCount * n] = reflectance;
+    if(!desc.is3DGS){
+      const auto reflectance = pointCloud.getReflectance(packedVoxel[n].index);
+      attributes[attribCount * n] = reflectance;
+    }else{
+      auto key = GSHelper::getGSKey(desc.attr_instance_id);
+      const auto values = pointCloud.getGSInfo(packedVoxel[n].index,key);
+      attributes[attribCount * n] = values;
+    }
     pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[packedVoxel[n].index]);
   }
 
@@ -1073,14 +1079,28 @@ AttributeEncoder::encodeReflectancesTransformRaht(
   if (zeroRun)
     encoder.encodeRunLength(zeroRun);
 
-  const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
-  const int64_t minReflectance = 0;
-  for (int n = 0; n < voxelCount; n++) {
-    int64_t val = attributes[attribCount * n];
-    const attr_t reflectance =
-      attr_t(PCCClip(val, minReflectance, maxReflectance));
-    pointCloud.setReflectance(packedVoxel[n].index, reflectance);
+  if(!desc.is3DGS){
+    const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
+    const int64_t minReflectance = 0;
+    for (int n = 0; n < voxelCount; n++) {
+      int64_t val = attributes[attribCount * n];
+      const attr_t reflectance =
+        attr_t(PCCClip(val, minReflectance, maxReflectance));
+      pointCloud.setReflectance(packedVoxel[n].index, reflectance);
+    } 
+  }else{
+    auto key = GSHelper::getGSKey(desc.attr_instance_id);
+    const int64_t maxVal = (1 << desc.bitdepth) - 1;
+    const int64_t minVal = -1 * (1 << desc.bitdepth);
+    // const int64_t minVal = 0;
+    for (int n = 0; n < voxelCount; n++) {
+      int64_t val = attributes[attribCount * n];
+      const gs_t attr =
+        gs_t(PCCClip(val, minVal, maxVal));
+      pointCloud.setGSInfo(packedVoxel[n].index, key, attr);
+    } 
   }
+  
 }
 
 //----------------------------------------------------------------------------

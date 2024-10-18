@@ -934,7 +934,7 @@ PCCPointSet3
 getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 {
   PCCPointSet3 dst;
-  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances());
+  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -948,6 +948,11 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 
     if (src.hasReflectances())
       dst.setReflectance(i, src.getReflectance(inputIdx));
+
+    if (src.hasGSInfo()){
+      for(auto& key : GSHelper::gskeys)
+        dst.setGSInfo(i, key, src.getGSInfo(inputIdx, key));
+    }
   }
 
   return dst;
@@ -979,7 +984,7 @@ getPartition(
   }
 
   PCCPointSet3 dst;
-  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances());
+  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
   dst.resize(size);
 
   int dstIdx = 0;
@@ -993,6 +998,11 @@ getPartition(
 
       if (src.hasReflectances())
         dst.setReflectance(dstIdx, src.getReflectance(srcIdx));
+
+      if (src.hasGSInfo()){
+        for(auto& key : GSHelper::gskeys)
+          dst.setGSInfo(dstIdx, key, src.getGSInfo(srcIdx, key));
+      }
 
       dstIdx++;
       prevIdx = srcIdx;

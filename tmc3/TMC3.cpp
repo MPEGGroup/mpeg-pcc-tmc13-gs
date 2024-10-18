@@ -46,6 +46,8 @@
 #include "io_tlv.h"
 #include "version.h"
 
+#include <algorithm>
+
 using namespace std;
 using namespace pcc;
 
@@ -534,6 +536,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   } params_attr;
 
   bool print_help = false;
+  bool gs_ext = false;
 
   // a helper to set the attribute
   std::function<po::OptionFunc::Func> attribute_setter =
@@ -550,6 +553,16 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       // NB: insert returns any existing element
       const auto& it = params.encoder.attributeIdxMap.insert(
         {name, int(params.encoder.attributeIdxMap.size())});
+
+      if(params.isDecoder) {
+        GSHelper::addGSKey(it.first->first);
+        params.decoder.gs_ext = true;
+        return;
+      }
+      if(gs_ext && !params.isDecoder){
+        GSHelper::addGSKey(it.first->first);
+        params_attr.desc.is3DGS = true;
+      }
 
       if (it.second) {
         params.encoder.sps.attributeSets.push_back(params_attr.desc);
@@ -783,6 +796,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.sps.level, 0,
     "Abort if level limits exceeded")
 
+  ("3DGS",
+    gs_ext, false,
+    "3DGS Extension")
+
   (po::Section("Geometry"))
 
   ("geomTreeType",
@@ -988,7 +1005,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     attribute_setter,
     "Encode the given attribute (NB, must appear after the"
     "following attribute parameters)")
-
+  
   // NB: the cli option sets +1, the minus1 will be applied later
   ("attrScale",
     params_attr.desc.params.attr_scale_minus1, 1,
@@ -1419,6 +1436,19 @@ sanitizeEncoderOpts(
       attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
     }
 
+    if (attr_sps.is3DGS) {
+      // Avoid wasting bits signalling chroma quant step size for reflectance
+      attr_aps.aps_chroma_qp_offset = 0;
+      attr_enc.abh.attr_layer_qp_delta_chroma.clear();
+
+      // There is no matrix for reflectace
+      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+      attr_sps.attr_num_dimensions_minus1 = 0;
+      attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
+
+      attr_sps.attr_instance_id = it.second;
+    }
+
     if (it.first == "color") {
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kColour;
@@ -1691,6 +1721,7 @@ sanitizeEncoderOpts(
       err.error() << "Incorrect level value set.\n";
     }
   }
+  
 }
 
 //============================================================================
@@ -1760,10 +1791,27 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     pointCloud.removeReflectances();
   assert(codeReflectance == pointCloud.hasReflectances());
 
+  bool codeGSInfo = GSHelper::getGSKeysSize() > 0;
+  if (!codeGSInfo)
+    pointCloud.removeGSInfo();
+  assert(codeGSInfo == pointCloud.hasGSInfo());
+
   clock->start();
 
   if (params->convertColourspace)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
+
+  //Fix: replace by parameter likes dynamicAttrRange
+  if (codeGSInfo)
+  {
+    for(auto& desc : params->encoder.sps.attributeSets){
+      auto key = GSHelper::getGSKey(desc.attr_instance_id);
+      auto& gsinfo = pointCloud.getGSInfo(key);
+      gs_t min = *std::min_element(gsinfo.begin(),gsinfo.end());
+      desc.params.scalingParametersPresent = true;
+      desc.params.attr_offset = min;
+    }
+  }
 
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
 
@@ -2042,6 +2090,26 @@ struct AttrInvScaler {
 
 //----------------------------------------------------------------------------
 
+struct GSAttrTransformFwd {
+  template<typename T>
+  T operator()(const AttributeParameters& params, T val) const
+  {
+    return PCCClip(val - params.attr_offset, 0, UINT16_MAX);
+  }
+};
+
+//----------------------------------------------------------------------------
+
+struct GSAttrTransformInv {
+  template<typename T>
+  T operator()(const AttributeParameters& params, T val) const
+  {
+    return val + params.attr_offset;
+  }
+};
+
+//----------------------------------------------------------------------------
+
 template<typename Op>
 void
 scaleAttributes(
@@ -2070,11 +2138,49 @@ scaleAttributes(
 
 //----------------------------------------------------------------------------
 
+template<typename Op>
+void
+scaleEachAttributes(
+  const std::vector<AttributeDescription>& attrDescs,
+  PCCPointSet3& cloud,
+  Op scaler)
+{
+  // todo(df): extend this to other attributes
+  const AttributeDescription* attrDesc = findReflAttrDesc(attrDescs);
+  if (!attrDesc || !attrDesc->params.scalingParametersPresent)
+    return;
+
+  const auto pointCount = cloud.getPointCount();
+  for(auto& desc : attrDescs){
+    if(!desc.is3DGS) continue;
+
+    auto key = GSHelper::getGSKey(desc.attr_instance_id);
+    for (size_t i = 0; i < pointCount; ++i) {
+      auto& val = cloud.getGSInfo(i,key);
+      val = scaler(desc.params, val);
+    }
+  }
+
+}
+
+//----------------------------------------------------------------------------
+
 void
 SequenceCodec::scaleAttributesForInput(
   const std::vector<AttributeDescription>& attrDescs, PCCPointSet3& cloud)
 {
-  scaleAttributes(attrDescs, cloud, AttrFwdScaler());
+  bool gs_scaling=false;
+  for(auto& desc : attrDescs){
+    if(desc.is3DGS){
+      gs_scaling=true;
+      break;
+    }
+  }
+
+  if(!gs_scaling)
+    scaleAttributes(attrDescs, cloud, AttrFwdScaler());
+  else
+    scaleEachAttributes(attrDescs, cloud, GSAttrTransformFwd());
 }
 
 //----------------------------------------------------------------------------
@@ -2083,7 +2189,18 @@ void
 SequenceCodec::scaleAttributesForOutput(
   const std::vector<AttributeDescription>& attrDescs, PCCPointSet3& cloud)
 {
-  scaleAttributes(attrDescs, cloud, AttrInvScaler());
+  bool gs_scaling=false;
+  for(auto& desc : attrDescs){
+    if(desc.is3DGS){
+      gs_scaling=true;
+      break;
+    }
+  }
+
+  if(!gs_scaling)
+    scaleAttributes(attrDescs, cloud, AttrInvScaler());
+  else
+    scaleEachAttributes(attrDescs, cloud, GSAttrTransformInv());
 }
 
 //============================================================================

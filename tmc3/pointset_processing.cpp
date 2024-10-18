@@ -175,7 +175,7 @@ quantizePositions(
   // In case dst and src point clouds are the same, don't destroy src.
   if (&src != dst) {
     dst->clear();
-    dst->addRemoveAttributes(src.hasColors(), src.hasReflectances());
+    dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
     dst->resize(numSrcPoints);
   }
 
@@ -200,6 +200,13 @@ quantizePositions(
   if (src.hasReflectances()) {
     for (int i = 0; i < numSrcPoints; ++i)
       dst->setReflectance(i, src.getReflectance(i));
+  }
+
+  if (src.hasGSInfo()){
+    for (auto& key : GSHelper::gskeys){
+      for(int i = 0; i < numSrcPoints; ++i)
+        dst->setGSInfo(i, key, src.getGSInfo(i,key));
+    }
   }
 }
 
@@ -933,7 +940,7 @@ recolour(
     }
   }
 
-  if (desc.attributeLabel == KnownAttributeLabel::kReflectance) {
+  if (desc.attributeLabel == KnownAttributeLabel::kReflectance && !desc.is3DGS) {
     bool ok = recolourReflectance(
       desc, cfg, source, sourceToTargetScaleFactor, tgtToSrcOffset, *target);
 

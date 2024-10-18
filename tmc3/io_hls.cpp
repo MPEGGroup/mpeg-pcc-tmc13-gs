@@ -1418,6 +1418,7 @@ write(
     if (sps.attributeSets[abh.attr_sps_attr_idx].attr_num_dimensions_minus1)
       bs.writeSe(region.attr_region_qp_offset[1]);
   }
+
   bs.byteAlign();
 }
 
