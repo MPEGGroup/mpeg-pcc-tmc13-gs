@@ -856,7 +856,8 @@ write(const SequenceParameterSet& sps, const AttributeParameterSet& aps)
   PayloadBuffer buf(PayloadType::kAttributeParameterSet);
   auto bs = makeBitWriter(std::back_inserter(buf));
 
-  bs.writeUn(4, aps.aps_attr_parameter_set_id);
+//  bs.writeUn(4, aps.aps_attr_parameter_set_id);
+  bs.writeUn(6, aps.aps_attr_parameter_set_id);
   bs.writeUn(4, aps.aps_seq_parameter_set_id);
   bs.writeUe(aps.attr_encoding);
 
@@ -952,7 +953,8 @@ parseAps(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kAttributeParameterSet);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-  bs.readUn(4, &aps.aps_attr_parameter_set_id);
+//  bs.readUn(4, &aps.aps_attr_parameter_set_id);
+  bs.readUn(6, &aps.aps_attr_parameter_set_id);
   bs.readUn(4, &aps.aps_seq_parameter_set_id);
   bs.readUe(&aps.attr_encoding);
 
@@ -1342,7 +1344,8 @@ write(
   auto bs = makeBitWriter(std::back_inserter(*buf));
 
   int abh_reserved_zero_3bits = 0;
-  bs.writeUn(4, abh.attr_attr_parameter_set_id);
+//  bs.writeUn(4, abh.attr_attr_parameter_set_id);
+  bs.writeUn(6, abh.attr_attr_parameter_set_id);
   bs.writeUn(3, abh_reserved_zero_3bits);
   bs.writeUe(abh.attr_sps_attr_idx);
   bs.writeUe(abh.attr_geom_slice_id);
@@ -1432,7 +1435,8 @@ parseAbhIds(const PayloadBuffer& buf)
   auto bs = makeBitReader(buf.begin(), buf.end());
 
   int abh_reserved_zero_3bits;
-  bs.readUn(4, &abh.attr_attr_parameter_set_id);
+//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
+  bs.readUn(6, &abh.attr_attr_parameter_set_id);
   bs.readUn(3, &abh_reserved_zero_3bits);
   bs.readUe(&abh.attr_sps_attr_idx);
   bs.readUe(&abh.attr_geom_slice_id);
@@ -1457,7 +1461,8 @@ parseAbh(
   auto bs = makeBitReader(buf.begin(), buf.end());
 
   int abh_reserved_zero_3bits;
-  bs.readUn(4, &abh.attr_attr_parameter_set_id);
+//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
+  bs.readUn(6, &abh.attr_attr_parameter_set_id);
   bs.readUn(3, &abh_reserved_zero_3bits);
   bs.readUe(&abh.attr_sps_attr_idx);
   bs.readUe(&abh.attr_geom_slice_id);
@@ -1561,7 +1566,8 @@ parseConstantAttribute(
   assert(buf.type == PayloadType::kConstantAttribute);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-  bs.readUn(4, &cadu.constattr_attr_parameter_set_id);
+//  bs.readUn(4, &cadu.constattr_attr_parameter_set_id);
+  bs.readUn(6, &cadu.constattr_attr_parameter_set_id);
   bs.readUe(&cadu.constattr_sps_attr_idx);
   bs.readUe(&cadu.constattr_geom_slice_id);
 

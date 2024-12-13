@@ -1808,8 +1808,8 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
       auto key = GSHelper::getGSKey(desc.attr_instance_id);
       auto& gsinfo = pointCloud.getGSInfo(key);
       gs_t min = *std::min_element(gsinfo.begin(),gsinfo.end());
-      desc.params.scalingParametersPresent = true;
-      desc.params.attr_offset = min;
+      desc.params.scalingParametersPresent = false;
+      desc.params.attr_offset = 0;
     }
   }
 
@@ -2169,18 +2169,7 @@ void
 SequenceCodec::scaleAttributesForInput(
   const std::vector<AttributeDescription>& attrDescs, PCCPointSet3& cloud)
 {
-  bool gs_scaling=false;
-  for(auto& desc : attrDescs){
-    if(desc.is3DGS){
-      gs_scaling=true;
-      break;
-    }
-  }
-
-  if(!gs_scaling)
-    scaleAttributes(attrDescs, cloud, AttrFwdScaler());
-  else
-    scaleEachAttributes(attrDescs, cloud, GSAttrTransformFwd());
+  scaleAttributes(attrDescs, cloud, AttrFwdScaler());
 }
 
 //----------------------------------------------------------------------------
@@ -2189,18 +2178,7 @@ void
 SequenceCodec::scaleAttributesForOutput(
   const std::vector<AttributeDescription>& attrDescs, PCCPointSet3& cloud)
 {
-  bool gs_scaling=false;
-  for(auto& desc : attrDescs){
-    if(desc.is3DGS){
-      gs_scaling=true;
-      break;
-    }
-  }
-
-  if(!gs_scaling)
     scaleAttributes(attrDescs, cloud, AttrInvScaler());
-  else
-    scaleEachAttributes(attrDescs, cloud, GSAttrTransformInv());
 }
 
 //============================================================================

@@ -10,6 +10,6 @@
 namespace pcc {
 
 std::vector<std::string> GSHelper::gskeys;
-const int GS_PROPERTY_SCALE = 1000;
+const int GS_PROPERTY_SCALE = 1;
 
 }

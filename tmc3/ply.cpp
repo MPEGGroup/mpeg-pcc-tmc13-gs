@@ -511,10 +511,16 @@ ply::read(
         } else if ( bytepos2gskey.find(a) != bytepos2gskey.end()){
           auto key = bytepos2gskey[a];
           assert(attributeInfo.name == key);
-          assert(attributeInfo.byteCount == 4);
-          float buf;
-          ifs.read(reinterpret_cast<char*>(&buf), sizeof(float));
-          gs_t attr = buf * GS_PROPERTY_SCALE;
+          gs_t attr;
+          if(attributeInfo.byteCount == 4){
+            float buf;
+            ifs.read(reinterpret_cast<char*>(&buf), sizeof(float));
+            attr = buf * GS_PROPERTY_SCALE;
+          } else if (attributeInfo.byteCount == 2){
+            uint16_t buf;
+            ifs.read(reinterpret_cast<char*>(&buf), sizeof(uint16_t));
+            attr = buf * GS_PROPERTY_SCALE;
+          }
           cloud.getGSInfo(pointCounter,key) = gs_t(attr);
         } else {
           char buffer[128];
