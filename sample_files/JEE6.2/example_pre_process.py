@@ -11,7 +11,7 @@ file_config = Path("Path/to/the/config/file.json")  # output: json file containi
 file_quantized = Path("Path/to/quantized/file.ply") # output: PLY file with quantized 3DG attributes
 
 # Modify these to the desired quantization parameters
-bits_pos = 22
+bits_pos = 18
 bits_sh = 12
 bits_opacity = 12
 bits_scale = 12
