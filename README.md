@@ -71,3 +71,47 @@ mpeg-pcc-tmc13$ make -f $PWD/scripts/Makefile.tmc13-step \
   [md5sum]  Ford_01_vox1mm-0100.ply.bin.decoded.ply.md5
   [metric]  Ford_01_vox1mm-0100.ply.bin.decoded.ply.pc_error <- Ford_01_vox1mm-0100.ply.bin.decoded.ply
 ```
+
+## 3DGS support by KDDI
+### Samples of cfg files
+Samples of the cfg files are stored in the folder `cfg_3dgs_sample/`.
+
+#### encoder.cfg
+The `3DGS` option shall be set to 1 for 3DGS coding.
+Additionally, qp, bit-depth, and attribute names shall be set for each attribute.
+
+#### decoder.cfg
+Attribute name shall be set for each attribute.
+
+### Pre-processing in the software
+#### Scaling
+Input values are scaled by a fixed value (i.e., 1000) in `ply::read()`. 
+
+```cpp
+          ifs.read(reinterpret_cast<char*>(&buf), sizeof(float));
+          gs_t attr = buf * GS_PROPERTY_SCALE;
+          cloud.getGSInfo(pointCounter,key) = gs_t(attr);
+```
+
+### Add Offset
+Offset values are derived as the minimum value for each attribute. Offset values are sent to the decoder as attr_offset.
+```cpp
+  if (codeGSInfo)
+ {
+    for(auto& desc : params->encoder.sps.attributeSets){
+      auto key = GSHelper::getGSKey(desc.attr_instance_id);
+      auto& gsinfo = pointCloud.getGSInfo(key);
+      gs_t min = *std::min_element(gsinfo.begin(),gsinfo.end());
+      desc.params.scalingParametersPresent = true;
+      desc.params.attr_offset = min;
+    }
+ }
+```
+
+### Encoding/Decoding
+All attributes are encoded/decoded as single-channel information. Encoding/decoding processes for reflectance are used.
+
+### Limitation
+- KDDI has run the software only in the case of Octree-RAHT lossless-geom-lossy-attr.
+- KDDI used INRIA's trained 3DGS data such as Bicycle etc.
+- Parameters (QP, bit-depth, scaling factor, and offset value) are not tuned. It would be appreciated if you tuned those parameters.

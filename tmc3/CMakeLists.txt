@@ -110,6 +110,7 @@ file(GLOB PROJECT_INC_FILES
   "../dependencies/nanoflann/*.h"
   "../dependencies/program-options-lite/*.h"
   "../dependencies/schroedinger/schroarith.h"
+  "gstable.h"
 )
 
 file(GLOB PROJECT_CPP_FILES
@@ -148,6 +149,7 @@ file(GLOB PROJECT_CPP_FILES
   "tables.cpp"
   "../dependencies/program-options-lite/*.cpp"
   "../dependencies/schroedinger/schroarith.c"
+  "gstable.cpp"
 )
 
 source_group (inc FILES ${PROJECT_INC_FILES})

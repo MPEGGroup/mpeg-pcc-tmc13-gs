@@ -295,6 +295,8 @@ struct AttributeDescription {
   AttributeLabel attributeLabel;
 
   AttributeParameters params;
+
+  bool is3DGS;
 };
 
 //============================================================================

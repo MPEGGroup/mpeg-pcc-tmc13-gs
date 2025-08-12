@@ -207,6 +207,9 @@ PCCTMC3Decoder3::decompress(
   switch (buf->type) {
   case PayloadType::kSequenceParameterSet: {
     auto sps = parseSps(*buf);
+    if(_params.gs_ext){
+      for(auto& it: sps.attributeSets) it.is3DGS = true;
+    }
     convertXyzToStv(&sps);
     storeSps(std::move(sps));
     return 0;
@@ -365,8 +368,16 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
       return desc.attributeLabel == KnownAttributeLabel::kReflectance;
     });
 
+  bool hasGSInfo = std::any_of(
+    _sps->attributeSets.begin(), _sps->attributeSets.end(),
+    [](const AttributeDescription& desc) {
+      return desc.is3DGS;
+    }
+  );
+  if(hasGSInfo) hasReflectance = false;
+
   _currentPointCloud.clear();
-  _currentPointCloud.addRemoveAttributes(hasColour, hasReflectance);
+  _currentPointCloud.addRemoveAttributes(hasColour, hasReflectance, hasGSInfo);
 
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
   clock_user.start();
@@ -418,6 +429,22 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
       defAttrVal = it->params.attr_default_value[0];
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setReflectance(i, defAttrVal);
+  }
+
+  if (hasGSInfo) {
+    auto it = std::find_if(
+    _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
+    [](const AttributeDescription& desc) {
+      return desc.is3DGS;
+    });
+    int32_t defAttrVal = 1 << (it->bitdepth - 1);
+    if (!it->params.attr_default_value.empty())
+      defAttrVal = it->params.attr_default_value[0];
+    for (int n = 0; n < GSHelper::getGSKeysSize(); ++n){
+      auto key = GSHelper::getGSKey(n);
+      for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+        _currentPointCloud.setGSInfo(i, key, defAttrVal);
+    }
   }
 
   // Calculate a tree level at which to stop
@@ -604,7 +631,7 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
       _currentPointCloud.setColor(i, defAttrVal);
   }
 
-  if (label == KnownAttributeLabel::kReflectance) {
+  if (label == KnownAttributeLabel::kReflectance && !attrDesc.is3DGS) {
     attr_t defAttrVal = attrDesc.params.attr_default_value[0];
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setReflectance(i, defAttrVal);

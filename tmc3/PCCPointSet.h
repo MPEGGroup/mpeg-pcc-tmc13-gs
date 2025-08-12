@@ -46,18 +46,26 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "PCCMath.h"
 #include "PCCMisc.h"
+
+#include "gstable.h"
 
 namespace pcc {
 
 //============================================================================
 // The type used for internally representing attribute data
 typedef uint16_t attr_t;
+typedef int32_t gs_t;
 
 // The type used for internally representing positions
 typedef Vec3<int32_t> point_t;
+
+  namespace {
+    using GSInfoMap = std::unordered_map<std::string, std::vector<gs_t>>;
+  }
 
 //============================================================================
 
@@ -242,6 +250,7 @@ public:
     withColors = false;
     withReflectances = false;
     withFrameIndex = false;
+    withGSInfo = false;
   }
   PCCPointSet3(const PCCPointSet3&) = default;
   PCCPointSet3& operator=(const PCCPointSet3& rhs) = default;
@@ -257,6 +266,12 @@ public:
     swap(withColors, other.withColors);
     swap(withReflectances, other.withReflectances);
     swap(withFrameIndex, other.withFrameIndex);
+
+    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
+      auto key = GSHelper::getGSKey(i);
+      swap(gsinfo[key], other.gsinfo[key]);
+    }
+    swap(withGSInfo,other.withGSInfo);
   }
 
   PointType operator[](const size_t index) const
@@ -315,6 +330,31 @@ public:
     reflectances.resize(0);
   }
 
+  bool hasGSInfo() const { return withGSInfo; }
+  void addGSInfo()
+  {
+    withGSInfo = true;
+    initGSInfo();
+    resizeGSInfo(getPointCount());
+  }
+  void removeGSInfo(){
+    withGSInfo = false;
+    // resizeGSInfo(0);
+    gsinfo.clear();
+  }
+  gs_t getGSInfo(const size_t index, const std::string key) const{
+    return gsinfo.at(key)[index];
+  }
+  gs_t& getGSInfo(const size_t index, const std::string key){
+    return gsinfo.at(key)[index];
+  }
+  std::vector<gs_t>& getGSInfo(const std::string key) {
+    return gsinfo.at(key);
+  }
+  void setGSInfo(const size_t index, const std::string key,const gs_t val){
+    gsinfo[key][index] = val;
+  }
+
   uint8_t getFrameIndex(const size_t index) const
   {
     assert(index < frameidx.size() && withFrameIndex);
@@ -357,7 +397,7 @@ public:
     colors.resize(0);
   }
 
-  void addRemoveAttributes(bool withColors, bool withReflectances)
+  void addRemoveAttributes(bool withColors, bool withReflectances, bool withGSInfo = false)
   {
     if (withColors)
       addColors();
@@ -368,6 +408,11 @@ public:
       addReflectances();
     else
       removeReflectances();
+
+    if (withGSInfo)
+      addGSInfo();
+    else
+      removeGSInfo();
   }
 
   size_t getPointCount() const { return positions.size(); }
@@ -383,6 +428,9 @@ public:
     if (hasFrameIndex()) {
       frameidx.resize(size);
     }
+    if (hasGSInfo()){
+      resizeGSInfo(size);
+    }
   }
 
   void reserve(const size_t size)
@@ -397,6 +445,9 @@ public:
     if (hasFrameIndex()) {
       frameidx.reserve(size);
     }
+    if (hasGSInfo()) {
+      reserveGSInfo(size);
+    }
   }
   void clear()
   {
@@ -404,6 +455,7 @@ public:
     colors.clear();
     reflectances.clear();
     frameidx.clear();
+    clearGSInfo();
   }
 
   size_t removeDuplicatePointInQuantizedPoint(int minGeomNodeSizeLog2)
@@ -426,7 +478,7 @@ public:
   void append(const PCCPointSet3& src)
   {
     if (!getPointCount())
-      addRemoveAttributes(src.hasColors(), src.hasReflectances());
+      addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
 
     int dstEnd = positions.size();
     int srcSize = src.positions.size();
@@ -445,6 +497,9 @@ public:
       std::copy(
         src.reflectances.begin(), src.reflectances.end(),
         std::next(reflectances.begin(), dstEnd));
+
+    if (hasGSInfo())
+      copyGSInfo(src, dstEnd);
   }
 
   void swapPoints(const size_t index1, const size_t index2)
@@ -457,6 +512,12 @@ public:
     }
     if (hasReflectances()) {
       std::swap(getReflectance(index1), getReflectance(index2));
+    }
+    if (hasGSInfo()){
+      for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
+        auto key = GSHelper::getGSKey(i);
+        std::swap(getGSInfo(index1,key),getGSInfo(index2,key));
+      }
     }
   }
 
@@ -516,6 +577,44 @@ private:
   bool withColors;
   bool withReflectances;
   bool withFrameIndex;
+
+  bool withGSInfo;
+  GSInfoMap gsinfo;
+
+  void initGSInfo(){
+    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
+      auto key = GSHelper::getGSKey(i);
+      gsinfo[key] = std::vector<gs_t>(0);
+    }
+  }
+  void resizeGSInfo(size_t size){
+    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
+      auto key = GSHelper::getGSKey(i);
+      gsinfo[key].resize(size);
+    }
+  }
+  void reserveGSInfo(size_t size){
+    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
+      auto key = GSHelper::getGSKey(i);
+      gsinfo[key].reserve(size);
+    }
+  }
+  void clearGSInfo(){
+    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
+      auto key = GSHelper::getGSKey(i);
+      gsinfo[key].clear();
+    }
+  }
+  void copyGSInfo(const PCCPointSet3& src, size_t dst_end){
+    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
+      auto key = GSHelper::getGSKey(i);
+      auto& src_gs= src.gsinfo.at(key);
+      std::copy(
+        src_gs.begin(),
+        src_gs.end(), 
+        std::next(gsinfo[key].begin(),dst_end));
+    }
+  }
 };
 
 //===========================================================================
