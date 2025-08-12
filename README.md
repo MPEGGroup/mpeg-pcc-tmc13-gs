@@ -72,16 +72,18 @@ mpeg-pcc-tmc13$ make -f $PWD/scripts/Makefile.tmc13-step \
   [metric]  Ford_01_vox1mm-0100.ply.bin.decoded.ply.pc_error <- Ford_01_vox1mm-0100.ply.bin.decoded.ply
 ```
 
-## 3DGS support by KDDI
+## 3D Gaussian Coding (3DGC) support by KDDI
 ### Samples of cfg files
 Samples of the cfg files are stored in the folder `cfg_3dgs_sample/`.
 
 #### encoder.cfg
-The `3DGS` option shall be set to 1 for 3DGS coding.
-Additionally, qp, bit-depth, and attribute names shall be set for each attribute.
+- The `3DGS` option shall be set to 1 for 3D Gaussian coding.
+- For INRIA's pre-train data, we set `inputScale: 1000` because geometrical information is in meter order. 
+- Additionally, qp, bit-depth, and attribute names shall be set for each attribute.
 
 #### decoder.cfg
-Attribute name shall be set for each attribute.
+- Attribute name shall be set for each attribute.
+- For INRIA's pre-train data, we set `outputUnitLength: 1000`. 
 
 ### Pre-processing in the software
 #### Scaling
@@ -113,5 +115,5 @@ All attributes are encoded/decoded as single-channel information. Encoding/decod
 
 ### Limitation
 - KDDI has run the software only in the case of Octree-RAHT lossless-geom-lossy-attr.
-- KDDI used INRIA's trained 3DGS data such as Bicycle etc.
+- KDDI used [INRIA's pre-trained 3DGS data](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/pretrained/models.zip) such as Bicycle etc.
 - Parameters (QP, bit-depth, scaling factor, and offset value) are not tuned. It would be appreciated if you tuned those parameters.
