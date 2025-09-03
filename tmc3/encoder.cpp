@@ -739,14 +739,44 @@ PCCTMC3Encoder3::compressPartition(
 
     int coded_size = int(payload.size());
     double bpp = double(8 * coded_size) / inputPointCloud.getPointCount();
-    std::cout << label << "s bitstream size " << coded_size << " B (" << bpp
-              << " bpp)\n";
 
-    auto time_user = std::chrono::duration_cast<std::chrono::milliseconds>(
-      clock_user.count());
-    std::cout << label
-              << "s processing time (user): " << time_user.count() / 1000.0
-              << " s" << std::endl;
+	auto time_user = std::chrono::duration_cast<std::chrono::milliseconds>(
+		clock_user.count());
+
+	if (attr_sps.params.shCoefficientParameterPresent) {
+		const auto& SH_label = attr_sps.params.sh_coefficient_label;
+		std::cout << label << "_coefficients_" << (int)SH_label << " bitstream size " << coded_size << " B (" << bpp
+			<< " bpp)\n";
+		std::cout << label << "_coefficients_" << (int)SH_label << " processing time (user): " << time_user.count() / 1000.0
+			<< " s" << std::endl;
+	}
+	else if (attr_sps.params.rotationComponentParameterPresent) {
+		if (attr_sps.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ) {
+			std::cout << label << "s_XYZ bitstream size " << coded_size << " B (" << bpp
+				<< " bpp)\n";
+			std::cout << label << "s_XYZ processing time (user): " << time_user.count() / 1000.0
+				<< " s" << std::endl;
+		}
+		else if (attr_sps.params.rotation_component_label == RotationComponentLabel::kRotation_W) {
+			std::cout << label << "s_W bitstream size " << coded_size << " B (" << bpp
+				<< " bpp)\n";
+			std::cout << label << "s_W processing time (user): " << time_user.count() / 1000.0
+				<< " s" << std::endl;
+		}
+	}
+	else if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kOpacity) {
+		std::cout << "opacities bitstream size " << coded_size << " B (" << bpp
+			<< " bpp)\n";
+		std::cout << "opacities processing time (user): " << time_user.count() / 1000.0
+			<< " s" << std::endl;
+	}
+	else {
+		std::cout << label << "s bitstream size " << coded_size << " B (" << bpp
+			<< " bpp)\n";
+		std::cout << label
+			<< "s processing time (user): " << time_user.count() / 1000.0
+			<< " s" << std::endl;
+	}
 
     callback->onOutputBuffer(payload);
   }
@@ -934,7 +964,7 @@ PCCPointSet3
 getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 {
   PCCPointSet3 dst;
-  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
+  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -949,10 +979,19 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
     if (src.hasReflectances())
       dst.setReflectance(i, src.getReflectance(inputIdx));
 
-    if (src.hasGSInfo()){
-      for(auto& key : GSHelper::gskeys)
-        dst.setGSInfo(i, key, src.getGSInfo(inputIdx, key));
-    }
+		if (src.hasOpacities())
+			dst.setOpacity(i, src.getOpacity(inputIdx));
+
+		if (src.hasScales())
+			dst.setScale(i, src.getScale(inputIdx));
+
+		if (src.hasRotations())
+			dst.setRotation(i, src.getRotation(inputIdx));
+
+		if (src.hasSHCoefficients()) {
+			for (int k = 0; k < src.getNumSHCoeff3(); k++)
+				dst.setSHCoefficient(k, i, src.getSHCoefficient(k, inputIdx));
+		}
   }
 
   return dst;
@@ -984,7 +1023,8 @@ getPartition(
   }
 
   PCCPointSet3 dst;
-  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
+  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
+	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
   dst.resize(size);
 
   int dstIdx = 0;
@@ -999,10 +1039,19 @@ getPartition(
       if (src.hasReflectances())
         dst.setReflectance(dstIdx, src.getReflectance(srcIdx));
 
-      if (src.hasGSInfo()){
-        for(auto& key : GSHelper::gskeys)
-          dst.setGSInfo(dstIdx, key, src.getGSInfo(srcIdx, key));
-      }
+			if (src.hasOpacities())
+				dst.setOpacity(dstIdx, src.getOpacity(srcIdx));
+
+			if (src.hasScales())
+				dst.setScale(dstIdx, src.getScale(srcIdx));
+
+			if (src.hasRotations())
+				dst.setRotation(dstIdx, src.getRotation(srcIdx));
+
+			if (src.hasSHCoefficients()) {
+				for (int k = 0; k < src.getNumSHCoeff3(); k++)
+					dst.setSHCoefficient(k, dstIdx, src.getSHCoefficient(k, srcIdx));
+			}
 
       dstIdx++;
       prevIdx = srcIdx;

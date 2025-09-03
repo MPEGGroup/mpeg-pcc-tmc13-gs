@@ -134,11 +134,30 @@ ply::write(
   if (cloud.hasFrameIndex()) {
     fout << "property uint8 frameindex" << std::endl;
   }
-  if (cloud.hasGSInfo()){
-    auto gskeys = GSHelper::getGSKeys();
-    for (auto key : gskeys){
-      fout << "property float " << key << std::endl;
-    }
+  if (cloud.hasSHCoefficients()) {
+	  fout << "property float f_dc_0" << std::endl;
+	  fout << "property float f_dc_1" << std::endl;
+	  fout << "property float f_dc_2" << std::endl;
+
+	  for (int i = 0; i < cloud.getNumSHCoeff3() - 1; i++) {
+		  fout << "property float f_rest_" << 3 * i << std::endl;
+		  fout << "property float f_rest_" << 3 * i + 1 << std::endl;
+		  fout << "property float f_rest_" << 3 * i + 2 << std::endl;
+	  }
+  }
+  if (cloud.hasOpacities()) {
+	  fout << "property float opacity" << std::endl;
+  }
+  if (cloud.hasScales()) {
+	  fout << "property float scale_0" << std::endl;
+	  fout << "property float scale_1" << std::endl;
+	  fout << "property float scale_2" << std::endl;
+  }
+  if (cloud.hasRotations()) {
+	  fout << "property float rot_0" << std::endl;
+	  fout << "property float rot_1" << std::endl;
+	  fout << "property float rot_2" << std::endl;
+	  fout << "property float rot_3" << std::endl;
   }
   fout << "element face 0" << std::endl;
   fout << "property list uint8 int32 vertex_index" << std::endl;
@@ -161,14 +180,35 @@ ply::write(
       if (cloud.hasFrameIndex()) {
         fout << " " << static_cast<int>(cloud.getFrameIndex(i));
       }
-      if (cloud.hasGSInfo()){
-        for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
-          auto key = GSHelper::getGSKey(n);
-          gs_t attr = gs_t(cloud.getGSInfo(i,key));
-          float buf = float(attr) / GS_PROPERTY_SCALE;
-          fout << " " << buf;
-        }
-      }
+			if (cloud.hasSHCoefficients()) {
+				const Vec3<attr_t>& SHcoefficient_dc = cloud.getSHCoefficient(0, i);
+				fout << " " << SHcoefficient_dc[0] 
+					<< " "  << SHcoefficient_dc[1] 
+					<< " "  << SHcoefficient_dc[2];
+
+				for (int k = 0; k < 3; k++) {
+					for (int m = 1; m < cloud.getNumSHCoeff3(); m++) {
+						const Vec3<int32_t>& SHcoefficient_ac = cloud.getSHCoefficient(m, i);
+						fout << " " << SHcoefficient_ac[k];
+					}
+				}
+			}
+			if (cloud.hasOpacities()) {
+				fout << " " << cloud.getOpacity(i);
+			}
+			if (cloud.hasScales()) {
+				const Vec3<attr_t>& scale = cloud.getScale(i);
+				fout << " " << scale[0]
+					<< " " << scale[1]
+					<< " " << scale[2];
+			}
+			if (cloud.hasRotations()) {
+				const pcc::PCCPointSet3::Components4<attr_t>& rotation = cloud.getRotation(i);
+				fout << " " << rotation.w
+					<< " " << rotation.xyz[0]
+					<< " " << rotation.xyz[1]
+					<< " " << rotation.xyz[2];
+			}
       fout << std::endl;
     }
   } else {
@@ -193,15 +233,41 @@ ply::write(
         const uint16_t& findex = cloud.getFrameIndex(i);
         fout.write(reinterpret_cast<const char*>(&findex), sizeof(uint16_t));
       }
-      if (cloud.hasGSInfo()){
-        for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
-          auto key = GSHelper::getGSKey(n);
-          gs_t attr = gs_t(cloud.getGSInfo(i,key));
-          float buf = float(attr) / GS_PROPERTY_SCALE;
-          // val = val / GS_PROPERTY_SCALE;
-          fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
-        }
-      }
+			if (cloud.hasSHCoefficients()) {
+				// SH DC
+				const Vec3<int32_t>& SHcoefficient_dc = cloud.getSHCoefficient(0, i);
+				Vec3<float> val32b_dc{ float(SHcoefficient_dc[0]), float(SHcoefficient_dc[1]), float(SHcoefficient_dc[2]) };
+				fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
+
+				// SH AC
+				int idx = 0;
+				for (int k = 0; k < 3; k++) {
+					for (int m = 1; m < cloud.getNumSHCoeff3(); m++) {
+						const Vec3<int32_t>& SHcoefficient_ac = cloud.getSHCoefficient(m, i);
+						float val32b_ac = float(SHcoefficient_ac[k]);
+						fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
+					}
+				}
+			}
+			if (cloud.hasOpacities()) {
+				const attr_t& opacity = cloud.getOpacity(i);
+				float buf = (float)opacity;
+				fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
+			}
+			if (cloud.hasScales()) {
+				const Vec3<attr_t>& scale = cloud.getScale(i);
+				Vec3<float> val32b{ float(scale[0]), float(scale[1]), float(scale[2]) };
+				fout.write(reinterpret_cast<char*>(&val32b), sizeof(float) * 3);
+			}
+			if (cloud.hasRotations()) {
+				const auto rotation_w = cloud.getRotation(i).w;
+				float buf = (float)rotation_w;
+				fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
+
+				const auto rotation_xyz = cloud.getRotation(i).xyz;
+				Vec3<float> val32b{ float(rotation_xyz[0]), float(rotation_xyz[1]), float(rotation_xyz[2]) };
+				fout.write(reinterpret_cast<char*>(&val32b), sizeof(float) * 3);
+			}
     }
   }
   fout.close();
@@ -347,7 +413,21 @@ ply::read(
   size_t indexNX = PCC_UNDEFINED_INDEX;
   size_t indexNY = PCC_UNDEFINED_INDEX;
   size_t indexNZ = PCC_UNDEFINED_INDEX;
-  std::unordered_map<size_t,std::string> bytepos2gskey;
+  // Gaussian Splat Compression
+  size_t indexOpacity = PCC_UNDEFINED_INDEX;
+  size_t indexScaleX = PCC_UNDEFINED_INDEX;
+  size_t indexScaleY = PCC_UNDEFINED_INDEX;
+  size_t indexScaleZ = PCC_UNDEFINED_INDEX;
+  size_t indexRotationW = PCC_UNDEFINED_INDEX;
+  size_t indexRotationX = PCC_UNDEFINED_INDEX;
+  size_t indexRotationY = PCC_UNDEFINED_INDEX;
+  size_t indexRotationZ = PCC_UNDEFINED_INDEX;
+  std::vector<std::vector<size_t>> indexSHCoefficients;
+  int numSHCoeff3 = cloud.getNumSHCoeff3();
+  indexSHCoefficients.resize(numSHCoeff3);
+  for (int i = 0; i < numSHCoeff3; i++)
+	  indexSHCoefficients[i].resize(3, PCC_UNDEFINED_INDEX);
+
   const size_t attributeCount = attributesInfo.size();
   for (size_t a = 0; a < attributeCount; ++a) {
     auto& attributeInfo = attributesInfo[a];
@@ -388,8 +468,53 @@ ply::read(
       attributeInfo.name == "nz"
       && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
       indexNZ = a;
-    } else if (GSHelper::isExist(attributeInfo.name)){
-      bytepos2gskey[a] = attributeInfo.name;
+    }	
+		// Gaussian Splat Compression : Opacity
+		else if (attributeInfo.name == "opacity" && attributeInfo.byteCount <= 4) {	
+			indexOpacity = a;
+		}
+		// Gaussian Splat Compression : Scale
+		else if (attributeInfo.name == "scale_0" && attributeInfo.byteCount <= 4) {
+			indexScaleX = a;
+		}
+		else if (attributeInfo.name == "scale_1" && attributeInfo.byteCount <= 4) {
+			indexScaleY = a;
+		}
+		else if (attributeInfo.name == "scale_2" && attributeInfo.byteCount <= 4) {
+			indexScaleZ = a;
+		}
+		// Gaussian Splat Compression : Rotation
+		else if (attributeInfo.name == "rot_0" && attributeInfo.byteCount <= 4) {
+			indexRotationW = a;
+		}
+		else if (attributeInfo.name == "rot_1" && attributeInfo.byteCount <= 4) {
+			indexRotationX = a;
+		}
+		else if (attributeInfo.name == "rot_2" && attributeInfo.byteCount <= 4) {
+			indexRotationY = a;
+		}
+		else if (attributeInfo.name == "rot_3" && attributeInfo.byteCount <= 4) {
+			indexRotationZ = a;
+		}
+		// Gaussian Splat Compression : SH DC coefficients
+		else if (attributeInfo.name == "f_dc_0" && attributeInfo.byteCount <= 4) {
+			indexSHCoefficients[0][0] = a;
+		}
+		else if (attributeInfo.name == "f_dc_1" && attributeInfo.byteCount <= 4) {
+			indexSHCoefficients[0][1] = a;
+		}
+		else if (attributeInfo.name == "f_dc_2" && attributeInfo.byteCount <= 4) {
+			indexSHCoefficients[0][2] = a;
+		}
+		// Gaussian Splat Compression : SH AC coefficients
+		else if (!attributeInfo.name.compare(0, 7, "f_rest_") && attributeInfo.byteCount <= 4) {
+			std::string suffix = attributeInfo.name.substr(7);
+			int f_rest_index = std::stoi(suffix);
+
+			int SHCoeff_index = f_rest_index % 15 + 1;
+			int yuv_index = f_rest_index / 15;
+
+			indexSHCoefficients[SHCoeff_index][yuv_index] = a;
     }
   }
   if (
@@ -402,9 +527,20 @@ ply::read(
     && indexG != PCC_UNDEFINED_INDEX && indexB != PCC_UNDEFINED_INDEX;
   bool withReflectances = indexReflectance != PCC_UNDEFINED_INDEX;
   bool withFrameIndex = indexFrame != PCC_UNDEFINED_INDEX;
-  bool withGSInfo = bytepos2gskey.size() > 0;
+  bool withOpacity = indexOpacity != PCC_UNDEFINED_INDEX;
+  bool withScale = indexScaleX != PCC_UNDEFINED_INDEX
+	  && indexScaleY != PCC_UNDEFINED_INDEX
+	  && indexScaleZ != PCC_UNDEFINED_INDEX;
+  bool withRotation = indexRotationW != PCC_UNDEFINED_INDEX
+	  && indexRotationX != PCC_UNDEFINED_INDEX
+	  && indexRotationY != PCC_UNDEFINED_INDEX
+	  && indexRotationZ != PCC_UNDEFINED_INDEX;
+  bool witSHCoefficients = indexSHCoefficients[0][0] != PCC_UNDEFINED_INDEX
+	  && indexSHCoefficients[0][1] != PCC_UNDEFINED_INDEX
+	  && indexSHCoefficients[0][2] != PCC_UNDEFINED_INDEX;
 
-  cloud.addRemoveAttributes(withColors, withReflectances, withGSInfo);
+  cloud.addRemoveAttributes(withColors, withReflectances, withOpacity, withScale, withRotation, witSHCoefficients);
+
   if (withFrameIndex)
     cloud.addFrameIndex();
   else
@@ -440,6 +576,7 @@ ply::read(
         cloud.getFrameIndex(pointCounter) =
           uint8_t(atoi(tokens[indexFrame].c_str()));
       }
+	  // Input format with Ascii is not supported in the current version of Gaussian Splat compression. 
       ++pointCounter;
     }
   } else {
@@ -508,23 +645,129 @@ ply::read(
             ifs.read(reinterpret_cast<char*>(&findex), sizeof(uint16_t));
             cloud.getFrameIndex(pointCounter) = uint8_t(findex);
           }
-        } else if ( bytepos2gskey.find(a) != bytepos2gskey.end()){
-          auto key = bytepos2gskey[a];
-          assert(attributeInfo.name == key);
-          gs_t attr;
-          if(attributeInfo.byteCount == 4){
-            float buf;
-            ifs.read(reinterpret_cast<char*>(&buf), sizeof(float));
-            attr = buf * GS_PROPERTY_SCALE;
-          } else if (attributeInfo.byteCount == 2){
-            uint16_t buf;
-            ifs.read(reinterpret_cast<char*>(&buf), sizeof(uint16_t));
-            attr = buf * GS_PROPERTY_SCALE;
-          }
-          cloud.getGSInfo(pointCounter,key) = gs_t(attr);
-        } else {
-          char buffer[128];
-          ifs.read(buffer, attributeInfo.byteCount);
+				}	
+				// Gaussian Splat Compression
+				else if (a == indexOpacity && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float opacity;
+						ifs.read(reinterpret_cast<char*>(&opacity), sizeof(float));
+						cloud.getOpacity(pointCounter) = int32_t(opacity);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t opacity;
+						ifs.read(reinterpret_cast<char*>(&opacity), sizeof(uint16_t));
+						cloud.getOpacity(pointCounter) = int32_t(opacity);
+					}
+				}
+				else if (a == indexScaleX && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float scaleX;
+						ifs.read(reinterpret_cast<char*>(&scaleX), sizeof(float));
+						cloud.getScale(pointCounter)[0] = int32_t(scaleX);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t scaleX;
+						ifs.read(reinterpret_cast<char*>(&scaleX), sizeof(uint16_t));
+						cloud.getScale(pointCounter)[0] = int32_t(scaleX);
+					}
+				}
+				else if (a == indexScaleY && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float scaleY;
+						ifs.read(reinterpret_cast<char*>(&scaleY), sizeof(float));
+						cloud.getScale(pointCounter)[1] = int32_t(scaleY);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t scaleY;
+						ifs.read(reinterpret_cast<char*>(&scaleY), sizeof(uint16_t));
+						cloud.getScale(pointCounter)[1] = int32_t(scaleY);
+					}
+				}
+				else if (a == indexScaleZ && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float scaleZ;
+						ifs.read(reinterpret_cast<char*>(&scaleZ), sizeof(float));
+						cloud.getScale(pointCounter)[2] = int32_t(scaleZ);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t scaleZ;
+						ifs.read(reinterpret_cast<char*>(&scaleZ), sizeof(uint16_t));
+						cloud.getScale(pointCounter)[2] = int32_t(scaleZ);
+					}
+				}
+				else if (a == indexRotationW && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float rotationW;
+						ifs.read(reinterpret_cast<char*>(&rotationW), sizeof(float));
+						cloud.getRotation(pointCounter).w = int32_t(rotationW);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t rotationW;
+						ifs.read(reinterpret_cast<char*>(&rotationW), sizeof(uint16_t));
+						cloud.getRotation(pointCounter).w = int32_t(rotationW);
+					}
+				}
+				else if (a == indexRotationX && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float rotationX;
+						ifs.read(reinterpret_cast<char*>(&rotationX), sizeof(float));
+						cloud.getRotation(pointCounter).xyz[0] = int32_t(rotationX);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t rotationX;
+						ifs.read(reinterpret_cast<char*>(&rotationX), sizeof(uint16_t));
+						cloud.getRotation(pointCounter).xyz[0] = int32_t(rotationX);
+					}
+				}
+				else if (a == indexRotationY && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float rotationY;
+						ifs.read(reinterpret_cast<char*>(&rotationY), sizeof(float));
+						cloud.getRotation(pointCounter).xyz[1] = int32_t(rotationY);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t rotationY;
+						ifs.read(reinterpret_cast<char*>(&rotationY), sizeof(uint16_t));
+						cloud.getRotation(pointCounter).xyz[1] = int32_t(rotationY);
+					}
+				}
+				else if (a == indexRotationZ && attributeInfo.byteCount <= 4) {
+					if (attributeInfo.byteCount == 4) {
+						float rotationZ;
+						ifs.read(reinterpret_cast<char*>(&rotationZ), sizeof(float));
+						cloud.getRotation(pointCounter).xyz[2] = int32_t(rotationZ);
+					}
+					else if (attributeInfo.byteCount == 2) {
+						uint16_t rotationZ;
+						ifs.read(reinterpret_cast<char*>(&rotationZ), sizeof(uint16_t));
+						cloud.getRotation(pointCounter).xyz[2] = int32_t(rotationZ);
+					}
+				}
+				else {
+					bool isSHCoefficient = false;
+					for (int i = 0; i < cloud.getNumSHCoeff3(); i++) {
+						for (int j = 0; j < 3; j++) {
+							if (a == indexSHCoefficients[i][j] && attributeInfo.byteCount <= 4) {
+								if (attributeInfo.byteCount == 4) {
+									float sh_coefficient;
+									ifs.read(reinterpret_cast<char*>(&sh_coefficient), sizeof(float));
+									cloud.getSHCoefficient(i, pointCounter)[j] = int32_t(sh_coefficient);
+								}
+								else if (attributeInfo.byteCount == 2) {
+									uint16_t sh_coefficient;
+									ifs.read(reinterpret_cast<char*>(&sh_coefficient), sizeof(uint16_t));
+									cloud.getSHCoefficient(i, pointCounter)[j] = int32_t(sh_coefficient);
+								}
+								isSHCoefficient = true;
+								break;
+							}
+						}
+					}
+
+					if (!isSHCoefficient) {
+						char buffer[128];
+						ifs.read(buffer, attributeInfo.byteCount);
+					}
         }
       }
     }

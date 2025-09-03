@@ -58,14 +58,9 @@ namespace pcc {
 //============================================================================
 // The type used for internally representing attribute data
 typedef uint16_t attr_t;
-typedef int32_t gs_t;
 
 // The type used for internally representing positions
 typedef Vec3<int32_t> point_t;
-
-  namespace {
-    using GSInfoMap = std::unordered_map<std::string, std::vector<gs_t>>;
-  }
 
 //============================================================================
 
@@ -250,7 +245,10 @@ public:
     withColors = false;
     withReflectances = false;
     withFrameIndex = false;
-    withGSInfo = false;
+		withOpacities = false;
+		withScales = false;
+		withRotations = false;
+		withSHCoefficients = false;
   }
   PCCPointSet3(const PCCPointSet3&) = default;
   PCCPointSet3& operator=(const PCCPointSet3& rhs) = default;
@@ -263,15 +261,18 @@ public:
     swap(colors, other.colors);
     swap(reflectances, other.reflectances);
     swap(frameidx, other.frameidx);
+		swap(opacities, other.opacities);
+		swap(scales, other.scales);
+		swap(rotations, other.rotations);
+		swap(sh_coefficients, other.sh_coefficients);
+
     swap(withColors, other.withColors);
     swap(withReflectances, other.withReflectances);
     swap(withFrameIndex, other.withFrameIndex);
-
-    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
-      auto key = GSHelper::getGSKey(i);
-      swap(gsinfo[key], other.gsinfo[key]);
-    }
-    swap(withGSInfo,other.withGSInfo);
+		swap(withOpacities, other.withOpacities);
+		swap(withScales, other.withScales);
+		swap(withRotations, other.withRotations);
+		swap(withSHCoefficients, other.withSHCoefficients);
   }
 
   PointType operator[](const size_t index) const
@@ -330,30 +331,136 @@ public:
     reflectances.resize(0);
   }
 
-  bool hasGSInfo() const { return withGSInfo; }
-  void addGSInfo()
+  // Gaussian Splat Compression : Opacity
+  attr_t getOpacity(const size_t index) const
   {
-    withGSInfo = true;
-    initGSInfo();
-    resizeGSInfo(getPointCount());
+	  assert(index < opacities.size() && withOpacities);
+	  return opacities[index];
   }
-  void removeGSInfo(){
-    withGSInfo = false;
-    // resizeGSInfo(0);
-    gsinfo.clear();
+  attr_t& getOpacity(const size_t index)
+  {
+	  assert(index < opacities.size() && withOpacities);
+	  return opacities[index];
   }
-  gs_t getGSInfo(const size_t index, const std::string key) const{
-    return gsinfo.at(key)[index];
+  void setOpacity(const size_t index, const attr_t opacity)
+  {
+	  assert(index < opacities.size() && withOpacities);
+	  opacities[index] = opacity;
   }
-  gs_t& getGSInfo(const size_t index, const std::string key){
-    return gsinfo.at(key)[index];
+  bool hasOpacities() const { return withOpacities; }
+  void addOpacities()
+  {
+	  withOpacities = true;
+	  resize(getPointCount());
   }
-  std::vector<gs_t>& getGSInfo(const std::string key) {
-    return gsinfo.at(key);
+  void removeOpacities()
+  {
+	  withOpacities = false;
+	  opacities.resize(0);
   }
-  void setGSInfo(const size_t index, const std::string key,const gs_t val){
-    gsinfo[key][index] = val;
+
+  // Gaussian Splat Compression : Scale
+  Vec3<attr_t> getScale(const size_t index) const
+  {
+	  assert(index < scales.size() && withScales);
+	  return scales[index];
   }
+  Vec3<attr_t>& getScale(const size_t index)
+  {
+	  assert(index < scales.size() && withScales);
+	  return scales[index];
+  }
+  void setScale(const size_t index, const Vec3<attr_t> scale)
+  {
+	  assert(index < scales.size() && withScales);
+	  scales[index] = scale;
+  }
+  bool hasScales() const { return withScales; }
+  void addScales()
+  {
+	  withScales = true;
+	  resize(getPointCount());
+  }
+  void removeScales()
+  {
+	  withScales = false;
+	  scales.resize(0);
+  }
+
+  // Gaussian Splat Compression : Rotation
+  template<typename T>
+  struct Components4 {
+	  T w;
+	  Vec3<T> xyz;
+  };
+
+  Components4<attr_t> getRotation(const size_t index) const
+  {
+	  assert(index < rotations.size() && withRotations);
+	  return rotations[index];
+  }
+  Components4<attr_t>& getRotation(const size_t index)
+  {
+	  assert(index < rotations.size() && withRotations);
+	  return rotations[index];
+  }
+  void setRotation(const size_t index, const Components4<attr_t> rotation)
+  {
+	  assert(index < rotations.size() && withRotations);
+	  rotations[index] = rotation;
+  }
+  void setRotation(const size_t index, const Vec3<attr_t> rotation_xyz)
+  {
+	  assert(index < rotations.size() && withRotations);
+	  rotations[index].xyz = rotation_xyz;
+  }
+  void setRotation(const size_t index, const attr_t rotation_w)
+  {
+	  assert(index < rotations.size() && withRotations);
+	  rotations[index].w = rotation_w;
+  }
+  bool hasRotations() const { return withRotations; }
+  void addRotations()
+  {
+	  withRotations = true;
+	  resize(getPointCount());
+  }
+  void removeRotations()
+  {
+	  withRotations = false;
+	  rotations.resize(0);
+  }
+
+  // Gaussian Splat Compression : Spherical harmonics
+  Vec3<attr_t> getSHCoefficient(const size_t SH_index, const size_t index) const
+  {
+	  assert(SH_index < sh_coefficients.size() && index < sh_coefficients[SH_index].size() && withSHCoefficients);
+	  return sh_coefficients[SH_index][index];
+  }
+  Vec3<attr_t>& getSHCoefficient(const size_t SH_index, const size_t index)
+  {
+	  assert(SH_index < sh_coefficients.size() && index < sh_coefficients[SH_index].size() && withSHCoefficients);
+	  return sh_coefficients[SH_index][index];
+  }
+  void setSHCoefficient(const size_t SH_index, const size_t index, const Vec3<attr_t> sh_coefficient)
+  {
+	  assert(SH_index < sh_coefficients.size() && index < sh_coefficients[SH_index].size() && withSHCoefficients);
+	  sh_coefficients[SH_index][index] = sh_coefficient;
+  }
+  bool hasSHCoefficients() const { return withSHCoefficients; }
+  void addSHCoefficients()
+  {
+	  withSHCoefficients = true;
+	  resize(getPointCount());
+  }
+  void removeSHCoefficients()
+  {
+	  withSHCoefficients = false;
+	  for (int i = 0; i < sh_coefficients.size(); i++)
+		  sh_coefficients[i].resize(0);
+	  sh_coefficients.resize(0);
+  }
+  int getNumSHCoeff3() const { return numSHCoeff3; }
 
   uint8_t getFrameIndex(const size_t index) const
   {
@@ -397,7 +504,7 @@ public:
     colors.resize(0);
   }
 
-  void addRemoveAttributes(bool withColors, bool withReflectances, bool withGSInfo = false)
+  void addRemoveAttributes(bool withColors, bool withReflectances, bool withOpacities = false, bool withScales = false, bool withRotations = false, bool withSHCoefficients = false)
   {
     if (withColors)
       addColors();
@@ -409,10 +516,26 @@ public:
     else
       removeReflectances();
 
-    if (withGSInfo)
-      addGSInfo();
-    else
-      removeGSInfo();
+		// Gaussian splat compression
+		if (withOpacities)
+			addOpacities();
+		else
+			removeOpacities();
+
+		if (withScales)
+			addScales();
+		else
+			removeScales();
+
+		if (withRotations)
+			addRotations();
+		else
+			removeRotations();
+
+		if (withSHCoefficients)
+			addSHCoefficients();
+		else
+			removeSHCoefficients();
   }
 
   size_t getPointCount() const { return positions.size(); }
@@ -428,9 +551,18 @@ public:
     if (hasFrameIndex()) {
       frameidx.resize(size);
     }
-    if (hasGSInfo()){
-      resizeGSInfo(size);
-    }
+		// Gaussian splat compression
+		if (hasOpacities())
+			opacities.resize(size);
+		if (hasScales())
+			scales.resize(size);
+		if (hasRotations())
+			rotations.resize(size);
+		if (hasSHCoefficients()) {
+			sh_coefficients.resize(numSHCoeff3);
+			for (int i = 0; i < numSHCoeff3; i++)
+				sh_coefficients[i].resize(size);
+		}
   }
 
   void reserve(const size_t size)
@@ -445,9 +577,18 @@ public:
     if (hasFrameIndex()) {
       frameidx.reserve(size);
     }
-    if (hasGSInfo()) {
-      reserveGSInfo(size);
-    }
+		// Gaussian splat compression
+		if (hasOpacities())
+			opacities.reserve(size);
+		if (hasScales())
+			scales.reserve(size);
+		if (hasRotations())
+			rotations.reserve(size);
+		if (hasSHCoefficients()) {
+			sh_coefficients.resize(numSHCoeff3);
+			for (int i = 0; i < numSHCoeff3; i++)
+				sh_coefficients[i].reserve(size);
+		}
   }
   void clear()
   {
@@ -455,7 +596,14 @@ public:
     colors.clear();
     reflectances.clear();
     frameidx.clear();
-    clearGSInfo();
+
+		// Gaussian splat compression
+		opacities.clear();
+		scales.clear();
+		rotations.clear();
+		for (int i = 0; i < sh_coefficients.size(); i++)
+			sh_coefficients[i].clear();
+		sh_coefficients.clear();
   }
 
   size_t removeDuplicatePointInQuantizedPoint(int minGeomNodeSizeLog2)
@@ -478,7 +626,8 @@ public:
   void append(const PCCPointSet3& src)
   {
     if (!getPointCount())
-      addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
+		addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(),
+			src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
 
     int dstEnd = positions.size();
     int srcSize = src.positions.size();
@@ -498,8 +647,29 @@ public:
         src.reflectances.begin(), src.reflectances.end(),
         std::next(reflectances.begin(), dstEnd));
 
-    if (hasGSInfo())
-      copyGSInfo(src, dstEnd);
+		// Gaussian splat compression
+		if (hasOpacities() && src.hasOpacities())
+			std::copy(
+				src.opacities.begin(), src.opacities.end(),
+				std::next(opacities.begin(), dstEnd));
+
+		if (hasScales() && src.hasScales())
+			std::copy(
+				src.scales.begin(), src.scales.end(),
+				std::next(scales.begin(), dstEnd));
+
+		if (hasRotations() && src.hasRotations())
+			std::copy(
+				src.rotations.begin(), src.rotations.end(),
+				std::next(rotations.begin(), dstEnd));
+
+		if (hasSHCoefficients() && src.hasSHCoefficients()) {
+			for (int i = 0; i < sh_coefficients.size(); i++) {
+				std::copy(
+					src.sh_coefficients[i].begin(), src.sh_coefficients[i].end(),
+					std::next(sh_coefficients[i].begin(), dstEnd));
+			}
+		}
   }
 
   void swapPoints(const size_t index1, const size_t index2)
@@ -513,12 +683,20 @@ public:
     if (hasReflectances()) {
       std::swap(getReflectance(index1), getReflectance(index2));
     }
-    if (hasGSInfo()){
-      for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
-        auto key = GSHelper::getGSKey(i);
-        std::swap(getGSInfo(index1,key),getGSInfo(index2,key));
-      }
-    }
+		// Gaussian splat compression
+		if (hasOpacities()) {
+			std::swap(getOpacity(index1), getOpacity(index2));
+		}
+		if (hasScales()) {
+			std::swap(getScale(index1), getScale(index2));
+		}
+		if (hasRotations()) {
+			std::swap(getRotation(index1), getRotation(index2));
+		}
+		if (hasSHCoefficients()) {
+			for (int i = 0; i < sh_coefficients.size(); i++)
+				std::swap(getSHCoefficient(i, index1), getSHCoefficient(i, index2));
+		}
   }
 
   Box3<int32_t> computeBoundingBox() const
@@ -578,43 +756,16 @@ private:
   bool withReflectances;
   bool withFrameIndex;
 
-  bool withGSInfo;
-  GSInfoMap gsinfo;
+  std::vector<attr_t> opacities;
+  std::vector<Vec3<attr_t>> scales;
+  std::vector<Components4<attr_t>> rotations;
+  std::vector<std::vector<Vec3<attr_t>>> sh_coefficients;
+  int numSHCoeff3 = 16;
 
-  void initGSInfo(){
-    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
-      auto key = GSHelper::getGSKey(i);
-      gsinfo[key] = std::vector<gs_t>(0);
-    }
-  }
-  void resizeGSInfo(size_t size){
-    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
-      auto key = GSHelper::getGSKey(i);
-      gsinfo[key].resize(size);
-    }
-  }
-  void reserveGSInfo(size_t size){
-    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
-      auto key = GSHelper::getGSKey(i);
-      gsinfo[key].reserve(size);
-    }
-  }
-  void clearGSInfo(){
-    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
-      auto key = GSHelper::getGSKey(i);
-      gsinfo[key].clear();
-    }
-  }
-  void copyGSInfo(const PCCPointSet3& src, size_t dst_end){
-    for(int i = 0; i < GSHelper::getGSKeysSize(); i++){
-      auto key = GSHelper::getGSKey(i);
-      auto& src_gs= src.gsinfo.at(key);
-      std::copy(
-        src_gs.begin(),
-        src_gs.end(), 
-        std::next(gsinfo[key].begin(),dst_end));
-    }
-  }
+  bool withOpacities;
+  bool withScales;
+  bool withRotations;
+  bool withSHCoefficients;
 };
 
 //===========================================================================

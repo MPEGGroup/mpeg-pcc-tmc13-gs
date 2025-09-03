@@ -92,7 +92,8 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
   }
 
   // Add attribute storage to match src
-  dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances());
+  dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
+	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
 
   return dst;
 }
@@ -175,7 +176,8 @@ quantizePositions(
   // In case dst and src point clouds are the same, don't destroy src.
   if (&src != dst) {
     dst->clear();
-    dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
+	dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
+		src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
     dst->resize(numSrcPoints);
   }
 
@@ -202,11 +204,26 @@ quantizePositions(
       dst->setReflectance(i, src.getReflectance(i));
   }
 
-  if (src.hasGSInfo()){
-    for (auto& key : GSHelper::gskeys){
-      for(int i = 0; i < numSrcPoints; ++i)
-        dst->setGSInfo(i, key, src.getGSInfo(i,key));
-    }
+  if (src.hasOpacities()) {
+	  for (int i = 0; i < numSrcPoints; ++i)
+		  dst->setOpacity(i, src.getOpacity(i));
+  }
+
+  if (src.hasScales()) {
+	  for (int i = 0; i < numSrcPoints; ++i)
+		  dst->setScale(i, src.getScale(i));
+  }
+
+  if (src.hasRotations()) {
+	  for (int i = 0; i < numSrcPoints; ++i)
+		  dst->setRotation(i, src.getRotation(i));
+  }
+
+  if (src.hasSHCoefficients()) {
+	  for (int i = 0; i < numSrcPoints; ++i) {
+		  for (int k = 0; k < src.getNumSHCoeff3(); k++)
+			  dst->setSHCoefficient(k, i, src.getSHCoefficient(k, i));
+	  }
   }
 }
 
@@ -940,7 +957,7 @@ recolour(
     }
   }
 
-  if (desc.attributeLabel == KnownAttributeLabel::kReflectance && !desc.is3DGS) {
+  if (desc.attributeLabel == KnownAttributeLabel::kReflectance) {
     bool ok = recolourReflectance(
       desc, cfg, source, sourceToTargetScaleFactor, tgtToSrcOffset, *target);
 

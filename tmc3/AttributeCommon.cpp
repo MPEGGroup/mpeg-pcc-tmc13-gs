@@ -149,8 +149,27 @@ predModeEligibleColor(
   Vec3<int64_t> minValue = {0, 0, 0};
   Vec3<int64_t> maxValue = {0, 0, 0};
   for (int i = 0; i < predictor.neighborCount; ++i) {
-    const Vec3<attr_t> colorNeighbor =
-      pointCloud.getColor(indexes[predictor.neighbors[i].predictorIndex]);
+		Vec3<attr_t> colorNeighbor;
+		if (desc.attributeLabel == KnownAttributeLabel::kColour)
+			colorNeighbor = pointCloud.getColor(
+				indexes[predictor.neighbors[i].predictorIndex]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			colorNeighbor = pointCloud.getScale(
+				indexes[predictor.neighbors[i].predictorIndex]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			colorNeighbor = pointCloud.getRotation(
+				indexes[predictor.neighbors[i].predictorIndex]).xyz;
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_dc)
+			colorNeighbor = pointCloud.getSHCoefficient(0,
+				indexes[predictor.neighbors[i].predictorIndex]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_ac) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			colorNeighbor = pointCloud.getSHCoefficient(SHindex,
+				indexes[predictor.neighbors[i].predictorIndex]);
+		}
+
     for (size_t k = 0; k < 3; ++k) {
       if (i == 0 || colorNeighbor[k] < minValue[k]) {
         minValue[k] = colorNeighbor[k];
@@ -173,35 +192,31 @@ predModeEligibleRefl(
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
   const std::vector<uint32_t>& indexes,
-  const PCCPredictor& predictor,
-  const std::string& key,
-  const std::vector<int64_t>& reflectances)
+  const PCCPredictor& predictor)
 {
   if (predictor.neighborCount <= 1 || !aps.max_num_direct_predictors)
     return false;
 
   int64_t minValue = 0;
   int64_t maxValue = 0;
-  attr_t reflectanceNeighbor = 0;
-  gs_t reflectanceNeighborGS = 0;
-  gs_t reflectanceNeighborGST = 0;
   for (int i = 0; i < predictor.neighborCount; ++i) {
-    if (!desc.is3DGS) {
-        reflectanceNeighbor = pointCloud.getReflectance(indexes[predictor.neighbors[i].predictorIndex]);
-          if (i == 0 || reflectanceNeighbor < minValue) {
-            minValue = reflectanceNeighbor;
-          }
-          if (i == 0 || reflectanceNeighbor > maxValue) {
-            maxValue = reflectanceNeighbor;
-          }
-    } else {
-        reflectanceNeighborGS = reflectances[indexes[predictor.neighbors[i].predictorIndex]]; 
-        if (i == 0 || reflectanceNeighborGS < minValue) {
-            minValue = reflectanceNeighborGS;
-        }
-        if (i == 0 || reflectanceNeighborGS > maxValue) {
-            maxValue = reflectanceNeighborGS;
-        }
+	  attr_t reflectanceNeighbor;
+	  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+		  reflectanceNeighbor = pointCloud.getReflectance(
+			  indexes[predictor.neighbors[i].predictorIndex]);
+	  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+		  reflectanceNeighbor = pointCloud.getOpacity(
+			  indexes[predictor.neighbors[i].predictorIndex]);
+	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+		  reflectanceNeighbor = pointCloud.getRotation(
+			  indexes[predictor.neighbors[i].predictorIndex]).w;
+	  }
+    if (i == 0 || reflectanceNeighbor < minValue) {
+      minValue = reflectanceNeighbor;
+    }
+    if (i == 0 || reflectanceNeighbor > maxValue) {
+      maxValue = reflectanceNeighbor;
     }
   }
 

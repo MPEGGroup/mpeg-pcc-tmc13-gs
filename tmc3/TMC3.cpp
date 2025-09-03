@@ -536,7 +536,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   } params_attr;
 
   bool print_help = false;
-  bool gs_ext = false;
 
   // a helper to set the attribute
   std::function<po::OptionFunc::Func> attribute_setter =
@@ -553,17 +552,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       // NB: insert returns any existing element
       const auto& it = params.encoder.attributeIdxMap.insert(
         {name, int(params.encoder.attributeIdxMap.size())});
-
-      if(params.isDecoder) {
-        GSHelper::addGSKey(it.first->first);
-        params.decoder.gs_ext = true;
-        return;
-      }
-      if(gs_ext && !params.isDecoder){
-        GSHelper::addGSKey(it.first->first);
-        params_attr.desc.is3DGS = true;
-        params.encoder.sps.profile.gs_profile_compliant = true;
-      }
 
       if (it.second) {
         params.encoder.sps.attributeSets.push_back(params_attr.desc);
@@ -801,10 +789,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.sps.level, 0,
     "Abort if level limits exceeded")
 
-  ("3DGS",
-    gs_ext, false,
-    "3DGS Extension")
-
   (po::Section("Geometry"))
 
   ("geomTreeType",
@@ -1035,6 +1019,32 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  0: none (identity)\n"
     "  1: ITU-T BT.709\n"
     "  8: YCgCo")
+
+  ("shCoefficientLabel",
+    params_attr.desc.params.sh_coefficient_label_temp, (int)SHCoefficientLabel::kBand0_Order0,
+    "SH coefficients label \n"
+	"  0 : DC (band 0, order 0)\n"
+	"  1 : AC (1, -1)\t"
+	"  2 : AC (1, 0)\t"
+	"  3 : AC (1, 1)\n"
+	"  4 : AC (2, -2)\t"
+	"  5 : AC (2, -1)\t"
+	"  6 : AC (2, 0)\t"
+	"  7 : AC (2, 1)\t"
+	"  8 : AC (2, 2)\n"
+	"  9 : AC (3, -3)\t"
+	"  10 : AC (3, -2)\t"
+	"  11 : AC (3, -1)\t"
+	"  12 : AC (3, 0)\t"
+	"  13 : AC (3, 1)\t"
+	"  14 : AC (3, 2)\t"
+	"  15 : AC (3, 3)")
+
+  ("rotationComponentLabel",
+    params_attr.desc.params.rotation_component_label_temp, (int)RotationComponentLabel::kRotation_XYZ,
+    "Rotation component label\n"
+	"  0: xyz\n"
+	"  1: w")
 
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
@@ -1418,6 +1428,8 @@ sanitizeEncoderOpts(
     attrMeta.cicpParametersPresent = false;
     attrMeta.attr_frac_bits = 0;
     attrMeta.scalingParametersPresent = false;
+		attrMeta.shCoefficientParameterPresent = false;
+		attrMeta.rotationComponentParameterPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
@@ -1441,24 +1453,46 @@ sanitizeEncoderOpts(
       attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
     }
 
-    if (attr_sps.is3DGS) {
-      // Avoid wasting bits signalling chroma quant step size for reflectance
-      attr_aps.aps_chroma_qp_offset = 0;
-      attr_enc.abh.attr_layer_qp_delta_chroma.clear();
-
-      // There is no matrix for reflectace
-      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-      attr_sps.attr_num_dimensions_minus1 = 0;
-      attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
-
-      attr_sps.attr_instance_id = it.second;
-    }
-
     if (it.first == "color") {
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kColour;
       attrMeta.cicpParametersPresent = true;
     }
+
+		// Gaussian Splat Compression
+		if (it.first == "opacity") {
+			attr_sps.attr_num_dimensions_minus1 = 0;
+			attr_sps.attributeLabel = KnownAttributeLabel::kOpacity;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+		}
+
+		if (it.first == "scale") {
+			attr_sps.attr_num_dimensions_minus1 = 2;
+			attr_sps.attributeLabel = KnownAttributeLabel::kScale;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+		}
+
+		if (!it.first.compare(0, 8, "rotation")) {
+			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
+			attrMeta.rotation_component_label = (RotationComponentLabel)attrMeta.rotation_component_label_temp;
+			if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_XYZ)
+				attr_sps.attr_num_dimensions_minus1 = 2;
+			else if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_W)
+				attr_sps.attr_num_dimensions_minus1 = 0;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+			attrMeta.rotationComponentParameterPresent = true;
+		}
+
+		if (!it.first.compare(0, 13, "SHCoefficient")) {
+			attr_sps.attr_num_dimensions_minus1 = 2;
+			attrMeta.sh_coefficient_label = (SHCoefficientLabel)attrMeta.sh_coefficient_label_temp;
+			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0)
+				attr_sps.attributeLabel = KnownAttributeLabel::kSH_dc;
+			else
+				attr_sps.attributeLabel = KnownAttributeLabel::kSH_ac;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+			attrMeta.shCoefficientParameterPresent = true;
+		}
 
     // Assume that YCgCo is actually YCgCoR for now
     // This requires an extra bit to represent chroma (luma will have a
@@ -1796,10 +1830,26 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     pointCloud.removeReflectances();
   assert(codeReflectance == pointCloud.hasReflectances());
 
-  bool codeGSInfo = GSHelper::getGSKeysSize() > 0;
-  if (!codeGSInfo)
-    pointCloud.removeGSInfo();
-  assert(codeGSInfo == pointCloud.hasGSInfo());
+  bool codeOpacity = params->encoder.attributeIdxMap.count("opacity");
+  if (!codeOpacity)
+	  pointCloud.removeOpacities();
+  assert(codeOpacity == pointCloud.hasOpacities());
+
+  bool codeRotation = params->encoder.attributeIdxMap.count("rotationXYZ");
+  if (!codeRotation) {
+	  pointCloud.removeRotations();
+  }
+  assert(codeRotation == pointCloud.hasRotations());
+
+  bool codeScale = params->encoder.attributeIdxMap.count("scale");
+  if (!codeScale)
+	  pointCloud.removeScales();
+  assert(codeScale == pointCloud.hasScales());
+
+  bool codeSHCoefficient = params->encoder.attributeIdxMap.count("SHCoefficient0");
+  if (!codeSHCoefficient)
+	  pointCloud.removeSHCoefficients();
+  assert(codeSHCoefficient == pointCloud.hasSHCoefficients());
 
   clock->start();
 
@@ -1807,17 +1857,6 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
 
   //Fix: replace by parameter likes dynamicAttrRange
-  if (codeGSInfo)
-  {
-    for(auto& desc : params->encoder.sps.attributeSets){
-      auto key = GSHelper::getGSKey(desc.attr_instance_id);
-      auto& gsinfo = pointCloud.getGSInfo(key);
-      gs_t min = *std::min_element(gsinfo.begin(),gsinfo.end());
-      desc.params.scalingParametersPresent = false;
-      desc.params.attr_offset = 0;
-    }
-  }
-
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
 
   // The reconstructed point cloud
@@ -2139,33 +2178,6 @@ scaleAttributes(
     auto& val = cloud.getReflectance(i);
     val = scaler(params, val);
   }
-}
-
-//----------------------------------------------------------------------------
-
-template<typename Op>
-void
-scaleEachAttributes(
-  const std::vector<AttributeDescription>& attrDescs,
-  PCCPointSet3& cloud,
-  Op scaler)
-{
-  // todo(df): extend this to other attributes
-  const AttributeDescription* attrDesc = findReflAttrDesc(attrDescs);
-  if (!attrDesc || !attrDesc->params.scalingParametersPresent)
-    return;
-
-  const auto pointCount = cloud.getPointCount();
-  for(auto& desc : attrDescs){
-    if(!desc.is3DGS) continue;
-
-    auto key = GSHelper::getGSKey(desc.attr_instance_id);
-    for (size_t i = 0; i < pointCount; ++i) {
-      auto& val = cloud.getGSInfo(i,key);
-      val = scaler(desc.params, val);
-    }
-  }
-
 }
 
 //----------------------------------------------------------------------------
