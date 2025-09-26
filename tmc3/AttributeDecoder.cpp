@@ -330,6 +330,16 @@ AttributeDecoder::decodeReflectancesPred(
 {
   const size_t pointCount = pointCloud.getPointCount();
   const int64_t maxReflectance = (1ll << desc.bitdepth) - 1;
+  std::vector<int64_t> reflectances;
+  reflectances.resize(pointCount);
+  std::string key;
+
+  if (desc.is3DGS) {
+    key = GSHelper::getGSKey(desc.attr_instance_id);
+    for (size_t index = 0; index < pointCount; ++index) {
+        reflectances[index] = int32_t(pointCloud.getGSInfo(index, key));
+    }  
+  }
 
   int zeroRunRem = 0;
   const size_t lodCount = _lods.numPointsInLod.size();
@@ -351,17 +361,39 @@ AttributeDecoder::decodeReflectancesPred(
         attValue0 = decoder.decode();
 
       if (predModeEligibleRefl(
-            desc, aps, pointCloud, _lods.indexes, predictor))
+            desc, aps, pointCloud, _lods.indexes, predictor,key, reflectances))
         decodePredModeRefl(aps, attValue0, predictor);
 
-      attr_t& reflectance = pointCloud.getReflectance(pointIndex);
-      const int64_t quantPredAttValue =
-        predictor.predictReflectance(pointCloud, _lods.indexes);
-      const int64_t delta = divExp2RoundHalfUp(
-        quant[0].scale(attValue0), kFixedPointAttributeShift);
-      const int64_t reconstructedQuantAttValue = quantPredAttValue + delta;
-      reflectance = attr_t(
-        PCCClip(reconstructedQuantAttValue, int64_t(0), maxReflectance));
+      attr_t reflectanceVal = 0;
+      gs_t reflectanceGSVal = 0;
+      gs_t reflectanceGSValT = 0;
+
+      if (!desc.is3DGS) {
+        reflectanceVal = pointCloud.getReflectance(pointIndex);
+        attr_t& reflectance = reflectanceVal;
+
+        const int64_t quantPredAttValue = predictor.predictReflectance(desc, pointCloud, _lods.indexes,key,reflectances);
+        const int64_t delta = divExp2RoundHalfUp(quant[0].scale(attValue0), kFixedPointAttributeShift);
+        const int64_t reconstructedQuantAttValue = quantPredAttValue + delta;
+        reflectance = attr_t(PCCClip(reconstructedQuantAttValue, int64_t(0), maxReflectance));
+        pointCloud.setReflectance(pointIndex, reflectance);
+
+      } else {
+        reflectanceGSVal = reflectances[pointIndex];
+        gs_t& reflectanceGS = reflectanceGSVal;
+
+        const int64_t quantPredAttValue = predictor.predictReflectance(desc, pointCloud, _lods.indexes,key,reflectances);
+        const int64_t delta = divExp2RoundHalfUp(quant[0].scale(attValue0), kFixedPointAttributeShift);
+        const int64_t reconstructedQuantAttValue = quantPredAttValue + delta;
+
+        const int64_t minReflectance = 0;
+        reflectanceGS = gs_t(PCCClip(reconstructedQuantAttValue, minReflectance, maxReflectance));
+        pointCloud.setGSInfo(pointIndex, key, reflectanceGS);
+        reflectances[pointIndex] = reflectanceGS;
+
+      }
+
+      
     }
   }
 }
@@ -774,13 +806,24 @@ AttributeDecoder::decodeReflectancesLift(
     PCCLiftPredict(_lods.predictors, coeffRange, false, reflectances);
   }
 
-  const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
-  for (size_t f = 0; f < pointCount; ++f) {
-    const auto refl =
-      divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
-    pointCloud.setReflectance(
-      _lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
+  if (!desc.is3DGS) {
+      const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
+      for (size_t f = 0; f < pointCount; ++f) {
+          const auto refl = divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
+          pointCloud.setReflectance(_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
+      }  
+  } else {
+      auto key = GSHelper::getGSKey(desc.attr_instance_id);
+
+      const int64_t maxVal = (1 << desc.bitdepth) - 1;
+      //const int64_t minVal = -1 * (1 << desc.bitdepth);
+      const int64_t minVal = 0;
+      for (size_t f = 0; f < pointCount; ++f) {
+          const auto refl = divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
+          pointCloud.setGSInfo(_lods.indexes[f], key, gs_t(PCCClip(refl, minVal, maxVal)));
+      }    
   }
+
 }
 
 //============================================================================

@@ -342,19 +342,31 @@ struct PCCPredictor {
     return Vec3<attr_t>(predicted[0], predicted[1], predicted[2]);
   }
 
-  int64_t predictReflectance(
-    const PCCPointSet3& pointCloud, const std::vector<uint32_t>& indexes) const
+  int64_t predictReflectance(const AttributeDescription& desc,
+    const PCCPointSet3& pointCloud,
+    const std::vector<uint32_t>& indexes,
+    const std::string& key,
+    const std::vector<int64_t>& reflectances) const
   {
     int64_t predicted(0);
+    int64_t predictedT(0);
     if (predMode > neighborCount) {
       /* nop */
     } else if (predMode > 0) {
-      predicted = pointCloud.getReflectance(
-        indexes[neighbors[predMode - 1].predictorIndex]);
+      if (!desc.is3DGS) {
+          predicted = pointCloud.getReflectance(indexes[neighbors[predMode - 1].predictorIndex]);      
+      } else {
+          predicted = reflectances[indexes[neighbors[predMode - 1].predictorIndex]];
+      }
+
     } else {
       for (size_t i = 0; i < neighborCount; ++i) {
-        predicted += neighbors[i].weight
-          * pointCloud.getReflectance(indexes[neighbors[i].predictorIndex]);
+          if (!desc.is3DGS) {
+              predicted += neighbors[i].weight * pointCloud.getReflectance(indexes[neighbors[i].predictorIndex]);
+          } else {
+              predicted += neighbors[i].weight * reflectances[indexes[neighbors[i].predictorIndex]];
+          }
+
       }
       predicted = divExp2RoundHalfInf(predicted, kFixedPointWeightShift);
     }

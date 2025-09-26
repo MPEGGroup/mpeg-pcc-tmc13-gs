@@ -157,7 +157,9 @@ protected:
     PCCPredictor& predictor,
     PCCResidualsEncoder& encoder,
     PCCResidualsEntropyEstimator& context,
-    const Quantizer& quant);
+    const Quantizer& quant,
+    const std::string& key,
+    const std::vector<int64_t>& reflectances);
 
   static void encodePredModeRefl(
     const AttributeParameterSet& aps, int predMode, int32_t& coeff);
