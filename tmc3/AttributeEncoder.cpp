@@ -582,15 +582,24 @@ AttributeEncoder::decidePredModeRefl(
   PCCPredictor& predictor,
   PCCResidualsEncoder& encoder,
   PCCResidualsEntropyEstimator& context,
-  const Quantizer& quant)
+  const Quantizer& quant,
+  const std::string& key,
+  const std::vector<int64_t>& reflectances)
 {
-  uint64_t attrValue = pointCloud.getReflectance(indexesLOD[predictorIndex]);
+  uint64_t attrValue = 0;
+  uint64_t attrValueT = 0;
 
+  if (!desc.is3DGS) {
+    attrValue = pointCloud.getReflectance(indexesLOD[predictorIndex]);  
+  } else {
+    attrValue = reflectances[indexesLOD[predictorIndex]]; 
+  }
   // base case: start with the first neighbour
   // NB: skip evaluation of mode 0 (weighted average of n neighbours)
   int startpredIndex = aps.direct_avg_predictor_disabled_flag;
   predictor.predMode = startpredIndex;
-  uint64_t attrPred = predictor.predictReflectance(pointCloud, indexesLOD);
+  uint64_t attrPredT = predictor.predictReflectance(desc,pointCloud, indexesLOD,key,reflectances);
+  uint64_t attrPred = predictor.predictReflectance(desc,pointCloud, indexesLOD,key,reflectances);
   int64_t attrResidualQuant =
     computeReflectanceResidual(attrValue, attrPred, quant);
 
@@ -601,9 +610,13 @@ AttributeEncoder::decidePredModeRefl(
   for (int i = startpredIndex; i < predictor.neighborCount; i++) {
     if (i == aps.max_num_direct_predictors)
       break;
-
-    attrPred = pointCloud.getReflectance(
-      indexesLOD[predictor.neighbors[i].predictorIndex]);
+    if (!desc.is3DGS) {
+      attrPred = pointCloud.getReflectance(indexesLOD[predictor.neighbors[i].predictorIndex]);    
+    } else {
+      attrPred = reflectances[indexesLOD[predictor.neighbors[i].predictorIndex]]; 
+    
+    }
+    
     attrResidualQuant = computeReflectanceResidual(attrValue, attrPred, quant);
 
     mode = i + !aps.direct_avg_predictor_disabled_flag;
@@ -660,6 +673,17 @@ AttributeEncoder::encodeReflectancesPred(
   PCCResidualsEntropyEstimator context;
   int zeroRunAcc = 0;
 
+  std::vector<int64_t> reflectances;
+  reflectances.resize(pointCount);
+  std::string key;
+
+  for (size_t index = 0; index < pointCount; ++index) {
+    if (desc.is3DGS) {
+        key = GSHelper::getGSKey(desc.attr_instance_id);
+        reflectances[index] = int32_t(pointCloud.getGSInfo(index,key));    
+    }    
+  }  
+
   const size_t lodCount = _lods.numPointsInLod.size();
   for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
     int quantLayer = std::min(int(qpSet.layers.size()) - 1, int(lod));
@@ -670,17 +694,25 @@ AttributeEncoder::encodeReflectancesPred(
       auto quant = qpSet.quantizers(pointCloud[pointIndex], quantLayer);
       auto& predictor = _lods.predictors[predictorIndex];
       predictor.predMode = 0;
+      
 
       bool predModeEligible =
-        predModeEligibleRefl(desc, aps, pointCloud, _lods.indexes, predictor);
+        predModeEligibleRefl(desc, aps, pointCloud, _lods.indexes, predictor,key,reflectances); ////*****
       if (predModeEligible)
         decidePredModeRefl(
           desc, aps, pointCloud, _lods.indexes, predictorIndex, predictor,
-          encoder, context, quant[0]);
+          encoder, context, quant[0],key,reflectances);
 
-      const uint64_t reflectance = pointCloud.getReflectance(pointIndex);
+      uint64_t reflectance = 0;
+      uint64_t reflectanceT = 0;
+
+      if (!desc.is3DGS) {
+        reflectance = pointCloud.getReflectance(pointIndex);
+      } else {  
+        reflectance = reflectances[pointIndex];      
+      }
       const attr_t predictedReflectance =
-        predictor.predictReflectance(pointCloud, _lods.indexes);
+        predictor.predictReflectance(desc,pointCloud, _lods.indexes,key, reflectances); ///*****
       const int64_t quantAttValue = reflectance;
       const int64_t quantPredAttValue = predictedReflectance;
       const int64_t delta = quant[0].quantize(
@@ -694,8 +726,16 @@ AttributeEncoder::encodeReflectancesPred(
         divExp2RoundHalfUp(quant[0].scale(delta), kFixedPointAttributeShift);
       const int64_t reconstructedQuantAttValue =
         quantPredAttValue + reconstructedDelta;
-      const attr_t reconstructedReflectance =
-        attr_t(PCCClip(reconstructedQuantAttValue, int64_t(0), clipMax));
+
+      attr_t reconstructedReflectance = 0;
+      gs_t reconstructedReflectanceGS = 0;
+
+      if (!desc.is3DGS) {
+        reconstructedReflectance = attr_t(PCCClip(reconstructedQuantAttValue, int64_t(0), clipMax));
+      } else {
+        const int64_t clipMin = 0;
+        reconstructedReflectanceGS = gs_t(PCCClip(reconstructedQuantAttValue, clipMin, clipMax));
+      }
 
       if (!attValue0)
         ++zeroRunAcc;
@@ -704,7 +744,13 @@ AttributeEncoder::encodeReflectancesPred(
         encoder.encode(attValue0);
         zeroRunAcc = 0;
       }
-      pointCloud.setReflectance(pointIndex, reconstructedReflectance);
+      if (!desc.is3DGS) {
+        pointCloud.setReflectance(pointIndex, reconstructedReflectance);
+      } else {
+        pointCloud.setGSInfo(pointIndex, key,reconstructedReflectanceGS);
+        reflectances[pointIndex] = reconstructedReflectanceGS;
+      }
+      
       encoder.resStatUpdateRefl(attValue0);
     }
   }
@@ -1360,9 +1406,12 @@ AttributeEncoder::encodeReflectancesLift(
   reflectances.resize(pointCount);
 
   for (size_t index = 0; index < pointCount; ++index) {
-    reflectances[index] =
-      int32_t(pointCloud.getReflectance(_lods.indexes[index]))
-      << kFixedPointAttributeShift;
+    if (!desc.is3DGS) {
+        reflectances[index] = int32_t(pointCloud.getReflectance(_lods.indexes[index])) << kFixedPointAttributeShift;
+    } else {
+        auto key = GSHelper::getGSKey(desc.attr_instance_id);
+        reflectances[index] = int32_t(pointCloud.getGSInfo(_lods.indexes[index],key)) << kFixedPointAttributeShift;    
+    }    
   }
 
   const size_t lodCount = _lods.numPointsInLod.size();
@@ -1416,12 +1465,23 @@ AttributeEncoder::encodeReflectancesLift(
     PCCLiftPredict(_lods.predictors, coeffRange, false, reflectances);
   }
 
-  const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
-  for (size_t f = 0; f < pointCount; ++f) {
-    const int64_t refl =
-      divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
-    pointCloud.setReflectance(
-      _lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
+  if (!desc.is3DGS) {
+    const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
+    for (size_t f = 0; f < pointCount; ++f) {
+      const int64_t refl = divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
+      pointCloud.setReflectance(_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
+    }  
+  } else {
+    auto key = GSHelper::getGSKey(desc.attr_instance_id);
+    const int64_t maxVal = (1 << desc.bitdepth) - 1;
+    //const int64_t minVal = -1 * (1 << desc.bitdepth);
+    const int64_t minVal = 0;
+    for (int f = 0; f < pointCount; ++f) {
+        const int64_t refl = divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
+        pointCloud.setGSInfo(_lods.indexes[f], key, gs_t(PCCClip(refl,minVal,maxVal)));
+ 
+    } 
+  
   }
 }
 
