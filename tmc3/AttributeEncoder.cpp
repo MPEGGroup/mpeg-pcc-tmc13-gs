@@ -1027,32 +1027,38 @@ AttributeEncoder::encodeReflectancesTransformRaht(
   PCCResidualsEncoder& encoder)
 {
   const int voxelCount = int(pointCloud.getPointCount());
-  std::vector<MortonCodeWithIndex> packedVoxel(voxelCount);
-  for (int n = 0; n < voxelCount; n++) {
-    packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
-    packedVoxel[n].index = n;
+  if (_sortedMortonCode.size() == 0)
+  {
+    std::vector<MortonCodeWithIndex> packedVoxel(voxelCount);
+    for (int n = 0; n < voxelCount; n++) {
+      packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
+      packedVoxel[n].index = n;
+    }
+    sort(packedVoxel.begin(), packedVoxel.end());
+    _sortedMortonCode.resize(voxelCount);
+    _sortedIndex.resize(voxelCount);
+    for (int n = 0; n < voxelCount; n++) {
+      _sortedMortonCode[n] = packedVoxel[n].mortonCode;
+      _sortedIndex[n] = packedVoxel[n].index;
+    }
   }
-  sort(packedVoxel.begin(), packedVoxel.end());
 
   // Allocate arrays.
   const int attribCount = 1;
-  std::vector<int64_t> mortonCode(voxelCount);
   std::vector<int> attributes(attribCount * voxelCount);
   std::vector<int> coefficients(attribCount * voxelCount);
   std::vector<Qps> pointQpOffsets(voxelCount);
 
   // Populate input arrays.
   for (int n = 0; n < voxelCount; n++) {
-    mortonCode[n] = packedVoxel[n].mortonCode;
+    auto& index = _sortedIndex[n];
     if(!desc.is3DGS){
-      const auto reflectance = pointCloud.getReflectance(packedVoxel[n].index);
-      attributes[attribCount * n] = reflectance;
+      attributes[attribCount * n] = pointCloud.getReflectance(index);
     }else{
       auto key = GSHelper::getGSKey(desc.attr_instance_id);
-      const auto values = pointCloud.getGSInfo(packedVoxel[n].index,key);
-      attributes[attribCount * n] = values;
+      attributes[attribCount * n] = pointCloud.getGSInfo(index,key);
     }
-    pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[packedVoxel[n].index]);
+    pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[index]);
   }
 
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
@@ -1061,7 +1067,7 @@ AttributeEncoder::encodeReflectancesTransformRaht(
   // Transform.
   regionAdaptiveHierarchicalTransform(
     aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
-    pointQpOffsets.data(), mortonCode.data(), attributes.data(), attribCount,
+    pointQpOffsets.data(), _sortedMortonCode.data(), attributes.data(), attribCount,
     voxelCount, coefficients.data());
 
   // Entropy encode.
@@ -1086,18 +1092,17 @@ AttributeEncoder::encodeReflectancesTransformRaht(
       int64_t val = attributes[attribCount * n];
       const attr_t reflectance =
         attr_t(PCCClip(val, minReflectance, maxReflectance));
-      pointCloud.setReflectance(packedVoxel[n].index, reflectance);
+      pointCloud.setReflectance(_sortedIndex[n], reflectance);
     } 
   }else{
     auto key = GSHelper::getGSKey(desc.attr_instance_id);
-    const int64_t maxVal = (1 << desc.bitdepth) - 1;
-    const int64_t minVal = -1 * (1 << desc.bitdepth);
-    // const int64_t minVal = 0;
+    const gs_t maxVal = (1 << desc.bitdepth) - 1;
+    const gs_t minVal = 0;
     for (int n = 0; n < voxelCount; n++) {
       int64_t val = attributes[attribCount * n];
       const gs_t attr =
         gs_t(PCCClip(val, minVal, maxVal));
-      pointCloud.setGSInfo(packedVoxel[n].index, key, attr);
+      pointCloud.setGSInfo(_sortedIndex[n], key, attr);
     } 
   }
   
@@ -1114,7 +1119,7 @@ AttributeEncoder::encodeColorsTransformRaht(
   PCCResidualsEncoder& encoder)
 {
   const int voxelCount = int(pointCloud.getPointCount());
-  std::vector<MortonCodeWithIndex> packedVoxel(voxelCount);
+  std::vector<MortonCodeWithIndexAndPos> packedVoxel(voxelCount);
   for (int n = 0; n < voxelCount; n++) {
     packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
     packedVoxel[n].index = n;

@@ -175,6 +175,8 @@ private:
   AttributeBrickHeader* _abh;
 
   AttributeLods _lods;
+  std::vector<int64_t> _sortedMortonCode;
+  std::vector<int32_t> _sortedIndex;
 };
 
 //============================================================================
