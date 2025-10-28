@@ -277,12 +277,25 @@ private:
 
 //============================================================================
 
-struct MortonCodeWithIndex {
+struct MortonCodeWithIndexAndPos {
   int64_t mortonCode;
 
   // The position used to generate the mortonCode
   Vec3<int32_t> position;
 
+  int32_t index;
+
+  bool operator<(const MortonCodeWithIndexAndPos& rhs) const
+  {
+    // NB: index used to maintain stable sort
+    if (mortonCode == rhs.mortonCode)
+      return index < rhs.index;
+    return mortonCode < rhs.mortonCode;
+  }
+};
+
+struct MortonCodeWithIndex {
+  int64_t mortonCode;
   int32_t index;
 
   bool operator<(const MortonCodeWithIndex& rhs) const
@@ -692,7 +705,7 @@ inline void
 computeNearestNeighbors(
   const AttributeParameterSet& aps,
   const AttributeBrickHeader& abh,
-  const std::vector<MortonCodeWithIndex>& packedVoxel,
+  const std::vector<MortonCodeWithIndexAndPos>& packedVoxel,
   const std::vector<uint32_t>& retained,
   int32_t startIndex,
   int32_t endIndex,
@@ -1085,7 +1098,7 @@ computeNearestNeighbors(
 
 inline void
 subsampleByDistance(
-  const std::vector<MortonCodeWithIndex>& packedVoxel,
+  const std::vector<MortonCodeWithIndexAndPos>& packedVoxel,
   const std::vector<uint32_t>& input,
   const int32_t shiftBits0,
   std::vector<uint32_t>& retained,
@@ -1191,7 +1204,7 @@ subsampleByDistance(
 inline int32_t
 subsampleByOctreeWithCentroid(
   const PCCPointSet3& pointCloud,
-  const std::vector<MortonCodeWithIndex>& packedVoxel,
+  const std::vector<MortonCodeWithIndexAndPos>& packedVoxel,
   int32_t octreeNodeSizeLog2,
   const bool backward,
   const std::vector<uint32_t>& voxels)
@@ -1248,7 +1261,7 @@ subsampleByOctreeWithCentroid(
 inline void
 subsampleByOctree(
   const PCCPointSet3& pointCloud,
-  const std::vector<MortonCodeWithIndex>& packedVoxel,
+  const std::vector<MortonCodeWithIndexAndPos>& packedVoxel,
   const std::vector<uint32_t>& input,
   int32_t octreeNodeSizeLog2,
   std::vector<uint32_t>& retained,
@@ -1322,7 +1335,7 @@ subsample(
   const AttributeParameterSet& aps,
   const AttributeBrickHeader& abh,
   const PCCPointSet3& pointCloud,
-  const std::vector<MortonCodeWithIndex>& packedVoxel,
+  const std::vector<MortonCodeWithIndexAndPos>& packedVoxel,
   const std::vector<uint32_t>& input,
   const int32_t lodIndex,
   std::vector<uint32_t>& retained,
@@ -1357,7 +1370,7 @@ inline void
 computeMortonCodesUnsorted(
   const PCCPointSet3& pointCloud,
   const Vec3<int32_t> lodNeighBias,
-  std::vector<MortonCodeWithIndex>& packedVoxel)
+  std::vector<MortonCodeWithIndexAndPos>& packedVoxel)
 {
   const int32_t pointCount = int32_t(pointCloud.getPointCount());
   packedVoxel.resize(pointCount);
@@ -1408,7 +1421,7 @@ buildPredictorsFast(
   const int32_t pointCount = int32_t(pointCloud.getPointCount());
   assert(pointCount);
 
-  std::vector<MortonCodeWithIndex> packedVoxel;
+  std::vector<MortonCodeWithIndexAndPos> packedVoxel;
   computeMortonCodesUnsorted(pointCloud, aps.lodNeighBias, packedVoxel);
 
   if (!aps.canonical_point_order_flag)

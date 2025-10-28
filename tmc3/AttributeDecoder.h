@@ -133,6 +133,8 @@ protected:
 
 private:
   AttributeLods _lods;
+  std::vector<int64_t> _sortedMortonCode;
+  std::vector<int32_t> _sortedIndex;
 };
 
 //============================================================================
