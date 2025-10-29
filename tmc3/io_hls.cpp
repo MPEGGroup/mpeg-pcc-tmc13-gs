@@ -394,7 +394,8 @@ write(const SequenceParameterSet& sps)
   bs.writeUn(1, sps.profile.dense_profile_compliant);
   bs.writeUn(1, sps.profile.predictive_profile_compliant);
   bs.writeUn(1, sps.profile.main_profile_compliant);
-  bs.writeUn(18, sps.profile.reserved_profile_18bits);
+  bs.writeUn(1, sps.profile.gs_profile_compliant);
+  bs.writeUn(17, sps.profile.reserved_profile_17bits);
   bs.writeUn(1, sps.profile.slice_reordering_constraint_flag);
   bs.writeUn(1, sps.profile.unique_point_positions_constraint_flag);
 
@@ -480,7 +481,8 @@ parseSps(const PayloadBuffer& buf)
   bs.readUn(1, &sps.profile.dense_profile_compliant);
   bs.readUn(1, &sps.profile.predictive_profile_compliant);
   bs.readUn(1, &sps.profile.main_profile_compliant);
-  bs.readUn(18, &sps.profile.reserved_profile_18bits);
+  bs.readUn(1, &sps.profile.gs_profile_compliant);
+  bs.readUn(17, &sps.profile.reserved_profile_17bits);
   bs.readUn(1, &sps.profile.slice_reordering_constraint_flag);
   bs.readUn(1, &sps.profile.unique_point_positions_constraint_flag);
 
