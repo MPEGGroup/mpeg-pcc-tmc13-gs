@@ -157,7 +157,9 @@ protected:
     PCCPredictor& predictor,
     PCCResidualsEncoder& encoder,
     PCCResidualsEntropyEstimator& context,
-    const Quantizer& quant);
+    const Quantizer& quant,
+    const std::string& key,
+    const std::vector<int64_t>& reflectances);
 
   static void encodePredModeRefl(
     const AttributeParameterSet& aps, int predMode, int32_t& coeff);
@@ -175,6 +177,8 @@ private:
   AttributeBrickHeader* _abh;
 
   AttributeLods _lods;
+  std::vector<int64_t> _sortedMortonCode;
+  std::vector<int32_t> _sortedIndex;
 };
 
 //============================================================================

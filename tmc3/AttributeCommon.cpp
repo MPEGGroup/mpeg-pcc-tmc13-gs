@@ -173,21 +173,35 @@ predModeEligibleRefl(
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
   const std::vector<uint32_t>& indexes,
-  const PCCPredictor& predictor)
+  const PCCPredictor& predictor,
+  const std::string& key,
+  const std::vector<int64_t>& reflectances)
 {
   if (predictor.neighborCount <= 1 || !aps.max_num_direct_predictors)
     return false;
 
   int64_t minValue = 0;
   int64_t maxValue = 0;
+  attr_t reflectanceNeighbor = 0;
+  gs_t reflectanceNeighborGS = 0;
+  gs_t reflectanceNeighborGST = 0;
   for (int i = 0; i < predictor.neighborCount; ++i) {
-    const attr_t reflectanceNeighbor = pointCloud.getReflectance(
-      indexes[predictor.neighbors[i].predictorIndex]);
-    if (i == 0 || reflectanceNeighbor < minValue) {
-      minValue = reflectanceNeighbor;
-    }
-    if (i == 0 || reflectanceNeighbor > maxValue) {
-      maxValue = reflectanceNeighbor;
+    if (!desc.is3DGS) {
+        reflectanceNeighbor = pointCloud.getReflectance(indexes[predictor.neighbors[i].predictorIndex]);
+          if (i == 0 || reflectanceNeighbor < minValue) {
+            minValue = reflectanceNeighbor;
+          }
+          if (i == 0 || reflectanceNeighbor > maxValue) {
+            maxValue = reflectanceNeighbor;
+          }
+    } else {
+        reflectanceNeighborGS = reflectances[indexes[predictor.neighbors[i].predictorIndex]]; 
+        if (i == 0 || reflectanceNeighborGS < minValue) {
+            minValue = reflectanceNeighborGS;
+        }
+        if (i == 0 || reflectanceNeighborGS > maxValue) {
+            maxValue = reflectanceNeighborGS;
+        }
     }
   }
 

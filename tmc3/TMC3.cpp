@@ -562,6 +562,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       if(gs_ext && !params.isDecoder){
         GSHelper::addGSKey(it.first->first);
         params_attr.desc.is3DGS = true;
+        params.encoder.sps.profile.gs_profile_compliant = true;
       }
 
       if (it.second) {
@@ -791,6 +792,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("mainProfileCompliant",
     params.encoder.sps.profile.main_profile_compliant, false,
     "Indicates compliance to Main profile")
+
+  ("gsProfileCompliant",
+    params.encoder.sps.profile.gs_profile_compliant, false,
+    "Indicates compliance to gs profile")
 
   ("levelIdc",
     params.encoder.sps.level, 0,

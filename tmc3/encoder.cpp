@@ -452,7 +452,7 @@ PCCTMC3Encoder3::fixupParameterSets(EncoderParams* params)
   }
 
   // development level / header
-  params->sps.profile.reserved_profile_18bits = 0;
+  params->sps.profile.reserved_profile_17bits = 0;
 
   // constraints
   params->sps.profile.unique_point_positions_constraint_flag = false;
