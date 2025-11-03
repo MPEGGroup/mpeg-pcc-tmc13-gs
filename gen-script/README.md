@@ -1,6 +1,6 @@
 # The gen-script package for G-PCC-for-GSC simulations
 
-This guide explains how to prepare data, configure paths, and run scripts for JEE6.2 and JEE6.6 experiments using **G-PCC-for-GSC**.
+This guide explains how to prepare data, configure paths, and run scripts for JEE6.2, JEE6.6 and G-PCC CEs experiments using **G-PCC-for-GSC**.
 
 ### Package Structure
 The `gen-script` package is organized as follows:
@@ -12,16 +12,18 @@ The `gen-script` package is organized as follows:
 ├── README.md                          # Documentation for the package
 │
 ├── anchor_results/                    # Reference (anchor) results for comparison
-│   ├── GPCC-octree-raht-lossless-geom-lossy-attrs-1F.csv
-│   └── GPCC-octree-raht-lossless-geom-lossy-attrs.csv
+│   ├── 1F_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg152.csv
+│   └── NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv
 │
-└── templates/                         # XLSM Templates from m73911 for Reporting
-    ├── m73911_GSC_template_JEE6.2_and_related.xlsm
-    └── m73911_GSC_template_JEE6.6_JEE6.7_and_related.xlsm
+└── templates/                         # XLSM Templates from WG04N0751 for Reporting
+    ├── WG04N0751 template.xlsm
 ```
 > Note: The provided anchor result files (.csv) were generated in the LGE environment. **After completing the anchor cross‑check, please update these CSV files accordingly**.
 
-> Note: [m73911](https://dms.mpeg.expert/doc_end_user/current_document.php?id=100790&id_meeting=0) - [GSC][CTC related] Templates for Reporting Results
+> Note: [MDS25782_WG04_N00751	
+](https://dms.mpeg.expert/doc_end_user/documents/152_Geneva/wg11/MDS25782_WG04_N00751.zip) - Common test conditions for Gaussian splat coding
+
+
 
 ## 1. Preparation 
 
@@ -45,10 +47,12 @@ python3 -m pip install openpyxl==3.1.5
 Clone the repository:
 ```bash
 git clone https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/g-pcc-for-gsc
+cd g-pcc-for-gsc
+git fetch origin tag release_mpeg152-rc1
+git checkout tags/release_mpeg152-rc1
 ```
 Build the project:
 ```bash
-cd g-pcc-for-gsc
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make
@@ -59,43 +63,24 @@ Edit `gen-script.sh` to set the sequence, binary, and configuration directories.
 
 ### Experiment Name
 ```bash
-JOBNAME="GSC-GPCCv1-JEE6.6"
+JOBNAME="G-PCC-for-GSC-mpeg152"
 ```
 ### Experiment Settings
 ```
 MODEs=("lossless-geom-lossy-attrs")
 TOOLs=("octree-raht") # or octree-predlift
-AUTO_RUN=0    # 0:off, 1:run_local, 2:run_slurm, Run scripts immediately after generation
-FLAG_1F=1     # 0: JEE6.2, 1: JEE6.6
-MET_FCOUNT=32 # Encoding and decoding for full frame; metric for 32 frames
+AUTO_RUN=1            # 0:off, 1:run_local, 2:run_slurm
+FLAG_1F=1             # 0: NF, 1: 1F
 ```
 > **Note**: If `AUTO_RUN` is set to 1 or 2, the generated scripts will run immediately after creation.
 
 ### Test Sequences
-Set the `sequence_name` and `ply_dir` path:
-
+Set the `DATASET_PATH` path:
 ```bash
-PATHs[sequence_name]=/path/to/ply_dir/
+## Dataset path
+DATASET_PATH=/path/to/CTC/
 ```
-> **Note**: `sequence_name` must match the sheet name in the XLSM file.
-
-### Example
-```bash
-# JEE6.2 & JEE6.6
-PATHs[bartender_track]="/path/to/dataset/bartender_stable/track"
-PATHs[breakfast_track]="/path/to/dataset/breakfast_stable/track"
-PATHs[cinema_track]="/path/to/dataset/cinema_stable/track"
-PATHs[ManWithFruit]="/path/to/dataset/ManWithFruit/track"
-
-# JEE6.2
-if ! [ $FLAG_1F == 1 ]; then
-PATHs[breakfast_untrack]="/path/to/dataset/breakfast_untrack/untrack"
-PATHs[breakfast_semitrack]="/path/to/dataset/breakfast_stable/partially_track"
-PATHs[cinema_semitrack]="/path/to/dataset/cinema_stable/partially_track"
-PATHs[bartender_semitrack]="/path/to/dataset/bartender_stable/partially_track"
-PATHs[breakdance_alternative]="/path/to/dataset/breakdance_alternative/untrack"
-fi
-```
+> **Note**: `DATASET_PATH` must follow MPEG Datasets CTC (https://content.mpeg.expert/data/Explorations/GSC/CTC).
 
 ### Output Path
 ```bash
@@ -106,7 +91,7 @@ BASE_OUTPUT="/path/to/output"
 ```bash
 TMC13_DIR="/path/to/g-pcc-for-gsc"     # TMC13 directory
 TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3" # TMC13 binary
-CFG_PATH="$TMC13_DIR/cfg_CTC/JEE6.6/"  # Configuration directory
+CFG_PATH="$TMC13_DIR/$CFG_DIR"         # Configuration directory
 METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"  # Metric binary
 GSCTOOL="/path/to/mpeg-gsc-tools/" # Metric binary
 PYTHON="python3"
@@ -119,9 +104,9 @@ bash gen-script.sh
 ```
 ### Example Output
 ```bash
-/path/to/output/jobs/run_gpcc.sh
-/path/to/output/jobs/run_metric.sh
-/path/to/output/jobs/run_summary.sh
+/path/to/output/jobs/step1_run_gpcc.sh
+/path/to/output/jobs/step2_run_metric.sh
+/path/to/output/jobs/step3_run_summary.sh
 /path/to/output/jobs/run_all.sh
 /path/to/output/jobs/run_all_slurm.sh
 
@@ -131,9 +116,9 @@ bash gen-script.sh
 
 When script generation is complete, the following scripts will be created in the `output/jobs` directory:
 
-* `run_gpcc.sh` – GPCC encode/decode jobs
-* `run_metric.sh` – Metric calculation jobs
-* `run_summary.sh` – Summary results
+* `step1_run_gpcc.sh` – GPCC encode/decode jobs
+* `step2_run_metric.sh` – Metric calculation jobs
+* `step3_run_summary.sh` – Summary results
 * `run_all.sh` – Run all jobs in parallel locally
 * `run_all_slurm.sh` – Run all jobs in parallel on Slurm
 
@@ -150,13 +135,13 @@ bash /path/to/output/jobs/run_all_slurm.sh
 ## 6. `run_all.sh` Example Log
 ```
 ▶ Step 1: GPCC encode/decode in parallel
-Total jobs: 20
-Progress: 20/20 (100%)
-
+Submitting 100 jobs to SLURM...
+All jobs submitted. Waiting for completion...                              
+Progress: 100/100 (100%)
 ▶ Step 2: Metric calculation in parallel
-Total jobs: 405
-Progress: 405/405 (100%)
-
+Submitting 4930 jobs to SLURM...
+All jobs submitted. Waiting for completion...                              
+Progress: 4930/4930 (100%)
 ▶ Step 3: Summary generation
 ✅ All tasks completed
 ```
@@ -165,7 +150,7 @@ Progress: 405/405 (100%)
 All simulation outputs are organized under:
 ```
 /path/to/output/
-└── GSC-GPCCv1-JEE6.6/
+└── G-PCC-for-GSC-mpeg152/
     ├── bin/                                           # Executables or binaries used for the run
     ├── jobs/                                          # Job scripts and logs
     ├── results/octree-raht/lossless-geom-lossy-attrs/
@@ -182,9 +167,9 @@ All simulation outputs are organized under:
     │   ├── ...                                   
     │   └── ManWithFruit
     └── metrics/
-        ├── GPCC-octree-raht-lossless-geom-lossy-attrs-1F-GSC-GPCCv1-JEE6.6.csv
+        ├── 1F_anchor__vs__GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-G-PCC-for-GSC-mpeg152.csv
         │   # Raw results data in CSV format
-        └── GPCC-octree-raht-lossless-geom-lossy-attrs-1F-Anchor__vs__proposed.xlsm
+        └── 1F-GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-G-PCC-for-GSC-mpeg152.xlsm
             # XLSM comparing Anchor vs Proposed results
 ```
 

@@ -32,103 +32,95 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-import openpyxl
-import os
 import argparse
+from pathlib import Path
+import openpyxl
 
-# Constants for CSV column ranges and Excel positions
-# JEE6.2
-BITRATES_RANGE = (3, 12, 16, 5)       # start_idx, end_idx, start_row, start_col
-TIMES_RSS_RANGE = (12, 14, 16, 16)
-METRICS_RANGE = (20, 26, 33, 6)
-REN_T_RANGE = (26, 27, 33, 18)
-RIGHT_OFFSET = 18
+START_COL = 11
+DEBUG_MODE = False
 
-# JEE6.6 & JEE6.7 template
-BITRATES_RANGE_1F = (3, 12, 16, 5)       # start_idx, end_idx, start_row, start_col
-TIMES_RSS_RANGE_1F = (12, 20, 16, 16)
-METRICS_RANGE_1F = (20, 26, 33, 6)
-REN_T_RANGE_1F = (26, 27, 33, 24)
-RIGHT_OFFSET_1F = 24
-
-def write_values(ws, csv_tokens, start_idx, end_idx, start_row, start_col, rate_id, offset):
-    """
-    Write a range of CSV values into the worksheet.
-    Converts to float if not empty, otherwise writes None.
-    """
-    for col, val in enumerate(csv_tokens[start_idx:end_idx]):
+def write_values(ws, csv_tokens, row):
+    """Write a range of CSV values into the worksheet."""
+    for col, val in enumerate(csv_tokens):
         ws.cell(
-            row=start_row + rate_id,
-            column=offset + start_col + col,
+            row=row,
+            column=START_COL + col,
             value=float(val) if val else None
         )
 
-def csv2xlsm(wb, file_path, anchor_flag, flag_1f):
-    """
-    Read a CSV file and write its data into the given workbook.
-    anchor_flag determines the column offset (0 for anchor, 24 or 18 for proposed).
-    """
-    if flag_1f:
-        bitrates_range = BITRATES_RANGE_1F
-        times_rss_range = TIMES_RSS_RANGE_1F
-        metrics_range = METRICS_RANGE_1F
-        ren_t_range = REN_T_RANGE_1F
-        offset = 0 if anchor_flag else RIGHT_OFFSET_1F
-    else:
-        bitrates_range = BITRATES_RANGE
-        times_rss_range = TIMES_RSS_RANGE
-        metrics_range = METRICS_RANGE
-        ren_t_range = REN_T_RANGE
-        offset = 0 if anchor_flag else RIGHT_OFFSET
 
-    with open(file_path, "rt") as fp:
-        next(fp)  # skip header line
+def get_offset_dict(ws, flag_1f):
+    """Return a mapping from sequence name to row index based on flag."""
+    target_flag = "1F" if flag_1f else "NF"
+    offset_dict = {}
+
+    for r in range(1, 176):
+        f_flag = ws.cell(row=r, column=2).value
+        seqname = ws.cell(row=r, column=3).value
+        if f_flag == target_flag and seqname:
+            offset_dict[seqname] = r
+    if DEBUG_MODE:
+        print(f"[INFO] Loaded {len(offset_dict)} sequences for flag={target_flag}")
+    return offset_dict
+
+
+def csv_to_xlsm(ws, csv_path, flag_1f):
+    """Read a CSV file and write its data into the given worksheet."""
+    offset_dict = get_offset_dict(ws, flag_1f)
+
+    with csv_path.open("r", encoding="utf-8") as fp:
+        next(fp)  # Skip header
         for line in fp:
             csv_tokens = line.strip().split(",")
+            if len(csv_tokens) <= 3:
+                continue
+
             seq = csv_tokens[0]
-            try:
-                ws = wb[seq]
-            except KeyError:
-                print(f"[ERROR] Sheet '{seq}' not found in workbook")
-                exit
+            if seq not in offset_dict:
+                print(f"[WARN] Sequence not found in sheet: {seq}")
+                continue
 
             rate_id = int(csv_tokens[1].split("r")[-1]) - 1
+            rate_id = 0 if rate_id > 5 else rate_id  
+            row = offset_dict[seq] + rate_id
+            
+            if DEBUG_MODE:
+                print(f"[INFO] Writing seq={seq}, rate_id={rate_id}, row={row}")
+            
+            write_values(ws, csv_tokens[2:], row)
 
-            # Write different sections of the CSV into the worksheet
-            write_values(ws, csv_tokens, *bitrates_range, rate_id, offset)
-            write_values(ws, csv_tokens, *times_rss_range, rate_id, offset)
-            write_values(ws, csv_tokens, *metrics_range, rate_id, offset)
-            write_values(ws, csv_tokens, *ren_t_range, rate_id, offset)
+
+def process_csv(wb, csv_path, sheet_name, flag_1f):
+    """Load a CSV into the given workbook sheet."""
+    if not csv_path.exists():
+        print(f"[ERROR] CSV file not found: {csv_path}")
+        exit(1)
+
+    ws = wb[sheet_name]
+    print(f"[INFO] Processing {sheet_name} sheet with CSV: {csv_path.name}")
+    
+    csv_to_xlsm(ws, csv_path, flag_1f)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Generate XLSM file from CSV data.")
-    parser.add_argument("-f", "--flag_1f", type=int, default=0, help="Flag for single frame processing")
+    parser.add_argument("-f", "--flag_1f", type=int, default=0,
+                        help="Flag for single frame processing (1: 1F, 0: NF)")
     parser.add_argument("-t", "--template", required=True, help="Path to XLSM template file")
     parser.add_argument("-a", "--anc_csv", required=True, help="Path to anchor CSV file")
     parser.add_argument("-p", "--pro_csv", required=True, help="Path to proposed CSV file")
     parser.add_argument("-x", "--xlsm", required=True, help="Path to output XLSM file")
     args = parser.parse_args()
-    
-    # Load the template workbook with VBA macros preserved
-    wb = openpyxl.load_workbook(args.template, read_only=False, keep_vba=True)
 
-    # Process anchor CSV
-    if os.path.isfile(args.anc_csv):
-        csv2xlsm(wb, args.anc_csv, True, args.flag_1f)
-    else:
-        print(f"[ERROR] No anchor CSV file found: {args.anc_csv}")
-        exit()
+    template_path = Path(args.template)
+    wb = openpyxl.load_workbook(template_path, read_only=False, keep_vba=True)
 
-    # Process proposed CSV
-    if os.path.isfile(args.pro_csv):
-        csv2xlsm(wb, args.pro_csv, False, args.flag_1f)
-    else:
-        print(f"[ERROR] No proposed CSV file found: {args.pro_csv}")
-        exit()
+    process_csv(wb, Path(args.anc_csv), "Anchor", args.flag_1f)
+    process_csv(wb, Path(args.pro_csv), "Proposal", args.flag_1f)
+    output_path = Path(args.xlsm)
+    wb.save(output_path)
+    print(f"[INFO] XLSM file saved: {output_path}")
 
-    # Save the updated workbook
-    wb.save(args.xlsm)
-    print(f"[INFO] XLSM file saved: {args.xlsm}")
 
 if __name__ == "__main__":
     main()

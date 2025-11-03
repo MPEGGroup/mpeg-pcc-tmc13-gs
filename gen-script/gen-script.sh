@@ -36,52 +36,85 @@
 set -euo pipefail
 
 ## Experiment name
-JOBNAME="G-PCC-for-GSC-JEE6.6"
+JOBNAME="G-PCC-for-GSC-mpeg152"
 
 ## Experiment settings
-MODEs=("lossless-geom-lossy-attrs")
-TOOLs=("octree-raht")
-AUTO_RUN=1    # 0:off, 1:run_local, 2:run_slurm 
-FLAG_1F=1     # 0 or 1
-MET_FCOUNT=32 # or 999: ~ last 
+CFG_DIR=cfg_CTC/JEE6.6  # cfg_CTC/JEE6.6 or cfg_CTC/JEE6.2 or cfg_3dgs_sample 
+AUTO_RUN=1              # 0:off, 1:run_local, 2:run_slurm 
+FLAG_1F=1               # 0:NF, 1:1F
 
-## Test sequences
-declare -A PATHs
-# JEE6.2 & JEE6.6
-PATHs[bartender_track]="/path/to/dataset/bartender_stable/track"
-PATHs[breakfast_track]="/path/to/dataset/breakfast_stable/track"
-PATHs[cinema_track]="/path/to/dataset/cinema_stable/track"
-PATHs[ManWithFruit]="/path/to/dataset/ManWithFruit/track"
+## Dataset path
+DATASET_PATH=/path/to/CTC/
 
-# JEE6.2
-if ! [ $FLAG_1F == 1 ]; then
-PATHs[breakfast_untrack]="/path/to/dataset/breakfast_untrack/untrack"
-PATHs[breakfast_semitrack]="/path/to/dataset/breakfast_stable/partially_track"
-PATHs[cinema_semitrack]="/path/to/dataset/cinema_stable/partially_track"
-PATHs[bartender_semitrack]="/path/to/dataset/bartender_stable/partially_track"
-PATHs[breakdance_alternative]="/path/to/dataset/breakdance_alternative/untrack"
-fi
-
-## Output base path
+## Output path
 BASE_OUTPUT="/path/to/output"
 
-## Binary and config paths
+## Binary and Configuration Paths
 TMC13_DIR="/path/to/g-pcc-for-gsc"
 TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3"
-CFG_PATH="$TMC13_DIR/cfg_CTC" 
+CFG_PATH="$TMC13_DIR/$CFG_DIR" 
 METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
 GSCTOOL="/path/to/mpeg-gsc-tools/"
 PYTHON="python3"
 
+## Conditions and Tools Candidates
+MODEs=("lossless-geom-lossy-attrs" "lossless-geom-lossless-attrs")
+TOOLs=("octree-raht" "octree-lift" "octree-pred" "predgeom-lift" "predgeom-pred" "predgeom-raht")
+
 ###########################################################################################
 
+## Test sequences
+declare -A PATHs
+ADD_SEQ() { PATHs[$1]="$DATASET_PATH/$1/plys/"; }
+# 1F & NF
+ADD_SEQ bartender_semitracked
+ADD_SEQ cinema_semitracked
+ADD_SEQ breakfast_semitracked
+ADD_SEQ breakfast_untracked
+ADD_SEQ breakdance_untracked
+ADD_SEQ manwithfruit_tracked
+# NF optional
+ADD_SEQ bartender_tracked 
+ADD_SEQ cinema_tracked 
+ADD_SEQ breakfast_tracked 
+# 1F 
 if [ $FLAG_1F == 1 ]; then
-REN_W=1920; REN_H=1080;
-CFG_PATH+=/JEE6.6
-else
-REN_W=1024; REN_H=768;
-CFG_PATH+=/JEE6.2
+ADD_SEQ lego_ferrari 
+ADD_SEQ lego_bugatti 
+ADD_SEQ cricket_player 
+ADD_SEQ plant 
+ADD_SEQ solo_tango_female 
+ADD_SEQ solo_tango_male 
+ADD_SEQ tango_duo 
+ADD_SEQ tennis_player 
+ADD_SEQ library 
+ADD_SEQ flowerdance 
+ADD_SEQ gymnast 
 fi
+
+# resolution from colmap 
+declare -A REND_RESs
+# 1F & NF
+REND_RESs[bartender_semitracked]="1920 1080"
+REND_RESs[cinema_semitracked]="1920 1080"
+REND_RESs[breakfast_semitracked]="1920 1080"
+REND_RESs[breakfast_untracked]="1920 1080"
+REND_RESs[breakdance_untracked]="1920 1080"
+REND_RESs[bartender_tracked]="1920 1080"
+REND_RESs[cinema_tracked]="1920 1080"
+REND_RESs[breakfast_tracked]="1920 1080"
+REND_RESs[manwithfruit_tracked]="3840 2160"
+REND_RESs[lego_ferrari]="4594 5514"
+REND_RESs[lego_bugatti]="3852 2868"
+REND_RESs[cricket_player]="4520 2540"
+REND_RESs[plant]="2954 3968"
+REND_RESs[solo_tango_female]="4534 2542"
+REND_RESs[solo_tango_male]="4528 2544"
+REND_RESs[tango_duo]="4522 2538"
+REND_RESs[tennis_player]="4518 2540"
+REND_RESs[library]="3793 2131"
+REND_RESs[flowerdance]="2456 2054"
+REND_RESs[gymnast]="2456 2054"
 
 # Validate dataset paths
 for SEQ in "${!PATHs[@]}"; do
@@ -135,27 +168,26 @@ RUN_SUMMARY="$OUT/jobs/step3_run_summary.sh"
 
 for MODE in "${MODEs[@]}"; do
     for TOOL in "${TOOLs[@]}"; do
-        if [ $FLAG_1F == 1 ]; then
-        csv_file="$OUT/metrics/GPCC-$TOOL-$MODE-1F-$JOBNAME.csv"
-        else
-        csv_file="$OUT/metrics/GPCC-$TOOL-$MODE-$JOBNAME.csv"
-        fi
+        
+        [[ ! -d "$CFG_PATH/$TOOL/$MODE" ]] && continue
 
-        echo "seq, rate, total_Byte, pos_Byte, sh0_Byte, sh1_Byte, sh2_Byte, sh3_Byte, rot_Byte, scale_Byte, opacity_Byte, meta_Byte,total_encT, total_decT, pos_encT, pos_decT, att_encT, att_decT, enc_MaxRSS, dec_MaxRSS, RGB-PSNR, YUV-PSNR, YUV-SSIM, YUV-IVSSIM, RGB-LPIPS, GT-RGB-PSNR, renT" > "$csv_file"
+        if [ $FLAG_1F == 1 ]; then
+            csv_file="$OUT/metrics/1F_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+        else
+            csv_file="$OUT/metrics/NF_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+        fi
+        echo "seq, rate, total_Byte, pos_Byte, sh0_Byte, sh1_Byte, sh2_Byte, sh3_Byte, rot_Byte, scale_Byte, opacity_Byte, RGB-PSNR, YUV-PSNR, YUV-SSIM, YUV-IVSSIM, GT-RGB-PSNR, min_RGB-PSNR, min_YUV-PSNR, min_YUV-SSIM, max_RGB-PSNR, max_YUV-PSNR, max_YUV-SSIM, total_encT, pos_encT, att_encT, total_decT, pos_decT, att_decT, enc_MaxRSS, dec_MaxRSS" > "$csv_file"
 
         for SEQ in "${!PATHs[@]}"; do
             PLY_PATH="${PATHs[$SEQ]}"
             files=("$PLY_PATH"/*.camerapos.ply)
-            if [ $FLAG_1F == 1 ]; then
-                if [[ "$SEQ" == "ManWithFruit" ]]; then
-                    SelFILEs=("${files[30]}")
-                else
-                    SelFILEs=("${files[0]}")
-                fi    
-            else
-                SelFILEs=("${files[@]}")
-            fi
+            read -r REN_W REN_H <<< "${REND_RESs[$SEQ]}"
+            
+            # set the start frame, the number of frames, viewpoints sampling period
+            if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
+            if [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi  
 
+            SelFILEs=("${files[@]:0:$NUM_FRAMES}")
             CFG_DIRs=($CFG_PATH/$TOOL/$MODE/*)
             for CFG in "${CFG_DIRs[@]}"; do
                 RATE="$(basename "$CFG")"
@@ -163,8 +195,6 @@ for MODE in "${MODEs[@]}"; do
                 MKDIRCK "$RESULT_DIR"
 
                 echo "$TOOL/$MODE/$SEQ/$RATE"
-                count=0
-                met_fcount=$MET_FCOUNT
                 for FILE in "${SelFILEs[@]}"; do
                     FRAME="$(basename "$FILE" .camerapos.ply)"
                     JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
@@ -183,12 +213,8 @@ for MODE in "${MODEs[@]}"; do
                     chmod +x "$JOBFILE"
                     echo "$JOBFILE" >> "$RUN_GPCC"
 
-                    if (( count >= met_fcount )); then
-                        continue
-                    fi
-
                     numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
-                    for (( VIEW=0; VIEW<numVIEWs; VIEW++ )); do
+                    for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
                         JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
                         {
                             echo "#!/bin/bash"
@@ -202,7 +228,6 @@ for MODE in "${MODEs[@]}"; do
                         chmod +x "$JOBFILE_MET"
                         echo "$JOBFILE_MET" >> "$RUN_METRIC"
                     done
-                    count=$((count+1))
                 done
 
                 echo "$PYTHON $SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
@@ -211,9 +236,9 @@ for MODE in "${MODEs[@]}"; do
         done
 
         if [ $FLAG_1F == 1 ]; then
-            echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$SCRIPT_DIR/templates/m73911_GSC_template_JEE6.6_JEE6.7_and_related.xlsm\" -a \"$SCRIPT_DIR/anchor_results/GPCC-$TOOL-$MODE-1F.csv\" -p \"$csv_file\" -x \"$OUT/metrics/GPCC-$TOOL-$MODE-1F-Anchor__vs__proposed.xlsm\"" >> "$RUN_SUMMARY"
+        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$SCRIPT_DIR/templates/WG04N0751 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/1F_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg152.csv\" -p \"$csv_file\" -x \"$OUT/metrics/1F_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
         else
-            echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$SCRIPT_DIR/templates/m73911_GSC_template_JEE6.2_and_related.xlsm\" -a \"$SCRIPT_DIR/anchor_results/GPCC-$TOOL-$MODE.csv\" -p \"$csv_file\" -x \"$OUT/metrics/GPCC-$TOOL-$MODE-Anchor__vs__proposed.xlsm\"" >> "$RUN_SUMMARY"
+        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$SCRIPT_DIR/templates/WG04N0751 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
         fi
     done
 done
@@ -248,26 +273,31 @@ run_with_progress_sbatch_wait() {
     local done_count=0
     echo "Submitting $total jobs to SLURM..."
     while read -r job; do
-        while (( $submitted - $done_count > 10000 )); do
+        while (( submitted - done_count > 10000 )); do
             sleep 4
-            submit_percent=$((submitted*100/total))
-            done_count=`ls $done_dir | wc -l` 
-            done_percent=$((done_count*100/total))
-            echo -ne "Submited: $submitted/$total (${submit_percent}%). Progress: $done_count/$total (${done_percent}%)\r"
+            submit_percent=$((submitted * 100 / total))
+            done_count=$(find "$done_dir" -type f -printf '.' | wc -c)
+            done_percent=$((done_count * 100 / total))
+            echo -ne "Submitted: $submitted/$total (${submit_percent}%). Progress: $done_count/$total (${done_percent}%)\r"
         done
+
         sbatch "$job" >/dev/null
-        submitted=$((submitted+1))
-        submit_percent=$((submitted*100/total))
-        done_count=`ls $done_dir | wc -l`
-        done_percent=$((done_count*100/total))
-        echo -ne "Submited: $submitted/$total (${submit_percent}%). Progress: $done_count/$total (${done_percent}%)\r"
+        submitted=$((submitted + 1))
+        submit_percent=$((submitted * 100 / total))
+
+        if (( submitted % 100 == 0 )); then
+            done_count=$(find "$done_dir" -type f -printf '.' | wc -c)
+        fi
+
+        done_percent=$((done_count * 100 / total))
+        echo -ne "Submitted: $submitted/$total (${submit_percent}%). Progress: $done_count/$total (${done_percent}%)\r"
     done < "$jobfile"
 
     echo "All jobs submitted. Waiting for completion...                              "
     sleep 2
 
     while (( done_count < total )); do
-        done_count=`ls $done_dir | wc -l` 
+        done_count=$(find "$done_dir" -type f -printf '.' | wc -c)
         percent=$((done_count*100/total))
         echo -ne "Progress: $done_count/$total (${percent}%)\r"
         sleep 1
