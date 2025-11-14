@@ -222,7 +222,7 @@ for MODE in "${MODEs[@]}"; do
                             echo "#SBATCH --ntasks-per-node=1"
                             echo "#SBATCH --nodes=1"
                             echo "#SBATCH --mem-per-cpu=8G"
-                            echo "$METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
+                            echo "OMP_NUM_THREADS=1 $METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
                             echo "touch $OUT/jobs/done/metric/\$SLURM_JOB_ID"
                         } > "$JOBFILE_MET"
                         chmod +x "$JOBFILE_MET"
