@@ -150,6 +150,12 @@ MKDIRCK "$OUT/jobs/logs"
 MKDIRCK "$OUT/jobs/done/gpcc"
 MKDIRCK "$OUT/jobs/done/metric"
 
+# Validate build path
+if [[ ! -d "$TMC13_DIR/build" ]]; then
+    echo "❌ $TMC13_DIR/build does not exist"
+    exit 1
+fi
+
 # Build binaries
 cd "$TMC13_DIR/build"
 make -j"$(nproc)"
