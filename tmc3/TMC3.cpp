@@ -1712,7 +1712,7 @@ sanitizeEncoderOpts(
     }
 
     if (!params.encoder.sps.profile.profileFlagsCompatible())
-      err.error() << "Profiles flags set are not compatible. Check!\m";
+      err.error() << "Profiles flags set are not compatible. Check!\n";
 
     // todo (ar): Add further checks to ensure that profile flags
     // are set properly
