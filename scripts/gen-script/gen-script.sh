@@ -44,17 +44,17 @@ AUTO_RUN=1              # 0:off, 1:run_local, 2:run_slurm
 FLAG_1F=1               # 0:NF, 1:1F
 
 ## Dataset path
-DATASET_PATH=/path/to/CTC/
+DATASET_PATH=/home/xu/MPEG153/rawdata/
 
 ## Output path
-BASE_OUTPUT="/path/to/output"
+BASE_OUTPUT="/home/xu/MPEG153/anchor_output"
 
 ## Binary and Configuration Paths
-TMC13_DIR="/path/to/g-pcc-for-gsc"
+TMC13_DIR="/home/xu/g-pcc-for-gsc"
 TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3"
-CFG_PATH="$TMC13_DIR/$CFG_DIR" 
-METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
-GSCTOOL="/path/to/mpeg-gsc-tools/"
+CFG_PATH="$TMC13_DIR/$CFG_DIR"
+METRIC="/home/xu/mpeg-gsc-metrics/build/Release/bin/mpeg-gsc-metrics"
+GSCTOOL="/home/xu/mpeg-gsc-tools/"
 PYTHON="python3"
 
 ## Conditions and Tools Candidates
