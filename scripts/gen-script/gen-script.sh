@@ -42,6 +42,7 @@ JOBNAME="G-PCC-for-GSC-mpeg152"
 CFG_DIR=cfg_CTC/JEE6.6  # cfg_CTC/JEE6.6 or cfg_CTC/JEE6.2 or cfg_3dgs_sample 
 AUTO_RUN=1              # 0:off, 1:run_local, 2:run_slurm 
 FLAG_1F=1               # 0:NF, 1:1F
+MAX_PARALLEL=3          # Limit parallel jobs to save memory/CPU
 
 ## Dataset path
 DATASET_PATH=/home/xu/MPEG153/rawdata/
@@ -259,7 +260,7 @@ run_with_progress() {
     echo "Total jobs: $total"
 
     # Run jobs in parallel, emit "DONE" after each job finishes
-    cat "$jobfile" | xargs -P "$(nproc)" -I {} bash -c '{} >/dev/null 2>&1; echo DONE' |
+    cat "$jobfile" | xargs -P "3" -I {} bash -c '{} >/dev/null 2>&1; echo DONE' |
     while read -r signal; do
         count=$((count+1))
         percent=$((count*100/total))
