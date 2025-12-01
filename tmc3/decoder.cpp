@@ -306,7 +306,7 @@ void
 PCCTMC3Decoder3::storeAps(AttributeParameterSet&& aps)
 {
   // todo(df): handle replacement semantics
-  _apss.emplace(std::make_pair(aps.aps_attr_parameter_set_id, aps));
+  _apss.emplace(std::make_pair(aps.aps_attr_parameter_set_id_v1, aps));
 }
 
 //--------------------------------------------------------------------------
