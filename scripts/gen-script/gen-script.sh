@@ -35,6 +35,16 @@
 #!/bin/bash
 set -euo pipefail
 
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+## Helper functions for checks
+ENSURE_EXEC() { [ -x "$1" ] || { echo "ERROR: Executable not found or not executable: $1"; exit 1; }; }
+ENSURE_FILE() { [ -f "$1" ] || { echo "ERROR: File not found: $1"; exit 1; }; }
+ENSURE_DIR() { [ -d "$1" ] || { echo "ERROR: Directory not found: $1"; exit 1; }; }
+WRITE() { echo "$2" >> "$1"; }
+MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
+
 ## Experiment name
 JOBNAME="G-PCC-for-GSC-mpeg152"
 
@@ -42,9 +52,11 @@ JOBNAME="G-PCC-for-GSC-mpeg152"
 CFG_DIR=cfg_CTC/JEE6.6  # cfg_CTC/JEE6.6 or cfg_CTC/JEE6.2 or cfg_3dgs_sample 
 AUTO_RUN=1              # 0:off, 1:run_local, 2:run_slurm 
 FLAG_1F=1               # 0:NF, 1:1F
+INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
 
 ## Dataset path
 DATASET_PATH=/path/to/CTC/
+PLYS_SUBFOLDER="plys"
 
 ## Output path
 BASE_OUTPUT="/path/to/output"
@@ -57,64 +69,38 @@ METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
 GSCTOOL="/path/to/mpeg-gsc-tools/"
 PYTHON="python3"
 
+# Initial checks
+ENSURE_DIR "$DATASET_PATH"
+ENSURE_DIR "$TMC13_DIR"
+ENSURE_DIR "$GSCTOOL"
+ENSURE_DIR "$CFG_PATH"
+ENSURE_EXEC "$TMC13_BIN"
+ENSURE_EXEC "$METRIC"
+ENSURE_FILE "$INPUT_SEQUENCES_CFG"
+
 ## Conditions and Tools Candidates
 MODEs=("lossless-geom-lossy-attrs" "lossless-geom-lossless-attrs")
 TOOLs=("octree-raht" "octree-lift" "octree-pred" "predgeom-lift" "predgeom-pred" "predgeom-raht")
 
 ###########################################################################################
+# Prepare dataset sequences
+###########################################################################################
+declare -A PATHs       # PLY folder paths
+declare -A REND_RESs   # Render resolution: "width height"
 
-## Test sequences
-declare -A PATHs
-ADD_SEQ() { PATHs[$1]="$DATASET_PATH/$1/plys/"; }
-# 1F & NF
-ADD_SEQ bartender_semitracked
-ADD_SEQ cinema_semitracked
-ADD_SEQ breakfast_semitracked
-ADD_SEQ breakfast_untracked
-ADD_SEQ breakdance_untracked
-ADD_SEQ manwithfruit_tracked
-# NF optional
-ADD_SEQ bartender_tracked 
-ADD_SEQ cinema_tracked 
-ADD_SEQ breakfast_tracked 
-# 1F 
-if [ $FLAG_1F == 1 ]; then
-ADD_SEQ lego_ferrari 
-ADD_SEQ lego_bugatti 
-ADD_SEQ cricket_player 
-ADD_SEQ plant 
-ADD_SEQ solo_tango_female 
-ADD_SEQ solo_tango_male 
-ADD_SEQ tango_duo 
-ADD_SEQ tennis_player 
-ADD_SEQ library 
-ADD_SEQ flowerdance 
-ADD_SEQ gymnast 
-fi
+# Function that external files will use to register sequences
+ADD_SEQ() {
+    local seq="$1"
+    local width="$2"
+    local height="$3"
 
-# resolution from colmap 
-declare -A REND_RESs
-# 1F & NF
-REND_RESs[bartender_semitracked]="1920 1080"
-REND_RESs[cinema_semitracked]="1920 1080"
-REND_RESs[breakfast_semitracked]="1920 1080"
-REND_RESs[breakfast_untracked]="1920 1080"
-REND_RESs[breakdance_untracked]="1920 1080"
-REND_RESs[bartender_tracked]="1920 1080"
-REND_RESs[cinema_tracked]="1920 1080"
-REND_RESs[breakfast_tracked]="1920 1080"
-REND_RESs[manwithfruit_tracked]="3840 2160"
-REND_RESs[lego_ferrari]="4594 5514"
-REND_RESs[lego_bugatti]="3852 2868"
-REND_RESs[cricket_player]="4520 2540"
-REND_RESs[plant]="2954 3968"
-REND_RESs[solo_tango_female]="4534 2542"
-REND_RESs[solo_tango_male]="4528 2544"
-REND_RESs[tango_duo]="4522 2538"
-REND_RESs[tennis_player]="4518 2540"
-REND_RESs[library]="3793 2131"
-REND_RESs[flowerdance]="2456 2054"
-REND_RESs[gymnast]="2456 2054"
+    PATHs["$seq"]="$DATASET_PATH/$seq/$PLYS_SUBFOLDER/"
+    REND_RESs["$seq"]="$width $height"
+}
+
+# Load sequences from external file
+source "$INPUT_SEQUENCES_CFG"
+###########################################################################################
 
 # Validate dataset paths
 for SEQ in "${!PATHs[@]}"; do
@@ -130,9 +116,6 @@ for SEQ in "${!PATHs[@]}"; do
         exit 1
     fi
 done
-
-WRITE() { echo "$2" >> "$1"; }
-MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
