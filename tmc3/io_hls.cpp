@@ -1060,13 +1060,13 @@ parseAps(const PayloadBuffer& buf)
   }
 
   bool aps_extension_flag = bs.read();
-  bool aps_lgs_extension_present_flag = false;
+  bool aps_gs_extension_present_flag = false;
   int aps_extension_7bits = 0;
   if (aps_extension_flag) {
-    aps_lgs_extension_present_flag = bs.read();    
+    aps_gs_extension_present_flag = bs.read();    
     bs.readUn(7, &aps_extension_7bits);
   }
-  if (aps_lgs_extension_present_flag) {
+  if (aps_gs_extension_present_flag) {
     bs.readUn(2, &aps.aps_attr_parameter_set_id_extension_2bits);
   }
   aps.aps_attr_parameter_set_id = aps.aps_attr_parameter_set_id_v1 + (aps.aps_attr_parameter_set_id_extension_2bits << 4);

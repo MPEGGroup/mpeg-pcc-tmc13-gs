@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(CodeLLDB) Launch tmc3",
+            "type": "lldb",
+            "request": "launch",
+            // Point directly to the tmc3 executable
+            "program": "${workspaceFolder}/build/tmc3/tmc3",
+            "args": [
+                "--config=/home/xu/g-pcc-for-gsc/cfg_CTC/JEE6.6/octree-raht/lossless-geom-lossy-attrs/r01/decoder.cfg",
+                "--uncompressedDataPath=frame000/frame_0000.pre.ply",
+                "--compressedStreamPath=frame000/r01/frame_0000.pre.ply.bin",
+                "--reconstructedDataPath=frame000/r01/frame_0000.pre.ply.bin.decoded.ply"
+            ],
+            // Ensure this directory exists and contains the input files
+            "cwd": "/home/xu/MPEG153/test5/",
+            "env": {
+                "PATH": "${env:PATH}"
+            },
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+        }
+    ]
+}
