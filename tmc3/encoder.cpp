@@ -141,10 +141,7 @@ PCCTMC3Encoder3::compress(
       // as P_c is reconstructed as (0,0,0):
       //   0 = P_c * globalScale + seqOrigin
       auto gs = Rational(params->sps.globalScale);
-      int rem = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
-      rem += rem < 0 ? gs.numerator : 0;
-      params->sps.seqBoundingBoxOrigin[k] -= rem;
-      params->sps.seqBoundingBoxSize[k] += rem;
+      _originInSeqCoords_rem[k] = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
 
       // Convert the origin to coding coordinate system
       _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k];
@@ -915,15 +912,15 @@ PCCTMC3Encoder3::quantization(const PCCPointSet3& src)
   // the predictive geometry coder quantise internally.
   if (_inputDecimationScale != 1.)
     return samplePositionsUniq(
-      _inputDecimationScale, _srcToCodingScale, _originInCodingCoords, src);
+      _inputDecimationScale, _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, src);
 
   if (_gps->geom_unique_points_flag)
     return quantizePositionsUniq(
-      _srcToCodingScale, _originInCodingCoords, clampBox, src);
+      _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, clampBox, src);
 
   SrcMappedPointSet dst;
   quantizePositions(
-    _srcToCodingScale, _originInCodingCoords, clampBox, src, &dst.cloud);
+    _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, clampBox, src, &dst.cloud);
   return dst;
 }
 

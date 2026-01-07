@@ -87,9 +87,10 @@ struct SrcMappedPointSet {
 // NB: attributes are not processed.
 
 SrcMappedPointSet samplePositionsUniq(
-  float sampleScale,
-  float quantScale,
-  Vec3<int> offset,
+  double sampleScale,
+  double quantScale,
+  const Vec3<int> seq_origin_rem,
+  const Vec3<int> offset,
   const PCCPointSet3& src);
 
 //============================================================================
@@ -100,7 +101,8 @@ SrcMappedPointSet samplePositionsUniq(
 // NB: attributes are not processed.
 
 SrcMappedPointSet quantizePositionsUniq(
-  const float scaleFactor,
+  const double scaleFactor,
+  const Vec3<int> seq_origin_rem,
   const Vec3<int> offset,
   const Box3<int> clamp,
   const PCCPointSet3& src);
@@ -115,7 +117,8 @@ SrcMappedPointSet quantizePositionsUniq(
 // NB: attributes are preserved
 
 void quantizePositions(
-  const float scaleFactor,
+  const double scaleFactor,
+  const Vec3<int> seq_origin_rem,
   const Vec3<int> offset,
   const Box3<int> clamp,
   const PCCPointSet3& src,

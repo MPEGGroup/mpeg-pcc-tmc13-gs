@@ -190,6 +190,8 @@ private:
   double _srcToCodingScale;
 
   // Sequence origin in terms of coding coordinate system
+  Vec3<int> _originInSeqCoords_rem;
+
   Vec3<int> _originInCodingCoords;
 
   // Position of the slice in the translated+scaled co-ordinate system.

@@ -85,6 +85,25 @@ getTokens(
 
 //============================================================================
 
+void RGB2YUV(double (&src)[3])
+{
+  double R = src[0];
+  double G = src[1];
+  double B = src[2];
+  src[0] = +0.29900*R + 0.58700*G + 0.11400*B;
+  src[1] = -0.14713*R - 0.28886*G + 0.43600*B;
+  src[2] = +0.61500*R - 0.51498*G - 0.10001*B;
+}
+void YUV2RGB(double (&src)[3])
+{
+  double Y = src[0];
+  double U = src[1];
+  double V = src[2];
+  src[0] = Y             + 1.13983*V;
+  src[1] = Y - 0.39465*U - 0.58060*V;
+  src[2] = Y + 2.03211*U;
+}
+
 bool
 ply::write(
   const PCCPointSet3& cloud,
@@ -92,7 +111,8 @@ ply::write(
   double positionScale,
   Vec3<double> positionOffset,
   const std::string& fileName,
-  bool asAscii)
+  bool asAscii,
+  const std::vector<AttributeDescription>& attrDescs)
 {
   std::ofstream fout(fileName, std::ofstream::out);
   if (!fout.is_open()) {
@@ -194,11 +214,63 @@ ply::write(
         fout.write(reinterpret_cast<const char*>(&findex), sizeof(uint16_t));
       }
       if (cloud.hasGSInfo()){
+        double shdc[3];
+        double shac[15][3];
+        double rot[4];
+        float opacity;
+        float scale[4];
+
         for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
           auto key = GSHelper::getGSKey(n);
+          int attr_instance_id = GSHelper::getGSInstanceId(key);
+          auto desc = attrDescs[attr_instance_id];
+          auto offset = desc.params.attr_offset;
+          auto attr_frac_bits = desc.params.attr_frac_bits;
+          auto attr_scale     = desc.params.attr_scale_minus1 + 1;
           gs_t attr = gs_t(cloud.getGSInfo(i,key));
-          float buf = float(attr) / GS_PROPERTY_SCALE;
-          // val = val / GS_PROPERTY_SCALE;
+          double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
+          if (key.find("f_dc") != std::string::npos) {
+            int c = std::stoi(&key[5]);
+            shdc[c] = buf;
+          } else if (key.find("f_rest") != std::string::npos) {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            shac[m][c] = buf;
+          } else if (key.find("opacity") != std::string::npos) {
+            opacity = buf;
+          } else if (key.find("rot") != std::string::npos) {
+            int c = std::stoi(&key[4]);
+            rot[c] = buf;
+          } else if (key.find("scale") != std::string::npos) {
+            int c = std::stoi(&key[6]);
+            scale[c] = buf;
+          }
+        }
+
+        YUV2RGB(shdc);
+        for (size_t m =0 ; m < 15 ; m++)
+          YUV2RGB(shac[m]);
+        
+        for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
+          auto key = GSHelper::getGSKey(n);
+          float buf;
+          if (key.find("f_dc") != std::string::npos) {
+            int c = std::stoi(&key[5]);
+            buf = shdc[c];
+          } else if (key.find("f_rest") != std::string::npos) {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            buf = shac[m][c];
+          } else if (key.find("opacity") != std::string::npos) {
+            buf = opacity;
+          } else if (key.find("rot") != std::string::npos) {
+            int c = std::stoi(&key[4]);
+            buf = rot[c];
+          } else if (key.find("scale") != std::string::npos) {
+            int c = std::stoi(&key[6]);
+            buf = scale[c];
+          }
+          buf /= GS_PROPERTY_SCALE;
           fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
         }
       }
@@ -215,7 +287,8 @@ ply::read(
   const std::string& fileName,
   const PropertyNameMap& attributeNames,
   double positionScale,
-  PCCPointSet3& cloud)
+  PCCPointSet3& cloud,
+  const std::vector<AttributeDescription>& attrDescs)
 {
   std::ifstream ifs(fileName, std::ifstream::in | std::ifstream::binary);
   if (!ifs.is_open()) {
@@ -443,6 +516,11 @@ ply::read(
       ++pointCounter;
     }
   } else {
+    double shdc[3];
+    double shac[15][3];
+    double rot[4];
+    float opacity;
+    float scale[4];
     for (size_t pointCounter = 0; pointCounter < pointCount && !ifs.eof();
          ++pointCounter) {
       auto& position = cloud[pointCounter];
@@ -511,7 +589,7 @@ ply::read(
         } else if ( bytepos2gskey.find(a) != bytepos2gskey.end()){
           auto key = bytepos2gskey[a];
           assert(attributeInfo.name == key);
-          gs_t attr;
+          double attr;
           if(attributeInfo.byteCount == 4){
             float buf;
             ifs.read(reinterpret_cast<char*>(&buf), sizeof(float));
@@ -521,10 +599,78 @@ ply::read(
             ifs.read(reinterpret_cast<char*>(&buf), sizeof(uint16_t));
             attr = buf * GS_PROPERTY_SCALE;
           }
-          cloud.getGSInfo(pointCounter,key) = gs_t(attr);
+          if (key.find("f_dc") != std::string::npos) {
+            int c = std::stoi(&key[5]);
+            shdc[c] = attr;
+          } else if (key.find("f_rest") != std::string::npos) {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            shac[m][c] = attr;
+          } else if (key.find("opacity") != std::string::npos) {
+            opacity = attr;
+          } else if (key.find("rot") != std::string::npos) {
+            int c = std::stoi(&key[4]);
+            rot[c] = attr;
+          } else if (key.find("scale") != std::string::npos) {
+            int c = std::stoi(&key[6]);
+            scale[c] = attr;
+          }
         } else {
           char buffer[128];
           ifs.read(buffer, attributeInfo.byteCount);
+        }
+      }
+      // GS Preprocessing
+      if (withGSInfo)
+      {
+        RGB2YUV(shdc);
+        for (size_t m =0 ; m < 15 ; m++)
+          RGB2YUV(shac[m]);
+
+        double norm = std::sqrt(rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2] + rot[3] * rot[3]);
+        if (norm > 1e-3)
+        {
+          for (size_t c = 0 ;  c < 4; c ++)
+            rot[c] /= norm;
+        }
+        else
+        {
+          rot[0] = 1.0;
+          rot[1] = 0.0;
+          rot[2] = 0.0;
+          rot[3] = 0.0;
+        }
+
+        int32_t sign = rot[0] < 0 ? -1 : +1;
+        for (size_t c = 0 ;  c < 4; c ++)
+          rot[c] =  rot[c] * sign;
+
+        for (auto key : GSHelper::getGSKeys())
+        {
+          int attr_instance_id = GSHelper::getGSInstanceId(key);
+          auto desc = attrDescs[attr_instance_id];
+          auto offset = desc.params.attr_offset;
+          auto attr_frac_bits_scale = 1 << desc.params.attr_frac_bits;
+          auto attr_scale     = desc.params.attr_scale_minus1 + 1;
+          double attr;
+          
+          if (key.find("f_dc") != std::string::npos) {
+            int c = std::stoi(&key[5]);
+            attr = shdc[c];
+          } else if (key.find("f_rest") != std::string::npos) {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            attr = shac[m][c];
+          } else if (key.find("opacity") != std::string::npos) {
+            attr = opacity;
+          } else if (key.find("rot") != std::string::npos) {
+            int c = std::stoi(&key[4]);
+            attr = rot[c];
+          } else if (key.find("scale") != std::string::npos) {
+            int c = std::stoi(&key[6]);
+            attr = scale[c];
+          }
+          cloud.getGSInfo(pointCounter, key) = gs_t(PCCClip(round((attr - offset) * attr_frac_bits_scale / attr_scale), 0.0f, attr_frac_bits_scale-1));
         }
       }
     }

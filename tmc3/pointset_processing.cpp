@@ -107,8 +107,9 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
 
 SrcMappedPointSet
 samplePositionsUniq(
-  float sampleScale,
-  float quantScale,
+  double sampleScale,
+  double quantScale,
+  Vec3<int> seq_origin_rem,
   Vec3<int> offset,
   const PCCPointSet3& src)
 {
@@ -123,8 +124,8 @@ samplePositionsUniq(
     },
     [=](Vec3<int> point) {
       for (int k = 0; k < 3; k++)
-        point[k] = std::round(point[k] * quantScale);
-      return point - offset;
+        point[k] = std::round((point[k] - seq_origin_rem[k]) * quantScale) - offset[k];
+      return point ;
     });
 }
 
@@ -137,14 +138,16 @@ samplePositionsUniq(
 
 SrcMappedPointSet
 quantizePositionsUniq(
-  const float scaleFactor,
+  const double scaleFactor,
+  const Vec3<int> seq_origin_rem,
   const Vec3<int> offset,
   const Box3<int> clamp,
   const PCCPointSet3& src)
 {
+
   auto qFn = [=](Vec3<int> point) {
     for (int k = 0; k < 3; k++) {
-      double posk = std::round(point[k] * scaleFactor) - offset[k];
+      double posk = std::round((point[k] - seq_origin_rem[k]) * scaleFactor) - offset[k];
       point[k] = PCCClip(int32_t(posk), clamp.min[k], clamp.max[k]);
     }
     return point;
@@ -164,7 +167,8 @@ quantizePositionsUniq(
 
 void
 quantizePositions(
-  const float scaleFactor,
+  const double scaleFactor,
+  const Vec3<int> seq_origin_rem,
   const Vec3<int> offset,
   const Box3<int> clamp,
   const PCCPointSet3& src,
@@ -183,7 +187,7 @@ quantizePositions(
     const auto point = src[i];
     auto& dstPoint = (*dst)[i];
     for (int k = 0; k < 3; ++k) {
-      double k_pos = std::round(point[k] * scaleFactor) - offset[k];
+      double k_pos = std::round((point[k] - seq_origin_rem[k]) * scaleFactor) - offset[k];
       dstPoint[k] = PCCClip(int32_t(k_pos), clamp.min[k], clamp.max[k]);
     }
   }
