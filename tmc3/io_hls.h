@@ -48,7 +48,7 @@ PayloadBuffer
 write(const SequenceParameterSet& sps, const GeometryParameterSet& gps);
 
 PayloadBuffer
-write(const SequenceParameterSet& sps, const AttributeParameterSet& aps);
+write(const SequenceParameterSet& sps,  AttributeParameterSet& aps);
 
 PayloadBuffer
 write(const SequenceParameterSet& sps, const TileInventory& inventory);

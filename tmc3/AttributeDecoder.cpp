@@ -560,6 +560,7 @@ AttributeDecoder::decodeReflectancesRaht(
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
                                     aps.raht_prediction_threshold1};
 
+  FixedPoint::kFracBits = aps.raht_fixed_point_precision;
   regionAdaptiveHierarchicalInverseTransform(
     aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
     pointQpOffsets.data(), _sortedMortonCode.data(), attributes.data(), attribCount,
@@ -638,6 +639,7 @@ AttributeDecoder::decodeColorsRaht(
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
                                     aps.raht_prediction_threshold1};
 
+  FixedPoint::kFracBits = aps.raht_fixed_point_precision;
   regionAdaptiveHierarchicalInverseTransform(
     aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
     pointQpOffsets.data(), _sortedMortonCode.data(), attributes.data(), attribCount,

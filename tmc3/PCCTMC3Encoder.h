@@ -201,7 +201,7 @@ private:
   // The active parameter sets
   const SequenceParameterSet* _sps;
   const GeometryParameterSet* _gps;
-  std::vector<const AttributeParameterSet*> _aps;
+  std::vector<AttributeParameterSet*> _aps;
 
   // Cached copy of the curent _gbh (after encoding geometry)
   GeometryBrickHeader _gbh;

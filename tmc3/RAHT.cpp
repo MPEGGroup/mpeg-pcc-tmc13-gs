@@ -917,9 +917,9 @@ uraht_process(
           attrRecParentIt++;
           int64_t val = *attrRecParentUsIt++;
           if (val > 0)
-            transformPredBuf[k][0].val = val << (15 - 2);
+            transformPredBuf[k][0].val = val << (FixedPoint::kFracBits - 2);
           else
-            transformPredBuf[k][0].val = -((-val) << (15 - 2));
+            transformPredBuf[k][0].val = -((-val) << (FixedPoint::kFracBits - 2));
         }
       }
 

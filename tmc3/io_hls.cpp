@@ -853,7 +853,7 @@ convertXyzToStv(const SequenceParameterSet& sps, GeometryParameterSet* gps)
 //============================================================================
 
 PayloadBuffer
-write(const SequenceParameterSet& sps, const AttributeParameterSet& aps)
+write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
 {
   PayloadBuffer buf(PayloadType::kAttributeParameterSet);
   auto bs = makeBitWriter(std::back_inserter(buf));
@@ -939,8 +939,14 @@ write(const SequenceParameterSet& sps, const AttributeParameterSet& aps)
     }
   }
 
-  bool aps_extension_flag = false;
+  bool aps_extension_flag = true;
   bs.write(aps_extension_flag);
+  if (aps_extension_flag){
+    if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
+      bs.writeUe(aps.raht_fixed_point_precision);
+    }
+  }
+
   bs.byteAlign();
 
   return buf;
@@ -1049,7 +1055,9 @@ parseAps(const PayloadBuffer& buf)
   bool aps_extension_flag = bs.read();
   if (aps_extension_flag) {
     // todo(df): aps_extension_data;
-    assert(!aps_extension_flag);
+    if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
+      bs.readUe(&aps.raht_fixed_point_precision);
+    }
   }
   bs.byteAlign();
 

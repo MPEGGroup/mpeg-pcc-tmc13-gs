@@ -198,7 +198,7 @@ PCCTMC3Encoder3::compress(
   _sps = &params->sps;
   _gps = &params->gps;
   _aps.clear();
-  for (const auto& aps : params->aps) {
+  for (auto& aps : params->aps) {
     _aps.push_back(&aps);
   }
 
@@ -229,7 +229,7 @@ PCCTMC3Encoder3::compress(
   // write out all parameter sets prior to encoding
   callback->onOutputBuffer(write(*_sps));
   callback->onOutputBuffer(write(*_sps, *_gps));
-  for (const auto aps : _aps) {
+  for (auto aps : _aps) {
     callback->onOutputBuffer(write(*_sps, *aps));
   }
 
