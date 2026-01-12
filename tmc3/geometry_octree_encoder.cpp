@@ -1971,6 +1971,8 @@ encodeGeometryOctree(
   // order since IDCM causes leaves to be coded earlier than they
   // otherwise would.
   PCCPointSet3 pointCloud2;
+  if (pointCloud.hasSHCoefficients())
+    pointCloud2.setNumSHCoeffs(pointCloud.getNumSHCoeffs());
   pointCloud2.addRemoveAttributes(pointCloud.hasColors(), pointCloud.hasReflectances(),
 	  pointCloud.hasOpacities(), pointCloud.hasScales(), pointCloud.hasRotations(),
 	  pointCloud.hasSHCoefficients());
@@ -1998,7 +2000,7 @@ encodeGeometryOctree(
 		if (pointCloud.hasRotations())
 			pointCloud2.setRotation(dstIdx, pointCloud.getRotation(i));
 		if (pointCloud.hasSHCoefficients())
-			for (int k = 0; k < pointCloud.getNumSHCoeff3(); k++)
+			for (int k = 0; k < pointCloud.getNumSHCoeffs(); k++)
 				pointCloud2.setSHCoefficient(k, dstIdx, pointCloud.getSHCoefficient(k, i));
   }
   pointCloud2.resize(outIdx);

@@ -139,7 +139,7 @@ ply::write(
 	  fout << "property float f_dc_1" << std::endl;
 	  fout << "property float f_dc_2" << std::endl;
 
-	  for (int i = 0; i < cloud.getNumSHCoeff3() - 1; i++) {
+	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++) {
 		  fout << "property float f_rest_" << 3 * i << std::endl;
 		  fout << "property float f_rest_" << 3 * i + 1 << std::endl;
 		  fout << "property float f_rest_" << 3 * i + 2 << std::endl;
@@ -187,7 +187,7 @@ ply::write(
 					<< " "  << SHcoefficient_dc[2];
 
 				for (int k = 0; k < 3; k++) {
-					for (int m = 1; m < cloud.getNumSHCoeff3(); m++) {
+					for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
 						const Vec3<int32_t>& SHcoefficient_ac = cloud.getSHCoefficient(m, i);
 						fout << " " << SHcoefficient_ac[k];
 					}
@@ -242,7 +242,7 @@ ply::write(
 				// SH AC
 				int idx = 0;
 				for (int k = 0; k < 3; k++) {
-					for (int m = 1; m < cloud.getNumSHCoeff3(); m++) {
+					for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
 						const Vec3<int32_t>& SHcoefficient_ac = cloud.getSHCoefficient(m, i);
 						float val32b_ac = float(SHcoefficient_ac[k]);
 						fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
@@ -280,6 +280,7 @@ bool
 ply::read(
   const std::string& fileName,
   const PropertyNameMap& attributeNames,
+
   double positionScale,
   PCCPointSet3& cloud)
 {
@@ -423,9 +424,9 @@ ply::read(
   size_t indexRotationY = PCC_UNDEFINED_INDEX;
   size_t indexRotationZ = PCC_UNDEFINED_INDEX;
   std::vector<std::vector<size_t>> indexSHCoefficients;
-  int numSHCoeff3 = cloud.getNumSHCoeff3();
-  indexSHCoefficients.resize(numSHCoeff3);
-  for (int i = 0; i < numSHCoeff3; i++)
+  int numSHCoeffs = cloud.getNumSHCoeffs();
+  indexSHCoefficients.resize(numSHCoeffs);
+  for (int i = 0; i < numSHCoeffs; i++)
 	  indexSHCoefficients[i].resize(3, PCC_UNDEFINED_INDEX);
 
   const size_t attributeCount = attributesInfo.size();
@@ -507,12 +508,13 @@ ply::read(
 			indexSHCoefficients[0][2] = a;
 		}
 		// Gaussian Splat Compression : SH AC coefficients
-		else if (!attributeInfo.name.compare(0, 7, "f_rest_") && attributeInfo.byteCount <= 4) {
+		else if (!attributeInfo.name.compare(0, 7, "f_rest_") && attributeInfo.byteCount <= 4 
+			&& numSHCoeffs > 1) {
 			std::string suffix = attributeInfo.name.substr(7);
 			int f_rest_index = std::stoi(suffix);
 
-			int SHCoeff_index = f_rest_index % 15 + 1;
-			int yuv_index = f_rest_index / 15;
+			int SHCoeff_index = f_rest_index % (numSHCoeffs - 1) + 1;
+      int yuv_index = f_rest_index / (numSHCoeffs - 1);
 
 			indexSHCoefficients[SHCoeff_index][yuv_index] = a;
     }
@@ -745,7 +747,7 @@ ply::read(
 				}
 				else {
 					bool isSHCoefficient = false;
-					for (int i = 0; i < cloud.getNumSHCoeff3(); i++) {
+					for (int i = 0; i < cloud.getNumSHCoeffs(); i++) {
 						for (int j = 0; j < 3; j++) {
 							if (a == indexSHCoefficients[i][j] && attributeInfo.byteCount <= 4) {
 								if (attributeInfo.byteCount == 4) {

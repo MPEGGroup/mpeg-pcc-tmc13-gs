@@ -745,9 +745,9 @@ PCCTMC3Encoder3::compressPartition(
 
 	if (attr_sps.params.shCoefficientParameterPresent) {
 		const auto& SH_label = attr_sps.params.sh_coefficient_label;
-		std::cout << label << "_coefficients_" << (int)SH_label << " bitstream size " << coded_size << " B (" << bpp
+		std::cout << attr_sps << "_coefficients_" << (int)SH_label << " bitstream size " << coded_size << " B (" << bpp
 			<< " bpp)\n";
-		std::cout << label << "_coefficients_" << (int)SH_label << " processing time (user): " << time_user.count() / 1000.0
+		std::cout << attr_sps << "_coefficients_" << (int)SH_label << " processing time (user): " << time_user.count() / 1000.0
 			<< " s" << std::endl;
 	}
 	else if (attr_sps.params.rotationComponentParameterPresent) {
@@ -964,7 +964,11 @@ PCCPointSet3
 getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 {
   PCCPointSet3 dst;
-  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+  if (src.hasSHCoefficients())
+	  dst.setNumSHCoeffs(src.getNumSHCoeffs());
+  dst.addRemoveAttributes(
+    src.hasColors(), src.hasReflectances(), src.hasOpacities(),
+    src.hasScales(), src.hasRotations(), src.hasSHCoefficients());		
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -989,7 +993,7 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 			dst.setRotation(i, src.getRotation(inputIdx));
 
 		if (src.hasSHCoefficients()) {
-			for (int k = 0; k < src.getNumSHCoeff3(); k++)
+			for (int k = 0; k < src.getNumSHCoeffs(); k++)
 				dst.setSHCoefficient(k, i, src.getSHCoefficient(k, inputIdx));
 		}
   }
@@ -1023,6 +1027,8 @@ getPartition(
   }
 
   PCCPointSet3 dst;
+  if (src.hasSHCoefficients())
+    dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
 	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
   dst.resize(size);
@@ -1049,7 +1055,7 @@ getPartition(
 				dst.setRotation(dstIdx, src.getRotation(srcIdx));
 
 			if (src.hasSHCoefficients()) {
-				for (int k = 0; k < src.getNumSHCoeff3(); k++)
+				for (int k = 0; k < src.getNumSHCoeffs(); k++)
 					dst.setSHCoefficient(k, dstIdx, src.getSHCoefficient(k, srcIdx));
 			}
 

@@ -150,9 +150,16 @@ predModeEligibleColor(
   Vec3<int64_t> maxValue = {0, 0, 0};
   for (int i = 0; i < predictor.neighborCount; ++i) {
 		Vec3<attr_t> colorNeighbor;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour)
-			colorNeighbor = pointCloud.getColor(
-				indexes[predictor.neighbors[i].predictorIndex]);
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
+			if (!desc.params.shCoefficientParameterPresent)
+				colorNeighbor = pointCloud.getColor(
+					indexes[predictor.neighbors[i].predictorIndex]);
+			else {
+				int SHindex = (int)desc.params.sh_coefficient_label;
+				colorNeighbor = pointCloud.getSHCoefficient(SHindex,
+					indexes[predictor.neighbors[i].predictorIndex]);
+			}
+		}
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			colorNeighbor = pointCloud.getScale(
 				indexes[predictor.neighbors[i].predictorIndex]);
@@ -161,14 +168,7 @@ predModeEligibleColor(
 			colorNeighbor = pointCloud.getRotation(
 				indexes[predictor.neighbors[i].predictorIndex]).xyz;
 		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_dc)
-			colorNeighbor = pointCloud.getSHCoefficient(0,
-				indexes[predictor.neighbors[i].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_ac) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			colorNeighbor = pointCloud.getSHCoefficient(SHindex,
-				indexes[predictor.neighbors[i].predictorIndex]);
-		}
+
 
     for (size_t k = 0; k < 3; ++k) {
       if (i == 0 || colorNeighbor[k] < minValue[k]) {

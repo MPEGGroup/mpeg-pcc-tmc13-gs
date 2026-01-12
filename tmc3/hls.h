@@ -63,19 +63,18 @@ enum class PayloadType
 
 enum class KnownAttributeLabel : uint32_t
 {
-  kColour = 0,
-  kReflectance = 1,
-  kOpacity = 2,
-  kFrameIndex = 3,
-  kFrameNumber = 4,
-  kMaterialId = 5,
-  kNormal = 6,
+	kColour = 0,
+	kReflectance = 1,
+	kOpacity = 2,
+	kFrameIndex = 3,
+	kFrameNumber = 4,
+	kMaterialId = 5,
+	kNormal = 6,
 
-  // Gaussian Splat Compression
-  kScale = 7,
-  kRotation = 8,
-  kSH_dc = 9,
-  kSH_ac = 10,
+	// Gaussian Splat Compression
+	kScale = 7,
+	kRotation = 8,
+
 
   // Indicates that the attrabute label is described by an Oid
   kOid = 0xffffffff,
@@ -237,14 +236,17 @@ enum class AttributeParameterType : uint8_t
 enum class SHCoefficientLabel : uint32_t
 {
 	kBand0_Order0 = 0,
+
 	kBand1_OrderM1 = 1,
 	kBand1_Order0 = 2,
 	kBand1_Order1 = 3,
+
 	kBand2_OrderM2 = 4,
 	kBand2_OrderM1 = 5,
 	kBand2_Order0 = 6,
 	kBand2_Order1 = 7,
 	kBand2_Order2 = 8,
+
 	kBand3_OrderM3 = 9,
 	kBand3_OrderM2 = 10,
 	kBand3_OrderM1 = 11,
@@ -290,7 +292,7 @@ struct AttributeParameters {
   bool cicp_video_full_range_flag;
 
   // attribute scaling
-  bool scalingParametersPresent;
+  bool scalingParametersPresent = false;
   int attr_scale_minus1;
   int attr_frac_bits;
   int attr_offset;
@@ -300,12 +302,14 @@ struct AttributeParameters {
   std::vector<int> attr_default_value;
 
   // Gaussian Splat Compression
-  int num_sh_coefficient_labels;
+  bool sh_dc_coefficient_flag = false;
+  bool dc_only_flag = false;
+  int num_sh_coefficient_bands_minus1 = -1;
 
-  bool shCoefficientParameterPresent;
+  bool shCoefficientParameterPresent = false;
   SHCoefficientLabel sh_coefficient_label;
 
-  bool rotationComponentParameterPresent;
+  bool rotationComponentParameterPresent = false;
   RotationComponentLabel rotation_component_label;
 
   int sh_coefficient_label_temp;
@@ -328,8 +332,8 @@ struct AttributeParameters {
     scalingParametersPresent = false;
     attr_default_value.clear();
     opaqueParameters.clear();
-	shCoefficientParameterPresent = false;
-	rotationComponentParameterPresent = false;
+		shCoefficientParameterPresent = false;
+		rotationComponentParameterPresent = false;
   }
 };
 
@@ -349,6 +353,10 @@ struct AttributeDescription {
 
   AttributeParameters params;
 };
+
+//============================================================================
+
+std::ostream& operator<<(std::ostream& os, const AttributeDescription& label);
 
 //============================================================================
 

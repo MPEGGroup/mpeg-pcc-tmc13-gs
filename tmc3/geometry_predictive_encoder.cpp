@@ -761,6 +761,8 @@ encodePredictiveGeometry(
 
   // storage for reordering the output point cloud
   PCCPointSet3 outCloud;
+  if (cloud.hasSHCoefficients())
+    outCloud.setNumSHCoeffs(cloud.getNumSHCoeffs());
   outCloud.addRemoveAttributes(cloud.hasColors(), cloud.hasReflectances()
 	  , cloud.hasOpacities(), cloud.hasScales(), cloud.hasRotations(), cloud.hasSHCoefficients());
   outCloud.resize(numPoints);
@@ -878,7 +880,7 @@ encodePredictiveGeometry(
 			if (cloud.hasRotations())
 				outCloud.setRotation(i, cloud.getRotation(srcIdx));
 			if (cloud.hasSHCoefficients()) {
-				for (int k = 0; k < cloud.getNumSHCoeff3(); k++)
+				for (int k = 0; k < cloud.getNumSHCoeffs(); k++)
 					outCloud.setSHCoefficient(k, i, cloud.getSHCoefficient(k, srcIdx));
 			}
     }

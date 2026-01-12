@@ -145,12 +145,48 @@ operator<<(std::ostream& os, const AttributeLabel& label)
   case KnownAttributeLabel::kMaterialId: os << "material id"; break;
   case KnownAttributeLabel::kOpacity: os << "opacity"; break;
   case KnownAttributeLabel::kNormal: os << "normal"; break;
-  case KnownAttributeLabel::kOid: os << std::string(label.oid);
-	  // Gaussian Splat Compression
+  case KnownAttributeLabel::kOid:
+    os << std::string(label.oid);
+    // Gaussian Splat Compression
   case KnownAttributeLabel::kScale: os << "scale"; break;
   case KnownAttributeLabel::kRotation: os << "rotation"; break;
-  case KnownAttributeLabel::kSH_dc: os << "SH_dc"; break;
-  case KnownAttributeLabel::kSH_ac: os << "SH_ac"; break;
+  default:
+    // An unknown known attribute
+    auto iosFlags = os.flags(std::ios::hex);
+    os << std::setw(8) << label.known_attribute_label;
+    os.flags(iosFlags);
+  }
+
+  return os;
+}
+
+//============================================================================
+
+std::ostream&
+operator<<(std::ostream& os, const AttributeDescription& desc)
+{
+  auto label = desc.attributeLabel;
+  switch (label.known_attribute_label) {
+  case KnownAttributeLabel::kColour:
+    if (!desc.params.shCoefficientParameterPresent)
+      os << "color";
+    else if (
+      desc.params.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0)
+      os << "SH_dc";
+    else
+      os << "SH_ac";
+    break;
+  case KnownAttributeLabel::kReflectance: os << "reflectance"; break;
+  case KnownAttributeLabel::kFrameIndex: os << "frame index"; break;
+  case KnownAttributeLabel::kFrameNumber: os << "frame number"; break;
+  case KnownAttributeLabel::kMaterialId: os << "material id"; break;
+  case KnownAttributeLabel::kOpacity: os << "opacity"; break;
+  case KnownAttributeLabel::kNormal: os << "normal"; break;
+  case KnownAttributeLabel::kOid:
+    os << std::string(label.oid);
+    // Gaussian Splat Compression
+  case KnownAttributeLabel::kScale: os << "scale"; break;
+  case KnownAttributeLabel::kRotation: os << "rotation"; break;
   default:
     // An unknown known attribute
     auto iosFlags = os.flags(std::ios::hex);
@@ -254,8 +290,21 @@ template<typename Bs>
 void
 writeAttrParamSHCoefficientLabel(Bs& bs, const AttributeParameters& param)
 {
-	bs.writeUn(8, param.sh_coefficient_label);
-	bs.byteAlign();
+  bs.write(param.sh_dc_coefficient_flag);
+  if (param.sh_dc_coefficient_flag) {
+    bs.write(param.dc_only_flag);
+    if (param.dc_only_flag == 0)
+	    bs.writeUn(2, param.num_sh_coefficient_bands_minus1);
+  } else {
+    int numSHCoeff = 0;
+    for (int i = 0; i <= param.num_sh_coefficient_bands_minus1; i++)
+      numSHCoeff += (2 * i + 1);  // 1 + 3 + 5 + 7 + 9 + ...
+    int numSHCoeffDegreesBits = numBits(numSHCoeff - 1);
+
+    bs.writeUn(numSHCoeffDegreesBits, (int)param.sh_coefficient_label - 1);
+  }
+
+  bs.byteAlign();
 }
 
 //----------------------------------------------------------------------------
@@ -264,8 +313,26 @@ template<typename Bs>
 void
 parseAttrParamSHCoeffieicientLabel(Bs& bs, AttributeParameters* param)
 {
-	bs.readUn(8, &param->sh_coefficient_label);
-	bs.byteAlign();
+  bs.read(&param->sh_dc_coefficient_flag);
+  if (param->sh_dc_coefficient_flag) {
+    bs.read(&param->dc_only_flag);
+    if (param->dc_only_flag == 0) {    
+	    bs.readUn(2, &param->num_sh_coefficient_bands_minus1);
+			param->sh_coefficient_label = SHCoefficientLabel::kBand0_Order0;
+		}
+  } else {
+    int numSHCoeff = 0;
+    for (int i = 0; i <= param->num_sh_coefficient_bands_minus1; i++)
+      numSHCoeff += (2 * i + 1);  // 1 + 3 + 5 + 7 + 9 + ...
+    int numSHCoeffDegreesBits = numBits(numSHCoeff - 1);
+
+    int shAcCoeffMinus1 = 0;
+    bs.readUn(numSHCoeffDegreesBits, &shAcCoeffMinus1);
+
+    param->sh_coefficient_label = (SHCoefficientLabel)(shAcCoeffMinus1 + 1);
+  }
+
+  bs.byteAlign();
 }
 
 //============================================================================
@@ -274,8 +341,8 @@ template<typename Bs>
 void
 writeAttrParamRotationLabel(Bs& bs, const AttributeParameters& param)
 {
-	bs.writeUn(1, param.rotation_component_label);
-	bs.byteAlign();
+  bs.writeUn(1, param.rotation_component_label);
+  bs.byteAlign();
 }
 
 //----------------------------------------------------------------------------
@@ -284,8 +351,8 @@ template<typename Bs>
 void
 parseAttrParamRotationLabel(Bs& bs, AttributeParameters* param)
 {
-	bs.readUn(1, &param->rotation_component_label);
-	bs.byteAlign();
+  bs.readUn(1, &param->rotation_component_label);
+  bs.byteAlign();
 }
 
 //============================================================================
@@ -387,25 +454,25 @@ writeAttributeParameters(
   }
 
   if (params.shCoefficientParameterPresent) {
-	  int attr_param_len = 0;
-	  auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
-	  writeAttrParamSHCoefficientLabel(bsCounter, params);
+    int attr_param_len = 0;
+    auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
+    writeAttrParamSHCoefficientLabel(bsCounter, params);
 
-	  auto attr_param_type = AttributeParameterType::kSHCoefficientLabel;
-	  bs.writeUn(8, attr_param_type);
-	  bs.writeUn(8, attr_param_len);
-	  writeAttrParamSHCoefficientLabel(bs, params);
+    auto attr_param_type = AttributeParameterType::kSHCoefficientLabel;
+    bs.writeUn(8, attr_param_type);
+    bs.writeUn(8, attr_param_len);
+    writeAttrParamSHCoefficientLabel(bs, params);
   }
 
   if (params.rotationComponentParameterPresent) {
-	  int attr_param_len = 0;
-	  auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
-	  writeAttrParamRotationLabel(bsCounter, params);
+    int attr_param_len = 0;
+    auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
+    writeAttrParamRotationLabel(bsCounter, params);
 
-	  auto attr_param_type = AttributeParameterType::kRotationLabel;
-	  bs.writeUn(8, attr_param_type);
-	  bs.writeUn(8, attr_param_len);
-	  writeAttrParamRotationLabel(bs, params);
+    auto attr_param_type = AttributeParameterType::kRotationLabel;
+    bs.writeUn(8, attr_param_type);
+    bs.writeUn(8, attr_param_len);
+    writeAttrParamRotationLabel(bs, params);
   }
 
   for (const auto& param : params.opaqueParameters) {
@@ -439,9 +506,13 @@ parseAttributeParameter(
     parseAttrParamDefaultValue(attr, bs, &params);
     break;
   case Type::kSHCoefficientLabel:
-	  parseAttrParamSHCoeffieicientLabel(bs, &params); break;
+    parseAttrParamSHCoeffieicientLabel(bs, &params);
+    params.shCoefficientParameterPresent = true;
+    break;
   case Type::kRotationLabel:
-	  parseAttrParamRotationLabel(bs, &params); break;
+    parseAttrParamRotationLabel(bs, &params);
+    params.rotationComponentParameterPresent = true;
+    break;
 
   case Type::kItuT35:
   case Type::kOid:
@@ -604,6 +675,7 @@ parseSps(const PayloadBuffer& buf)
   bs.readUe(&sps.global_scale_fp_bits());
   bs.readUn(sps.global_scale_fp_bits(), &sps.global_scale_rem());
 
+  int value = -1;
   int num_attribute_sets = int(bs.readUe());
   for (int i = 0; i < num_attribute_sets; i++) {
     sps.attributeSets.emplace_back();
@@ -627,8 +699,18 @@ parseSps(const PayloadBuffer& buf)
     int num_attribute_parameters;
     bs.readUe(&num_attribute_parameters);
     bs.byteAlign();
+
+    if (label == KnownAttributeLabel::kColour)
+      attr.params.num_sh_coefficient_bands_minus1 = value;
+
     for (int i = 0; i < num_attribute_parameters; i++)
       parseAttributeParameter(attr, bs, attr.params);
+
+    if (
+      label == KnownAttributeLabel::kColour
+      && attr.params.shCoefficientParameterPresent == true
+      && attr.params.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0)
+      value = attr.params.num_sh_coefficient_bands_minus1;
   }
 
   bs.readUn(3, &sps.geometry_axis_order);
@@ -929,7 +1011,7 @@ write(const SequenceParameterSet& sps, const AttributeParameterSet& aps)
   PayloadBuffer buf(PayloadType::kAttributeParameterSet);
   auto bs = makeBitWriter(std::back_inserter(buf));
 
-//  bs.writeUn(4, aps.aps_attr_parameter_set_id);
+  //  bs.writeUn(4, aps.aps_attr_parameter_set_id);
   bs.writeUn(6, aps.aps_attr_parameter_set_id);
   bs.writeUn(4, aps.aps_seq_parameter_set_id);
   bs.writeUe(aps.attr_encoding);
@@ -1026,7 +1108,7 @@ parseAps(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kAttributeParameterSet);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-//  bs.readUn(4, &aps.aps_attr_parameter_set_id);
+  //  bs.readUn(4, &aps.aps_attr_parameter_set_id);
   bs.readUn(6, &aps.aps_attr_parameter_set_id);
   bs.readUn(4, &aps.aps_seq_parameter_set_id);
   bs.readUe(&aps.attr_encoding);
@@ -1417,7 +1499,7 @@ write(
   auto bs = makeBitWriter(std::back_inserter(*buf));
 
   int abh_reserved_zero_3bits = 0;
-//  bs.writeUn(4, abh.attr_attr_parameter_set_id);
+  //  bs.writeUn(4, abh.attr_attr_parameter_set_id);
   bs.writeUn(6, abh.attr_attr_parameter_set_id);
   bs.writeUn(3, abh_reserved_zero_3bits);
   bs.writeUe(abh.attr_sps_attr_idx);
@@ -1508,7 +1590,7 @@ parseAbhIds(const PayloadBuffer& buf)
   auto bs = makeBitReader(buf.begin(), buf.end());
 
   int abh_reserved_zero_3bits;
-//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
+  //  bs.readUn(4, &abh.attr_attr_parameter_set_id);
   bs.readUn(6, &abh.attr_attr_parameter_set_id);
   bs.readUn(3, &abh_reserved_zero_3bits);
   bs.readUe(&abh.attr_sps_attr_idx);
@@ -1534,7 +1616,7 @@ parseAbh(
   auto bs = makeBitReader(buf.begin(), buf.end());
 
   int abh_reserved_zero_3bits;
-//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
+  //  bs.readUn(4, &abh.attr_attr_parameter_set_id);
   bs.readUn(6, &abh.attr_attr_parameter_set_id);
   bs.readUn(3, &abh_reserved_zero_3bits);
   bs.readUe(&abh.attr_sps_attr_idx);
@@ -1639,7 +1721,7 @@ parseConstantAttribute(
   assert(buf.type == PayloadType::kConstantAttribute);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-//  bs.readUn(4, &cadu.constattr_attr_parameter_set_id);
+  //  bs.readUn(4, &cadu.constattr_attr_parameter_set_id);
   bs.readUn(6, &cadu.constattr_attr_parameter_set_id);
   bs.readUe(&cadu.constattr_sps_attr_idx);
   bs.readUe(&cadu.constattr_geom_slice_id);
