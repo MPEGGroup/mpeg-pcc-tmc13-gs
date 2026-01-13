@@ -39,6 +39,11 @@ namespace pcc {
         static size_t getGSKeysSize(){
             return gskeys.size();
         }
+        
+        static int getGSInstanceId(std::string key)
+        {
+            return std::find(gskeys.begin(), gskeys.end(), key)- gskeys.begin();
+        }
 
         static bool isExist(const std::string key){
             return std::find(gskeys.begin(),gskeys.end(),key) != gskeys.end();

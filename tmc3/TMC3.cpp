@@ -1019,6 +1019,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("attrOffset",
     params_attr.desc.params.attr_offset, 0,
     "Offset used to interpret coded attribute values")
+    
+  ("attrFracBits",
+    params_attr.desc.params.attr_frac_bits, 0,
+    "Fractional bits used to interpret coded attribute values")
 
   ("bitdepth",
     params_attr.desc.bitdepth, 8,
@@ -1416,19 +1420,17 @@ sanitizeEncoderOpts(
     attrMeta.cicp_transfer_characteristics_idx = 2;
     attrMeta.cicp_video_full_range_flag = true;
     attrMeta.cicpParametersPresent = false;
-    attrMeta.attr_frac_bits = 0;
-    attrMeta.scalingParametersPresent = false;
+    //attrMeta.attr_frac_bits = 0;
+    //attrMeta.scalingParametersPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
     attrMeta.scalingParametersPresent = attrMeta.attr_offset
       || attrMeta.attr_scale_minus1 || attrMeta.attr_frac_bits;
+      
+    
 
-    // todo(df): remove this hack when scaling is generalised
-    if (it.first != "reflectance" && attrMeta.scalingParametersPresent) {
-      err.warn() << it.first << ": scaling not supported, disabling\n";
-      attrMeta.scalingParametersPresent = 0;
-    }
+    
 
     if (it.first == "reflectance") {
       // Avoid wasting bits signalling chroma quant step size for reflectance
@@ -1771,7 +1773,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   std::string srcName{expandNum(params->uncompressedDataPath, frameNum)};
   PCCPointSet3 pointCloud;
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
@@ -1806,7 +1808,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (params->convertColourspace)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
 
-  //Fix: replace by parameter likes dynamicAttrRange
+  /*//Fix: replace by parameter likes dynamicAttrRange
   if (codeGSInfo)
   {
     for(auto& desc : params->encoder.sps.attributeSets){
@@ -1816,7 +1818,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
       desc.params.scalingParametersPresent = false;
       desc.params.attr_offset = 0;
     }
-  }
+  }*/
 
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
 
@@ -1986,7 +1988,7 @@ SequenceCodec::writeOutputFrame(
   // Dump the decoded colour using the pre inverse scaled geometry
   if (!preInvScalePath.empty()) {
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly);
+    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
@@ -1994,7 +1996,7 @@ SequenceCodec::writeOutputFrame(
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
         cloud, attrNames, plyScale, plyOrigin, decName,
-        !params->outputBinaryPly)) {
+        !params->outputBinaryPly,frame.attrDesc)) {
     cout << "Error: can't open output file!" << endl;
   }
 }
@@ -2133,11 +2135,20 @@ scaleAttributes(
   bool unityScale = !params.attr_scale_minus1 && !params.attr_frac_bits;
   if (unityScale && !params.attr_offset)
     return;
+  
+  if (attrDesc-> is3DGS)
+    return;     
 
   const auto pointCount = cloud.getPointCount();
   for (size_t i = 0; i < pointCount; ++i) {
-    auto& val = cloud.getReflectance(i);
-    val = scaler(params, val);
+    if (attrDesc->is3DGS) {
+      auto key = GSHelper::getGSKey(attrDesc->attr_instance_id);
+      auto& val = cloud.getGSInfo(i, key);  
+      val = scaler(params, val);            
+    } else {
+      auto& val = cloud.getReflectance(i);  
+      val = scaler(params, val);            
+    }
   }
 }
 

@@ -54,6 +54,7 @@
 #include "partitioning.h"
 #include "pcc_chrono.h"
 #include "ply.h"
+#include <cmath>
 
 namespace pcc {
 
@@ -80,7 +81,6 @@ PCCTMC3Encoder3::PCCTMC3Encoder3() : _frameCounter(-1)
 PCCTMC3Encoder3::~PCCTMC3Encoder3() = default;
 
 //============================================================================
-
 int
 PCCTMC3Encoder3::compress(
   const PCCPointSet3& inputPointCloud,
@@ -124,33 +124,109 @@ PCCTMC3Encoder3::compress(
     if (!bboxSizeDefined)
       params->sps.seqBoundingBoxSize = (1 << 21) - 1;
 
-    // Then scale the bounding box to match the reconstructed output
-    for (int k = 0; k < 3; k++) {
-      auto min_k = bbox.min[k];
-      auto max_k = bbox.max[k];
+    if (params->sps.profile.gs_profile_compliant) {
+      double inputscale = static_cast<double>(params->sps.seqGeomScale);
+      double minX = std::floor(bbox.min[0] / inputscale);
+      double minY = std::floor(bbox.min[1] / inputscale);
+      double minZ = std::floor(bbox.min[2] / inputscale);
 
-      // the sps bounding box is in terms of the conformance scale
-      // not the source scale.
-      // NB: plus one to convert to range
-      min_k = std::round(min_k * params->seqGeomScale);
-      max_k = std::round(max_k * params->seqGeomScale);
-      params->sps.seqBoundingBoxOrigin[k] = min_k;
-      params->sps.seqBoundingBoxSize[k] = max_k - min_k + 1;
+      double maxX = std::ceil(bbox.max[0] / inputscale);
+      double maxY = std::ceil(bbox.max[1] / inputscale);
+      double maxZ = std::ceil(bbox.max[2] / inputscale);
+      
+      int64_t seqOriginGlobal = std::min({minX, minY, minZ});  
+      int64_t seqMaxGlobal = std::max({maxX, maxY, maxZ});  
+      int64_t seqSizeGlobal = (seqMaxGlobal - seqOriginGlobal);
 
-      // Compensate the sequence origin such that source point (0,0,0) coded
-      // as P_c is reconstructed as (0,0,0):
-      //   0 = P_c * globalScale + seqOrigin
-      auto gs = Rational(params->sps.globalScale);
-      int rem = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
+      params->codedGeomScale = (double)std::pow(2, 18) / (inputscale*(double)seqSizeGlobal);
+      params->sps.globalScale = Rational(params->seqGeomScale / params->codedGeomScale);
+
+      
+
+      const double val = params->seqGeomScale / params->codedGeomScale;  
+
+      int exp = static_cast<int>(std::floor(std::log2(val)));
+      const double mant = val / std::ldexp(1.0, exp);  
+
+      auto choose_fp_bits_min_exact = [](double m, int maxBits = 16) -> int {
+        for (int b = 0; b <= maxBits; ++b) {
+          const double x = (m - 1.0) * (1 << b);
+          if (std::abs(x - std::round(x)) < 1e-12)
+            return b;
+        }
+        return maxBits;  
+      };
+
+      int fp_bits = choose_fp_bits_min_exact(mant, 16);
+      int rem = static_cast<int>(std::llround((mant - 1.0) * (1 << fp_bits)));
+
+      const int maxRem = (1 << fp_bits) - 1;
+      if (rem > maxRem) {
+        // carry into exponent
+        ++exp;
+        rem = 0;
+      }
+
+      params->sps.globalScale.numeratorMulLog2 = exp;     // mul_log2 (ue)
+      params->sps.globalScale.denominatorLog2 = fp_bits;  // fp_bits (ue)
+      params->sps.globalScale.numeratorModDenominator = rem;  // rem     (u(fp_bits))
+
+      const double recon =  (1.0 + params->sps.globalScale.numeratorModDenominator / double(1 << params->sps.globalScale.denominatorLog2)) * std::ldexp(1.0, params->sps.globalScale.numeratorMulLog2);
+
+      assert(params->sps.globalScale.numeratorMulLog2 >= 0);
+      assert(params->sps.globalScale.denominatorLog2 >= 0);
+      assert(std::abs(recon - val) < 1e-12);
+
+      for (int k = 0; k < 3; ++k) {
+        params->sps.seqBoundingBoxOrigin[k] = (int)seqOriginGlobal* inputscale;
+        params->sps.seqBoundingBoxSize[k] = (int)seqSizeGlobal * inputscale;
+      }
+
+      auto gs = Rational(params->sps.globalScale);  
+      int64_t L = gs.numerator; 
+      
+      seqOriginGlobal *= inputscale;
+      seqMaxGlobal *= inputscale;
+      seqSizeGlobal *= inputscale;
+
+      for (int k = 0; k < 3; ++k) {
+        _originInSeqCoords_rem[k] = (int)(seqOriginGlobal % L);
+        _originInCodingCoords[k] = (double)seqOriginGlobal;
+        _originInCodingCoords[k] /= (double)gs; 
+      }
+    }
+    else{    
+      // Then scale the bounding box to match the reconstructed output
+      for (int k = 0; k < 3; k++) {
+        auto min_k = bbox.min[k];
+        auto max_k = bbox.max[k];
+
+        // the sps bounding box is in terms of the conformance scale
+        // not the source scale.
+        // NB: plus one to convert to range
+        min_k = std::round(min_k * params->seqGeomScale);
+        max_k = std::round(max_k * params->seqGeomScale);
+        params->sps.seqBoundingBoxOrigin[k] = min_k;
+        params->sps.seqBoundingBoxSize[k] = max_k - min_k + 1;
+
+        // Compensate the sequence origin such that source point (0,0,0) coded
+        // as P_c is reconstructed as (0,0,0):
+        //   0 = P_c * globalScale + seqOrigin
+        auto gs = Rational(params->sps.globalScale);
+        /* int rem = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
       rem += rem < 0 ? gs.numerator : 0;
       params->sps.seqBoundingBoxOrigin[k] -= rem;
-      params->sps.seqBoundingBoxSize[k] += rem;
+      params->sps.seqBoundingBoxSize[k] += rem;*/
+        _originInSeqCoords_rem[k] =
+          params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
 
-      // Convert the origin to coding coordinate system
-      _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k];
-      _originInCodingCoords[k] /= double(gs);
+        // Convert the origin to coding coordinate system
+        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k];
+        _originInCodingCoords[k] /= double(gs);
+      }
     }
 
+    _srcToCodingScale = params->codedGeomScale;
     // Determine the number of bits to signal the bounding box
     params->sps.sps_bounding_box_offset_bits =
       numBits(params->sps.seqBoundingBoxOrigin.abs().max());
@@ -915,15 +991,15 @@ PCCTMC3Encoder3::quantization(const PCCPointSet3& src)
   // the predictive geometry coder quantise internally.
   if (_inputDecimationScale != 1.)
     return samplePositionsUniq(
-      _inputDecimationScale, _srcToCodingScale, _originInCodingCoords, src);
+      _inputDecimationScale, _srcToCodingScale, _originInSeqCoords_rem,_originInCodingCoords, src);
 
   if (_gps->geom_unique_points_flag)
     return quantizePositionsUniq(
-      _srcToCodingScale, _originInCodingCoords, clampBox, src);
+      _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, clampBox, src);
 
   SrcMappedPointSet dst;
   quantizePositions(
-    _srcToCodingScale, _originInCodingCoords, clampBox, src, &dst.cloud);
+    _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, clampBox,src, &dst.cloud);
   return dst;
 }
 

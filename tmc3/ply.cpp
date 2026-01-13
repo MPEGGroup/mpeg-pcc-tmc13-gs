@@ -37,6 +37,8 @@
 
 #include "PCCMisc.h"
 #include "PCCPointSet.h"
+#include <string>
+#include <unordered_map>
 
 #include <fstream>
 #include <string>
@@ -83,7 +85,30 @@ getTokens(
   return !tokens.empty();
 }
 
+void RGB2YUV(double (&src)[3])
+{
+  double R = src[0];
+  double G = src[1];
+  double B = src[2];
+  src[0] = +0.29900 * R + 0.58700 * G + 0.11400 * B;
+  src[1] = -0.14713 * R - 0.28886 * G + 0.43600 * B;
+  src[2] = +0.61500 * R - 0.51498 * G - 0.10001 * B;
+  
+}
+void YUV2RGB(double (&src)[3])  
+{
+  double Y = src[0];
+  double U = src[1];
+  double V = src[2];
+  src[0] = Y + 1.13983 * V;
+  src[1] = Y - 0.39465 * U - 0.58060 * V;
+  src[2] = Y + 2.03211 * U;
+  
+}
+
+
 //============================================================================
+
 
 bool
 ply::write(
@@ -92,7 +117,8 @@ ply::write(
   double positionScale,
   Vec3<double> positionOffset,
   const std::string& fileName,
-  bool asAscii)
+  bool asAscii,
+  const std::vector<AttributeDescription>& attrDescs)
 {
   std::ofstream fout(fileName, std::ofstream::out);
   if (!fout.is_open()) {
@@ -194,11 +220,83 @@ ply::write(
         fout.write(reinterpret_cast<const char*>(&findex), sizeof(uint16_t));
       }
       if (cloud.hasGSInfo()){
+        double shdc[3];
+        double shac[15][3];
+        double rot[4];
+        float opacity;
+        float scale[4];
+
         for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
           auto key = GSHelper::getGSKey(n);
+          int attr_instance_id = GSHelper::getGSInstanceId(key);
+          auto desc = attrDescs[attr_instance_id];
+          auto offset = desc.params.attr_offset;
+          auto attr_frac_bits = desc.params.attr_frac_bits;
+          auto attr_scale = desc.params.attr_scale_minus1 + 1;
           gs_t attr = gs_t(cloud.getGSInfo(i,key));
-          float buf = float(attr) / GS_PROPERTY_SCALE;
+          //float buf = float(attr) / GS_PROPERTY_SCALE;
           // val = val / GS_PROPERTY_SCALE;
+
+          double buf = double(attr) * attr_scale / (1 << attr_frac_bits) + offset; //denormalize+dequantize
+          if (key.find("f_dc") != std::string::npos)
+          {
+            int c = std::stoi(&key[5]);
+            shdc[c] = buf;
+          }
+          else if (key.find("f_rest") != std::string::npos)
+          {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            shac[m][c] = buf;
+          }
+          else if (key.find("opacity") != std::string::npos)
+          {
+            opacity = buf;
+          }
+          else if (key.find("rot") != std::string::npos)
+          {
+            int c = std::stoi(&key[4]);
+            rot[c] = buf;
+          }
+          else if (key.find("scale") != std::string::npos)
+          {
+            int c = std::stoi(&key[6]);
+            scale[c] = buf;
+          }
+        }
+        YUV2RGB(shdc);
+        for (size_t m = 0; m < 15; m++) 
+            YUV2RGB(shac[m]);
+        for (int n = 0; n < GSHelper::getGSKeysSize(); ++n)
+        {
+          auto key = GSHelper::getGSKey(n);
+          float buf;
+          if (key.find("f_dc") != std::string::npos)
+          {
+            int c = std::stoi(&key[5]);
+            buf = shdc[c];
+          }
+          else if (key.find("f_rest") != std::string::npos)
+          {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            buf = shac[m][c];
+          }
+          else if (key.find("opacity") != std::string::npos)
+          {
+            buf = opacity;
+          }
+          else if (key.find("rot") != std::string::npos)
+          {
+            int c = std::stoi(&key[4]);
+            buf = rot[c];
+          }
+          else if (key.find("scale") != std::string::npos)
+          {
+            int c = std::stoi(&key[6]);
+            buf = scale[c];
+          }
+          buf /= GS_PROPERTY_SCALE;
           fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
         }
       }
@@ -215,7 +313,8 @@ ply::read(
   const std::string& fileName,
   const PropertyNameMap& attributeNames,
   double positionScale,
-  PCCPointSet3& cloud)
+  PCCPointSet3& cloud,
+  std::vector<AttributeDescription>& attrDescs)
 {
   std::ifstream ifs(fileName, std::ifstream::in | std::ifstream::binary);
   if (!ifs.is_open()) {
@@ -239,6 +338,14 @@ ply::read(
     AttributeType type;
     size_t byteCount;
     size_t index;
+  };
+
+  struct GSPoint {
+    double shdc[3] = {0.0, 0.0, 0.0};
+    double shac[15][3] = {};  // zero-initialized
+    float opacity = 0.0f;
+    double rot[4] = {1.0, 0.0, 0.0, 0.0};
+    double scale[3] = {1.0, 1.0, 1.0 };
   };
 
   std::vector<AttributeInfo> attributesInfo;
@@ -443,6 +550,74 @@ ply::read(
       ++pointCounter;
     }
   } else {
+    double shdc[3];
+    double shac[15][3];
+    double rot[4];
+    float opacity;
+    float scale[3];
+
+    struct Stats {
+      // Min/Max (same behavior as MinMax)
+      double min = std::numeric_limits<double>::infinity();
+      double max = -std::numeric_limits<double>::infinity();
+
+      // Accumulators for mean/stddev
+      uint64_t count = 0;
+      double sum = 0.0;
+      double sumsq = 0.0;  // sum of v^2
+
+      void update(double v)
+      {
+        if (!std::isfinite(v)) return; 
+        if (v < min)
+          min = v;
+        if (v > max)
+          max = v;
+        ++count;
+        sum += v;
+        sumsq += v * v;
+      }
+
+      bool empty() const { return count == 0; }
+      double mean() const
+      {
+        return empty() ? 0.0 : (sum / static_cast<double>(count));
+      }
+
+      // Population stddev (use this if you’re describing all data)
+      double stddev_population() const
+      {
+        if (count == 0)
+          return 0.0;
+        double m = mean();
+        double variance = (sumsq / static_cast<double>(count)) - m * m;
+        return variance > 0.0 ? std::sqrt(variance) : 0.0;
+      }
+
+      // Sample stddev (use this if your data is a sample of a larger population)
+      double stddev_sample() const
+      {
+        if (count <= 1)
+          return 0.0;
+        double n = static_cast<double>(count);
+        double variance = (sumsq - (sum * sum) / n) / (n - 1.0);
+        return variance > 0.0 ? std::sqrt(variance) : 0.0;
+      }
+    };   
+
+    
+    std::unordered_map<std::string, Stats> globalStats;  // keys: "f_dc","f_rest","opacity
+    globalStats.reserve(5);
+    std::vector<GSPoint> gsBuf;
+    
+    globalStats["f_dc"] = Stats{};
+    globalStats["f_rest"] = Stats{};
+    globalStats["opacity"] = Stats{};
+    globalStats["rot"] = Stats{};
+    globalStats["scale"] = Stats{};
+
+    gsBuf.resize(pointCount);
+
     for (size_t pointCounter = 0; pointCounter < pointCount && !ifs.eof();
          ++pointCounter) {
       auto& position = cloud[pointCounter];
@@ -511,7 +686,8 @@ ply::read(
         } else if ( bytepos2gskey.find(a) != bytepos2gskey.end()){
           auto key = bytepos2gskey[a];
           assert(attributeInfo.name == key);
-          gs_t attr;
+          //gs_t attr;
+          double attr;
           if(attributeInfo.byteCount == 4){
             float buf;
             ifs.read(reinterpret_cast<char*>(&buf), sizeof(float));
@@ -521,14 +697,189 @@ ply::read(
             ifs.read(reinterpret_cast<char*>(&buf), sizeof(uint16_t));
             attr = buf * GS_PROPERTY_SCALE;
           }
-          cloud.getGSInfo(pointCounter,key) = gs_t(attr);
+          //cloud.getGSInfo(pointCounter,key) = gs_t(attr);
+          if (key.find("f_dc") != std::string::npos) {
+            int c = std::stoi(&key[5]);
+            shdc[c] = attr;
+            
+          } else if (key.find("f_rest") != std::string::npos) {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            shac[m][c] = attr;
+            
+          } else if (key.find("opacity") != std::string::npos) {
+            opacity = attr;
+            
+          } else if (key.find("rot") != std::string::npos) {
+            int c = std::stoi(&key[4]);
+            rot[c] = attr;
+            
+          } else if (key.find("scale") != std::string::npos) {
+            int c = std::stoi(&key[6]);
+            scale[c] = attr;
+            
+          }
+
         } else {
           char buffer[128];
           ifs.read(buffer, attributeInfo.byteCount);
         }
       }
+      // GS Preprocessing
+      if (withGSInfo) 
+      {
+        RGB2YUV(shdc);
+        for (size_t m = 0; m < 15; m++) 
+            RGB2YUV(shac[m]);
+        double norm = std::sqrt(
+          rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2] + rot[3] * rot[3]);
+        if (norm > 1e-3)
+        {
+          for (size_t c = 0; c < 4; c++) 
+              rot[c] /= norm;
+        }
+        else 
+        {
+          rot[0] = 1.0;
+          rot[1] = 0.0;
+          rot[2] = 0.0;
+          rot[3] = 0.0;
+        }
+        int32_t sign = rot[0] < 0 ? -1 : +1;
+        for (size_t c = 0; c < 4; c++) 
+            rot[c] = rot[c] * sign;
+
+        
+        // ---- Cache postprocessed GS values for this point ----
+        GSPoint& g = gsBuf[pointCounter];
+
+        // shdc (3)
+        for (int c = 0; c < 3; ++c)
+            g.shdc[c] = shdc[c];
+
+        // shac (15x3)
+        for (int m = 0; m < 15; ++m)
+            for (int c = 0; c < 3; ++c)
+              g.shac[m][c] = shac[m][c];
+
+        // opacity
+        g.opacity = opacity;
+
+        // rot and scale (4 each)
+        for (int c = 0; c < 4; ++c) {
+            g.rot[c] = rot[c];
+        }
+
+        for (int c = 0; c < 3; ++c) {
+            g.scale[c] = scale[c];
+        }
+
+        // ---- Update global min/max (single min/max per group) ----
+        auto& st_dc = globalStats["f_dc"];
+        auto& st_rest = globalStats["f_rest"];
+        auto& st_op = globalStats["opacity"];
+        auto& st_rot = globalStats["rot"];
+        auto& st_scale = globalStats["scale"];
+
+        // f_dc: 3 components share one min/max
+        for (int c = 0; c < 3; ++c)
+            st_dc.update(g.shdc[c]);
+
+        // f_rest: 15x3 coefficients share one min/max
+        for (int m = 0; m < 15; ++m)
+            for (int c = 0; c < 3; ++c)
+              st_rest.update(g.shac[m][c]);
+
+        // opacity: scalar
+        st_op.update(static_cast<double>(g.opacity));
+
+        // rot: 4 components share one min/max
+        for (int c = 0; c < 4; ++c)
+            st_rot.update(g.rot[c]);
+
+        // scale: 3 components share one min/max
+        for (int c = 0; c < 3; ++c)
+            st_scale.update(g.scale[c]);      
+
+
+    }
+  } 
+
+
+
+
+    // second pass
+    for (size_t pointCounter = 0; pointCounter < pointCount; ++pointCounter) {
+        const GSPoint& g = gsBuf[pointCounter];
+
+        for (auto key : GSHelper::getGSKeys()) {
+        
+        double attr;
+        if (key.find("f_dc") != std::string::npos) {
+            int c = std::stoi(&key[5]);
+            attr = g.shdc[c];
+        } else if (key.find("f_rest") != std::string::npos) {
+            int c = std::stoi(&key[7]) / 15;
+            int m = std::stoi(&key[7]) % 15;
+            attr = g.shac[m][c];
+        } else if (key.find("opacity") != std::string::npos) {
+            attr = g.opacity;
+        } else if (key.find("rot") != std::string::npos) {
+            int c = std::stoi(&key[4]);
+            attr = g.rot[c];
+        } else if (key.find("scale") != std::string::npos) {
+            int c = std::stoi(&key[6]);
+            attr = g.scale[c];
+        }
+
+        
+        std::string group =                   
+            key.rfind("f_dc", 0) == 0      ? "f_dc"
+          : key.rfind("f_rest", 0) == 0  ? "f_rest"
+          : key.rfind("opacity", 0) == 0 ? "opacity"
+          : key.rfind("rot", 0) == 0     ? "rot"
+          : key.rfind("scale", 0) == 0   ? "scale"
+                                         : key;
+
+        int attr_instance_id = GSHelper::getGSInstanceId(key);
+        auto& desc = attrDescs[attr_instance_id];
+        auto attr_frac_bits_scale = 1 << desc.params.attr_frac_bits;
+
+        const auto it = globalStats.find(group);
+        const auto& st = it->second;
+
+            // Default: min-max scaling
+        double min_val = st.min;
+        double max_val = st.max;
+
+            // If f_rest uses mean+-2*s instead, overwrite min/max/range here (NO redeclare!)
+        if (group == "f_rest") {
+              const double mean = st.mean();
+              const double stddev = st.stddev_sample();
+              // Guard: stddev could be 0 if all values are equal
+              double k = (stddev > 0.0) ? (2.0 * stddev) : 1.0;
+              min_val = std::floor(mean - k);
+              max_val = std::ceil(mean + k);
+        }        
+        int rounded_min = static_cast<int>(std::lround(min_val));
+        int rounded_max = static_cast<int>(std::lround(max_val));
+
+        int offset = rounded_min;
+        int attr_scale = rounded_max - rounded_min;
+        if (attr_scale <= 0)
+            attr_scale = 1;
+
+        desc.params.attr_offset = offset;
+        desc.params.attr_scale_minus1 = attr_scale - 1;       
+
+
+        cloud.getGSInfo(pointCounter, key) = gs_t(PCCClip(
+            round((attr - offset) * attr_frac_bits_scale / attr_scale), 0.0f,
+            (1 << desc.bitdepth) - 1));
+        }
     }
   }
+
   return true;
 }
 
