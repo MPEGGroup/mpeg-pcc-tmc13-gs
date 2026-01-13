@@ -560,6 +560,8 @@ AttributeDecoder::decodeReflectancesRaht(
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
                                     aps.raht_prediction_threshold1};
 
+  init_LUT();
+
   regionAdaptiveHierarchicalInverseTransform(
     aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
     pointQpOffsets.data(), _sortedMortonCode.data(), attributes.data(), attribCount,
@@ -638,6 +640,9 @@ AttributeDecoder::decodeColorsRaht(
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
                                     aps.raht_prediction_threshold1};
 
+
+  init_LUT();
+
   regionAdaptiveHierarchicalInverseTransform(
     aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
     pointQpOffsets.data(), _sortedMortonCode.data(), attributes.data(), attribCount,
@@ -706,7 +711,7 @@ AttributeDecoder::decodeColorsLift(
       if (!zeroRunRem)
         decoder.decode(values);
 
-      const int64_t iQuantWeight = irsqrt(weights[predictorIndex]);
+      const int64_t iQuantWeight = fastIrsqrt(weights[predictorIndex]);
       auto& color = colors[predictorIndex];
 
       int64_t scaled = quant[0].scale(values[0]);
@@ -791,7 +796,7 @@ AttributeDecoder::decodeReflectancesLift(
       if (!zeroRunRem)
         detail = decoder.decode();
 
-      const int64_t iQuantWeight = irsqrt(weights[predictorIndex]);
+      const int64_t iQuantWeight = fastIrsqrt(weights[predictorIndex]);
       auto& reflectance = reflectances[predictorIndex];
       const int64_t delta = detail;
       const int64_t reconstructedDelta = quant[0].scale(delta);
