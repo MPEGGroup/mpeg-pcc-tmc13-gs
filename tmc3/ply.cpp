@@ -852,17 +852,28 @@ ply::read(
         double min_val = st.min;
         double max_val = st.max;
 
+        int rounded_min = static_cast<int>(std::lround(min_val));
+        int rounded_max = static_cast<int>(std::lround(max_val));
+
+
+
+
+        // If both are zero, override to [-1, 1]
+        if (rounded_min == 0.0) rounded_min = -1.0;
+        if (rounded_max == 0.0) rounded_max = 1.0;
+        
+
+
             // If f_rest uses mean+-2*s instead, overwrite min/max/range here (NO redeclare!)
-        if (group == "f_rest") {
+        /* if (group == "f_rest") {
               const double mean = st.mean();
               const double stddev = st.stddev_sample();
               // Guard: stddev could be 0 if all values are equal
               double k = (stddev > 0.0) ? (2.0 * stddev) : 1.0;
               min_val = std::floor(mean - k);
               max_val = std::ceil(mean + k);
-        }        
-        int rounded_min = static_cast<int>(std::lround(min_val));
-        int rounded_max = static_cast<int>(std::lround(max_val));
+        } */   
+
 
         int offset = rounded_min;
         int attr_scale = rounded_max - rounded_min;
