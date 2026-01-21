@@ -1403,6 +1403,9 @@ sanitizeEncoderOpts(
     params.encoder.aps.clear();
   }
 
+  // allocate list of attr DU mode
+  params.encoder.attr_DU_modes.resize(params.encoder.attributeIdxMap.size());
+
   // fixup any per-attribute settings
   for (const auto& it : params.encoder.attributeIdxMap) {
     auto& attr_sps = params.encoder.sps.attributeSets[it.second];
@@ -1467,11 +1470,30 @@ sanitizeEncoderOpts(
       attr_sps.bitdepth++;
 
     // Extend the default attribute value to the correct width if present
-    if (!attrMeta.attr_default_value.empty())
+    int& attr_DU_mode = params.encoder.attr_DU_modes[attr_sps.attr_instance_id];
+    attr_DU_mode = 1; // ADU
+    if (!attrMeta.attr_default_value.empty()) {
       attrMeta.attr_default_value.resize(
         attr_sps.attr_num_dimensions_minus1 + 1,
         attrMeta.attr_default_value.back());
 
+      if (attrMeta.attr_default_value[0] == -1)
+        attrMeta.attr_default_value.clear();
+      else {
+        // check default values are same as maximum value
+        attr_DU_mode = 0; // None, infered at decoder
+        int InferedDefaultValue = 1<<(attr_sps.bitdepth-1);
+        int attrDim = attr_sps.attr_num_dimensions_minus1+1;
+        for (int c = 0; c < attrDim ; c++) {
+          if (attrMeta.attr_default_value[c] != InferedDefaultValue) {
+            attr_DU_mode = 2; // DADU
+            break;
+          }
+        }
+        if (!attr_DU_mode)
+          attrMeta.attr_default_value.clear(); 
+      }
+    }
     // In order to simplify specification of dist2 values, which are
     // depending on the scale of the coded point cloud, the following
     // adjust the dist2 values according to PQS.  The user need only

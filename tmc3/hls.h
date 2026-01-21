@@ -847,9 +847,10 @@ struct AttributeBrickHeader {
 //============================================================================
 
 struct ConstantAttributeDataUnit {
+  int constattr_seq_parameter_set_id;
+  int constattr_reserved_zero_3bits;
   int constattr_sps_attr_idx;
-  int constattr_attr_parameter_set_id;
-  int constattr_geom_slice_id;
+  int constattr_slice_id;
 
   std::vector<int> constattr_default_value;
 };

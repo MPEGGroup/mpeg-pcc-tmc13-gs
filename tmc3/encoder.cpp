@@ -652,11 +652,13 @@ PCCTMC3Encoder3::compressPartition(
     const auto& attr_aps = *_aps[attrIdx];
     const auto& attr_enc = params->attr[attrIdx];
     const auto& label = attr_sps.attributeLabel;
-
-    PayloadBuffer payload(PayloadType::kAttributeBrick);
-
     pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
     clock_user.start();
+
+    PayloadBuffer* payload = nullptr;
+    auto attr_DU_mode = params->attr_DU_modes[attrIdx];
+    if (attr_DU_mode == 1) { // ADU
+      payload =  new PayloadBuffer(PayloadType::kAttributeBrick);
 
     // todo(df): move elsewhere?
     AttributeBrickHeader abh;
@@ -730,14 +732,33 @@ PCCTMC3Encoder3::compressPartition(
 
     auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
     attrEncoder->encode(
-      *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, &payload);
+      *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, payload);
 
     if (attr_aps.spherical_coord_flag)
       pointCloud.swapPoints(altPositions);
+      
+    } else if (attr_DU_mode == 2) { // DADU
+      if (!attr_sps.params.attr_default_value.empty()) {
+        ConstantAttributeDataUnit cadu;
+        cadu.constattr_seq_parameter_set_id = _sps->sps_seq_parameter_set_id;
+        cadu.constattr_reserved_zero_3bits = 0;
+        cadu.constattr_sps_attr_idx = attrIdx;
+        cadu.constattr_slice_id = _sliceId;
+        // currently, equal to attribute property; 
+        cadu.constattr_default_value = attr_sps.params.attr_default_value; 
+
+        // If slice defualt values are equal to seq defualt values, 
+        // skip DADU
+        if (cadu.constattr_default_value != attr_sps.params.attr_default_value) {
+          payload =  new PayloadBuffer(PayloadType::kConstantAttribute);
+          writeConstantAttribute(*_sps, cadu, payload);
+        }
+      }
+    }
 
     clock_user.stop();
 
-    int coded_size = int(payload.size());
+    int coded_size = payload ? int(payload->size()) : 0;
     double bpp = double(8 * coded_size) / inputPointCloud.getPointCount();
     std::cout << label << "s bitstream size " << coded_size << " B (" << bpp
               << " bpp)\n";
@@ -747,8 +768,10 @@ PCCTMC3Encoder3::compressPartition(
     std::cout << label
               << "s processing time (user): " << time_user.count() / 1000.0
               << " s" << std::endl;
-
-    callback->onOutputBuffer(payload);
+    if (payload) {
+      callback->onOutputBuffer(*payload);
+      delete(payload);
+    }
   }
 
   // Note the current slice id for loss detection with entropy continuation
