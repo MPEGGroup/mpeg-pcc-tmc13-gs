@@ -139,7 +139,8 @@ permut_12(
 static void
 canonicalize(double quat[4], float scale[3])
 {
-  // Test 6 scales permutation, and quaternion with maximum absolute value component
+  // Apply the 6 scales permutation, and search for quaternion with maximum
+  // absolute value component
   double quats[6][4];
   float scales[6][3];
 
