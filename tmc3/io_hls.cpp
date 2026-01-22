@@ -1578,7 +1578,7 @@ parseConstantAttribute(
 
   cadu.constattr_default_value.resize(attrDesc.attr_num_dimensions_minus1 + 1);
   bs.readUn(attrDesc.bitdepth, &cadu.constattr_default_value[0]);
-  for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1+1; k++)
+  for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1; k++)
     bs.readUn(attrDesc.bitdepth, &cadu.constattr_default_value[k]);
   bs.byteAlign();
   return cadu;
@@ -1600,7 +1600,7 @@ void writeConstantAttribute(
   // todo(df): check bounds
   const auto& attrDesc = sps.attributeSets[cadu.constattr_sps_attr_idx];
   bs.writeUn(attrDesc.bitdepth, cadu.constattr_default_value[0]);
-  for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1+1; k++)
+  for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1; k++)
     bs.writeUn(attrDesc.bitdepth, cadu.constattr_default_value[k]);
   bs.byteAlign();
 }
