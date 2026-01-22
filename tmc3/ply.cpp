@@ -104,6 +104,122 @@ void YUV2RGB(double (&src)[3])
   src[2] = Y + 2.03211*U;
 }
 
+static void
+permut_02(
+  const double quat_in[4],
+  const float scale_in[3],
+  double quat_out[4],
+  float scale_out[3])
+{
+  scale_out[0] = scale_in[2];
+  scale_out[1] = scale_in[1];
+  scale_out[2] = scale_in[0];
+  quat_out[0] = quat_in[0] - quat_in[2];
+  quat_out[1] = quat_in[1] - quat_in[3];
+  quat_out[2] = quat_in[2] + quat_in[0];
+  quat_out[3] = quat_in[3] + quat_in[1];
+}
+
+static void
+permut_12(
+  const double quat_in[4],
+  const float scale_in[3],
+  double quat_out[4],
+  float scale_out[3])
+{
+  scale_out[0] = scale_in[0];
+  scale_out[1] = scale_in[2];
+  scale_out[2] = scale_in[1];
+  quat_out[0] = quat_in[0] - quat_in[1];
+  quat_out[1] = quat_in[1] + quat_in[0];
+  quat_out[2] = quat_in[2] + quat_in[3];
+  quat_out[3] = quat_in[3] - quat_in[2];
+}
+
+static void
+canonicalize(double quat[4], float scale[3])
+{
+  // Test 6 scales permutation, and quaternion with maximum absolute value component
+  double quats[6][4];
+  float scales[6][3];
+
+  std::copy_n(quat, 4, quats[0]);
+  std::copy_n(scale, 3, scales[0]);
+  permut_12(quats[0], scales[0], quats[1], scales[1]);
+  permut_02(quats[1], scales[1], quats[2], scales[2]);
+  permut_12(quats[2], scales[2], quats[3], scales[3]);
+  permut_02(quats[3], scales[3], quats[4], scales[4]);
+  permut_12(quats[4], scales[4], quats[5], scales[5]);
+
+  double maxval = -1;
+  int imax = 0;
+  constexpr double mul[6] = {   // These values is to take into account that when
+    1.00, 0.7071067811865476,   // the functions permut_02 or permut_12 are used,
+    0.50, 0.3535533905932738,   // the resulting quaternion will have a norm equal
+    0.25, 0.1767766952966369 }; // to the input quaternion norm times sqrt(2)
+  for (int i = 0; i < 6; ++i) {
+    double max = mul[i] * std::max(
+      std::max(std::abs(quats[i][0]), std::abs(quats[i][1])),
+      std::max(std::abs(quats[i][2]), std::abs(quats[i][3])));
+    if (maxval < max) {
+      maxval = max;
+      imax = i;
+    }
+  }
+  std::copy_n(scales[imax], 3, scale);
+  if (maxval < 1e-6) {
+    quat[0] = 1.0;
+    quat[1] = 0.0;
+    quat[2] = 0.0;
+    quat[3] = 0.0;
+    return;
+  }
+  
+  // Put the maximum absolute value component of quaternion as the real part
+  double w = std::abs(quats[imax][0]);
+  double x = std::abs(quats[imax][1]);
+  double y = std::abs(quats[imax][2]);
+  double z = std::abs(quats[imax][3]);
+  if (w >= x && w >= y && w >= z) {
+    // copy
+    quat[0] = +quats[imax][0];
+    quat[1] = +quats[imax][1];
+    quat[2] = +quats[imax][2];
+    quat[3] = +quats[imax][3];
+  } else if (x >= y && x >= z) {
+    // rotate -pi radians about x
+    quat[0] = +quats[imax][1];
+    quat[1] = -quats[imax][0];
+    quat[2] = -quats[imax][3];
+    quat[3] = +quats[imax][2];
+  } else if (y >= z) {
+    // rotate -pi radians about y
+    quat[0] = +quats[imax][2];
+    quat[1] = +quats[imax][3];
+    quat[2] = -quats[imax][0];
+    quat[3] = -quats[imax][1];
+  } else {
+    // rotate -pi radians about z
+    quat[0] = +quats[imax][3];
+    quat[1] = -quats[imax][2];
+    quat[2] = +quats[imax][1];
+    quat[3] = -quats[imax][0];
+  }
+
+  // Scale quaternion
+  double inorm = 1.0
+    / std::sqrt(quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2]
+                + quat[3] * quat[3]);
+  if (quat[0] < 0)
+    inorm = -inorm;
+  // Note: The real part of the quaternion is being ignored here, and will be
+  // estimated at decoder side.
+  quat[0] = 1.0;
+  quat[1] *= inorm;
+  quat[2] *= inorm;
+  quat[3] *= inorm;
+}
+
 bool
 ply::write(
   const PCCPointSet3& cloud,
@@ -216,9 +332,9 @@ ply::write(
       if (cloud.hasGSInfo()){
         double shdc[3];
         double shac[15][3];
-        double rot[4];
+        double rot[4] = {1.0, 0.0, 0.0, 0.0};
         float opacity;
-        float scale[4];
+        float scale[3];
 
         for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
           auto key = GSHelper::getGSKey(n);
@@ -250,6 +366,11 @@ ply::write(
         YUV2RGB(shdc);
         for (size_t m =0 ; m < 15 ; m++)
           YUV2RGB(shac[m]);
+
+        // Estimate the real part of the quaternion
+        rot[0] = std::sqrt(std::min(std::max(
+          1.0 - rot[1] * rot[1] - rot[2] * rot[2] - rot[3] * rot[3],
+          0.0), 1.0));
         
         for(int n=0; n < GSHelper::getGSKeysSize(); ++n){
           auto key = GSHelper::getGSKey(n);
@@ -520,7 +641,7 @@ ply::read(
     double shac[15][3];
     double rot[4];
     float opacity;
-    float scale[4];
+    float scale[3];
     for (size_t pointCounter = 0; pointCounter < pointCount && !ifs.eof();
          ++pointCounter) {
       auto& position = cloud[pointCounter];
@@ -627,23 +748,7 @@ ply::read(
         for (size_t m =0 ; m < 15 ; m++)
           RGB2YUV(shac[m]);
 
-        double norm = std::sqrt(rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2] + rot[3] * rot[3]);
-        if (norm > 1e-3)
-        {
-          for (size_t c = 0 ;  c < 4; c ++)
-            rot[c] /= norm;
-        }
-        else
-        {
-          rot[0] = 1.0;
-          rot[1] = 0.0;
-          rot[2] = 0.0;
-          rot[3] = 0.0;
-        }
-
-        int32_t sign = rot[0] < 0 ? -1 : +1;
-        for (size_t c = 0 ;  c < 4; c ++)
-          rot[c] =  rot[c] * sign;
+        canonicalize(rot, scale);
 
         for (auto key : GSHelper::getGSKeys())
         {
