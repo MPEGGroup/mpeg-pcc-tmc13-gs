@@ -480,21 +480,18 @@ AttributeDecoder::decodeColorsPred(
         const int64_t recon =
           predictedColor[k] + residual + ((icpCoeff[k] * residual0 + 2) >> 2);
         color[k] = attr_t(PCCClip(recon, int64_t(0), clipMax));
-				if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-					if(!desc.params.shCoefficientParameterPresent)
-						pointCloud.setColor(pointIndex, color);
-					else {
-						int SHindex = (int)desc.params.sh_coefficient_label;
-						pointCloud.setSHCoefficient(SHindex, pointIndex, color);
-					}
-				}
+				if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+					pointCloud.setColor(pointIndex, color);
 				else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 					pointCloud.setScale(pointIndex, color);
 				else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 					assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 					pointCloud.setRotation(pointIndex, color);
 				}
-
+				else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+					int SHindex = (int)desc.params.sh_coefficient_label;
+					pointCloud.setSHCoefficient(SHindex, pointIndex, color);
+				}
 
         if (!k && aps.inter_component_prediction_enabled_flag)
           residual0 = residual;
@@ -639,14 +636,8 @@ AttributeDecoder::decodeColorsRaht(
     color[1] = attr_t(PCCClip(g, 0, clipMax));
     color[2] = attr_t(PCCClip(b, 0, clipMax));
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-      if (!desc.params.shCoefficientParameterPresent)
-				pointCloud.setColor(_sortedIndex[n], color);
-      else {
-        int SHindex = (int)desc.params.sh_coefficient_label;
-        pointCloud.setSHCoefficient(SHindex, _sortedIndex[n], color);
-      }
-    }
+		if (desc.attributeLabel == KnownAttributeLabel::kColour)
+			pointCloud.setColor(_sortedIndex[n], color);
     else if (desc.attributeLabel == KnownAttributeLabel::kScale)
       pointCloud.setScale(_sortedIndex[n], color);
     else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
@@ -655,6 +646,10 @@ AttributeDecoder::decodeColorsRaht(
         == RotationComponentLabel::kRotation_XYZ);
       pointCloud.setRotation(_sortedIndex[n], color);
     } 
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      int SHindex = (int)desc.params.sh_coefficient_label;
+      pointCloud.setSHCoefficient(SHindex, _sortedIndex[n], color);
+    }
   }
 }
 
@@ -744,19 +739,17 @@ AttributeDecoder::decodeColorsLift(
       color[d] = attr_t(PCCClip(color0[d], int64_t(0), clipMax));
     }
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-			if(!desc.params.shCoefficientParameterPresent)
-				pointCloud.setColor(_lods.indexes[f], color);
-			else {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-				pointCloud.setSHCoefficient(SHindex, _lods.indexes[f], color);
-			}
-		}
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			pointCloud.setColor(_lods.indexes[f], color);
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			pointCloud.setScale(_lods.indexes[f], color);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 			pointCloud.setRotation(_lods.indexes[f], color);
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			pointCloud.setSHCoefficient(SHindex, _lods.indexes[f], color);
 		}
   }
 }

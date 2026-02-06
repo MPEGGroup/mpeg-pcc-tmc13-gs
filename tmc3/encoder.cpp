@@ -740,43 +740,35 @@ PCCTMC3Encoder3::compressPartition(
     int coded_size = int(payload.size());
     double bpp = double(8 * coded_size) / inputPointCloud.getPointCount();
 
-	auto time_user = std::chrono::duration_cast<std::chrono::milliseconds>(
-		clock_user.count());
+		auto time_user = std::chrono::duration_cast<std::chrono::milliseconds>(
+			clock_user.count());
 
-	if (attr_sps.params.shCoefficientParameterPresent) {
-		const auto& SH_label = attr_sps.params.sh_coefficient_label;
-		std::cout << attr_sps << "_coefficients_" << (int)SH_label << " bitstream size " << coded_size << " B (" << bpp
-			<< " bpp)\n";
-		std::cout << attr_sps << "_coefficients_" << (int)SH_label << " processing time (user): " << time_user.count() / 1000.0
-			<< " s" << std::endl;
-	}
-	else if (attr_sps.params.rotationComponentParameterPresent) {
-		if (attr_sps.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ) {
-			std::cout << label << "s_XYZ bitstream size " << coded_size << " B (" << bpp
+		if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kSH_coefficients) {
+			const auto& SH_label = attr_sps.params.sh_coefficient_label;
+			std::cout << attr_sps << "s_" << (int)SH_label << " bitstream size "
+								<< coded_size << " B (" << bpp << " bpp)\n";
+			std::cout << attr_sps << "s_" << (int)SH_label
+								<< " processing time (user): " << time_user.count() / 1000.0
+								<< " s" << std::endl;
+		} else if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kRotation) {
+			std::cout << attr_sps << " bitstream size " << coded_size << " B ("
+								<< bpp << " bpp)\n";
+			std::cout << attr_sps << " processing time (user): " << time_user.count() / 1000.0
+								<< " s" << std::endl;
+		}
+		else if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kOpacity) {
+			std::cout << "opacities bitstream size " << coded_size << " B (" << bpp
 				<< " bpp)\n";
-			std::cout << label << "s_XYZ processing time (user): " << time_user.count() / 1000.0
+			std::cout << "opacities processing time (user): " << time_user.count() / 1000.0
 				<< " s" << std::endl;
 		}
-		else if (attr_sps.params.rotation_component_label == RotationComponentLabel::kRotation_W) {
-			std::cout << label << "s_W bitstream size " << coded_size << " B (" << bpp
+		else {
+			std::cout << label << "s bitstream size " << coded_size << " B (" << bpp
 				<< " bpp)\n";
-			std::cout << label << "s_W processing time (user): " << time_user.count() / 1000.0
+			std::cout << label
+				<< "s processing time (user): " << time_user.count() / 1000.0
 				<< " s" << std::endl;
 		}
-	}
-	else if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kOpacity) {
-		std::cout << "opacities bitstream size " << coded_size << " B (" << bpp
-			<< " bpp)\n";
-		std::cout << "opacities processing time (user): " << time_user.count() / 1000.0
-			<< " s" << std::endl;
-	}
-	else {
-		std::cout << label << "s bitstream size " << coded_size << " B (" << bpp
-			<< " bpp)\n";
-		std::cout << label
-			<< "s processing time (user): " << time_user.count() / 1000.0
-			<< " s" << std::endl;
-	}
 
     callback->onOutputBuffer(payload);
   }

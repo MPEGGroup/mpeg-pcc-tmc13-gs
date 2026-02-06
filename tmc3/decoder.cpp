@@ -386,16 +386,17 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
   bool hasSHCoefficient = std::any_of(
     _sps->attributeSets.begin(), _sps->attributeSets.end(),
     [](const AttributeDescription& desc) {
-      return desc.params.shCoefficientParameterPresent;
+      return desc.attributeLabel == KnownAttributeLabel::kSH_coefficients;
     });
 
   if (hasSHCoefficient) {
     int numSHBandsMinus1 = -1;
     for (auto attrSet : _sps->attributeSets) {
-      if (attrSet.attributeLabel.known_attribute_label == KnownAttributeLabel::kColour && 
-				attrSet.params.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) {
-        assert(attrSet.params.num_sh_coefficient_bands_minus1 >= 0);
-        numSHBandsMinus1 = attrSet.params.num_sh_coefficient_bands_minus1;
+      if (attrSet.attributeLabel.known_attribute_label
+          == KnownAttributeLabel::kSH_coefficients
+				&& attrSet.params.sh_dc_coefficient_flag) {
+        assert(attrSet.params.num_sh_coefficient_degrees_minus1 >= 0);
+        numSHBandsMinus1 = attrSet.params.num_sh_coefficient_degrees_minus1;
         break;
 			}
     }
@@ -520,17 +521,19 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
     auto it = std::find_if(
       _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
       [](const AttributeDescription& desc) {
-        return desc.params.shCoefficientParameterPresent;
+      return (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients 
+				&& desc.params.sh_dc_coefficient_flag);
       });
 
-    int SHindex = (int)it->params.sh_coefficient_label;
-
-    Vec3<attr_t> defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      for (int k = 0; k < 3; k++)
-        defAttrVal[k] = it->params.attr_default_value[k];
-    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-      _currentPointCloud.setSHCoefficient(SHindex, i, defAttrVal);
+		for (int SHindex = 0; SHindex < _currentPointCloud.getNumSHCoeffs();
+         SHindex++) {
+			Vec3<attr_t> defAttrVal = 1 << (it->bitdepth - 1);
+			if (!it->params.attr_default_value.empty())
+				for (int k = 0; k < 3; k++)
+					defAttrVal[k] = it->params.attr_default_value[k];
+			for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+				_currentPointCloud.setSHCoefficient(SHindex, i, defAttrVal);
+		}
   }
 
   // Calculate a tree level at which to stop
@@ -682,27 +685,17 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
   auto total_user =
     std::chrono::duration_cast<std::chrono::milliseconds>(clock_user.count());
 
-  if (attr_sps.params.shCoefficientParameterPresent) {
+  if (attr_sps.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
     const auto& SH_label = attr_sps.params.sh_coefficient_label;
-    std::cout << attr_sps << "_coefficients_" << (int)SH_label
+    std::cout << attr_sps << "s_" << (int)SH_label
               << " bitstream size " << buf.size() << " B\n";
-    std::cout << attr_sps << "_coefficients_" << (int)SH_label
-              << " processing time (user): " << total_user.count() / 1000.0
-              << " s\n";
+    std::cout << attr_sps << "s_" << (int)SH_label
+							<< " processing time (user): "
+							<< total_user.count() / 1000.0 << " s\n";   
   } else if (attr_sps.attributeLabel == KnownAttributeLabel::kRotation) {
-    if (
-      attr_sps.params.rotation_component_label
-      == RotationComponentLabel::kRotation_XYZ) {
-      std::cout << label << "s_XYZ bitstream size " << buf.size() << " B\n";
-      std::cout << label << "s_XYZ processing time (user): "
-                << total_user.count() / 1000.0 << " s\n";
-    } else if (
-      attr_sps.params.rotation_component_label
-      == RotationComponentLabel::kRotation_W) {
-      std::cout << label << "s_W bitstream size " << buf.size() << " B\n";
-      std::cout << label << "s_W processing time (user): "
-                << total_user.count() / 1000.0 << " s\n";
-    }
+    std::cout << attr_sps << " bitstream size " << buf.size() << " B\n";
+    std::cout << attr_sps << " processing time (user): "
+              << total_user.count() / 1000.0 << " s\n";
   } else if (attr_sps.attributeLabel == KnownAttributeLabel::kOpacity) {
     std::cout << "opacities bitstream size " << buf.size() << " B\n";
     std::cout << "opacities processing time (user): "
@@ -782,7 +775,7 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
     }
   }
 
-  if (attrDesc.params.shCoefficientParameterPresent) {
+  if (label == KnownAttributeLabel::kSH_coefficients) {
     int SHIndex = (int)attrDesc.params.sh_coefficient_label;
     Vec3<attr_t> defAttrVal;
     for (int k = 0; k < 3; k++)

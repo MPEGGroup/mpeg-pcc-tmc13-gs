@@ -74,7 +74,7 @@ enum class KnownAttributeLabel : uint32_t
 	// Gaussian Splat Compression
 	kScale = 7,
 	kRotation = 8,
-
+  kSH_coefficients = 9,
 
   // Indicates that the attrabute label is described by an Oid
   kOid = 0xffffffff,
@@ -262,6 +262,7 @@ enum class RotationComponentLabel : uint32_t
 {
 	kRotation_XYZ = 0,
 	kRotation_W = 1,
+	kEuler = 2,
 };
 
 //============================================================================
@@ -304,7 +305,7 @@ struct AttributeParameters {
   // Gaussian Splat Compression
   bool sh_dc_coefficient_flag = false;
   bool dc_only_flag = false;
-  int num_sh_coefficient_bands_minus1 = -1;
+  int num_sh_coefficient_degrees_minus1 = -1;
 
   bool shCoefficientParameterPresent = false;
   SHCoefficientLabel sh_coefficient_label;

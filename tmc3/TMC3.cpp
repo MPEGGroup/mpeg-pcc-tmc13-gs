@@ -1021,7 +1021,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  8: YCgCo")
 
 	("numSHCoeffBandsMinus1", 
-		params_attr.desc.params.num_sh_coefficient_bands_minus1, 3,
+		params_attr.desc.params.num_sh_coefficient_degrees_minus1, 3,
 		"number of SH coefficient bands.")
 
   ("shCoefficientLabel",
@@ -1488,21 +1488,21 @@ sanitizeEncoderOpts(
 		}
 
 		if (!it.first.compare(0, 13, "SHCoefficient")) {
-			attr_sps.attr_num_dimensions_minus1 = 2;
-			attrMeta.sh_coefficient_label = (SHCoefficientLabel)attrMeta.sh_coefficient_label_temp;
-      attr_sps.attributeLabel = KnownAttributeLabel::kColour;
-			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-			attrMeta.shCoefficientParameterPresent = true;
-
-      if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0)
+      attr_sps.attr_num_dimensions_minus1 = 2;
+      attrMeta.sh_coefficient_label =
+        (SHCoefficientLabel)attrMeta.sh_coefficient_label_temp;
+      attr_sps.attributeLabel = KnownAttributeLabel::kSH_coefficients;
+      if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
         attrMeta.sh_dc_coefficient_flag = true;
-			else
+      else 
         attrMeta.sh_dc_coefficient_flag = false;
+      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+      attrMeta.shCoefficientParameterPresent = true;
 		      
-			if (attrMeta.num_sh_coefficient_bands_minus1 > 3)
-        attrMeta.num_sh_coefficient_bands_minus1 = 3;
-      else if (attrMeta.num_sh_coefficient_bands_minus1 < 0)
-        attrMeta.num_sh_coefficient_bands_minus1 = 0;
+			if (attrMeta.num_sh_coefficient_degrees_minus1 > 3)
+        attrMeta.num_sh_coefficient_degrees_minus1 = 3;
+      else if (attrMeta.num_sh_coefficient_degrees_minus1 < 0)
+        attrMeta.num_sh_coefficient_degrees_minus1 = 0;
 		}
 
     // Assume that YCgCo is actually YCgCoR for now
@@ -1820,9 +1820,9 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
 	for (int i = 0; i < params->encoder.sps.attributeSets.size(); i++) {
     auto tmp = params->encoder.sps.attributeSets[i];
     if (tmp.attributeLabel.known_attribute_label
-      == KnownAttributeLabel::kColour
+      == KnownAttributeLabel::kSH_coefficients
 			&& tmp.params.sh_dc_coefficient_flag) {
-      numBandsMinus1 = tmp.params.num_sh_coefficient_bands_minus1;
+      numBandsMinus1 = tmp.params.num_sh_coefficient_degrees_minus1;
 		}
 	}
   pointCloud.setNumSHCoeffsWithNumBandsMinus1(numBandsMinus1);

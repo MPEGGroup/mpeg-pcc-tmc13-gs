@@ -335,16 +335,9 @@ struct PCCPredictor {
       /* nop */
     } else if (predMode > 0) {
 		Vec3<attr_t> color;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-			if(!desc.params.shCoefficientParameterPresent)
-				color =
-					pointCloud.getColor(indexes[neighbors[predMode - 1].predictorIndex]);
-			else {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-				color =
-					pointCloud.getSHCoefficient(SHindex, indexes[neighbors[predMode - 1].predictorIndex]);
-			}
-		}
+		if (desc.attributeLabel == KnownAttributeLabel::kColour)
+			color =
+			pointCloud.getColor(indexes[neighbors[predMode - 1].predictorIndex]);
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			color =
 			pointCloud.getScale(indexes[neighbors[predMode - 1].predictorIndex]);
@@ -353,31 +346,34 @@ struct PCCPredictor {
 			color =
 				pointCloud.getRotation(indexes[neighbors[predMode - 1].predictorIndex]).xyz;
 		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      int SHindex = (int)desc.params.sh_coefficient_label;
+      color = pointCloud.getSHCoefficient(
+        SHindex, indexes[neighbors[predMode - 1].predictorIndex]);
+    }
 
       for (size_t k = 0; k < 3; ++k) {
         predicted[k] += color[k];
       }
     } else {
       for (size_t i = 0; i < neighborCount; ++i) {
-		  Vec3<attr_t> color;
-			if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-				if(!desc.params.shCoefficientParameterPresent)
+				Vec3<attr_t> color;
+				if (desc.attributeLabel == KnownAttributeLabel::kColour) 
 					color =
-						pointCloud.getColor(indexes[neighbors[i].predictorIndex]);
-				else {
+							pointCloud.getColor(indexes[neighbors[i].predictorIndex]);
+				else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+					color =
+					pointCloud.getScale(indexes[neighbors[i].predictorIndex]);
+				else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+					assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+					color =
+						pointCloud.getRotation(indexes[neighbors[i].predictorIndex]).xyz;
+				} 
+				else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 					int SHindex = (int)desc.params.sh_coefficient_label;
-					color =
-						pointCloud.getSHCoefficient(SHindex, indexes[neighbors[i].predictorIndex]);
+					color = pointCloud.getSHCoefficient(
+						SHindex, indexes[neighbors[i].predictorIndex]);
 				}
-			}
-		  else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			  color =
-			  pointCloud.getScale(indexes[neighbors[i].predictorIndex]);
-		  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			  color =
-				  pointCloud.getRotation(indexes[neighbors[i].predictorIndex]).xyz;
-		  }
 
         const uint32_t w = neighbors[i].weight;
         for (size_t k = 0; k < 3; ++k) {

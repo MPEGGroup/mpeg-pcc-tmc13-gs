@@ -798,19 +798,17 @@ AttributeEncoder::decidePredModeColor(
   const Quantizers& quant)
 {
 	Vec3<attr_t> attrValue;
-	if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-		if(!desc.params.shCoefficientParameterPresent)
-			attrValue = pointCloud.getColor(indexesLOD[predictorIndex]);
-		else {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			attrValue = pointCloud.getSHCoefficient(SHindex, indexesLOD[predictorIndex]);
-		}
-	}
+	if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+	  attrValue = pointCloud.getColor(indexesLOD[predictorIndex]);
 	else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 		attrValue = pointCloud.getScale(indexesLOD[predictorIndex]);
 	else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 		assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 		attrValue = pointCloud.getRotation(indexesLOD[predictorIndex]).xyz;
+	}
+	else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+		int SHindex = (int)desc.params.sh_coefficient_label;
+		attrValue = pointCloud.getSHCoefficient(SHindex, indexesLOD[predictorIndex]);
 	}
 
   // base case: weighted average of n neighbours
@@ -831,17 +829,9 @@ AttributeEncoder::decidePredModeColor(
     if (i == aps.max_num_direct_predictors)
       break;
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-			if (!desc.params.shCoefficientParameterPresent)
-				attrPred =
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			attrPred =
 				pointCloud.getColor(indexesLOD[predictor.neighbors[i].predictorIndex]);
-			else {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-				attrPred =
-					pointCloud.getSHCoefficient(SHindex,
-						indexesLOD[predictor.neighbors[i].predictorIndex]);
-			}
-		}
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			attrPred =
 			pointCloud.getScale(indexesLOD[predictor.neighbors[i].predictorIndex]);
@@ -849,6 +839,12 @@ AttributeEncoder::decidePredModeColor(
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 			attrPred =
 				pointCloud.getRotation(indexesLOD[predictor.neighbors[i].predictorIndex]).xyz;
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			attrPred =
+				pointCloud.getSHCoefficient(SHindex,
+					indexesLOD[predictor.neighbors[i].predictorIndex]);
 		}
 
     attrResidualQuant =
@@ -938,19 +934,17 @@ AttributeEncoder::computeInterComponentPredictionCoeffs(
     predictor.predMode = 1;
     auto predAttr = predictor.predictColor(pointCloud, _lods.indexes, desc);
 		Vec3<attr_t> srcAttr;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-			if(!desc.params.shCoefficientParameterPresent)
-				srcAttr = pointCloud.getColor(pointIdx);
-			else {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-				srcAttr = pointCloud.getSHCoefficient(SHindex, pointIdx);
-			}
-		}
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			srcAttr = pointCloud.getColor(pointIdx);
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			srcAttr = pointCloud.getScale(pointIdx);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 			srcAttr = pointCloud.getRotation(pointIdx).xyz;
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			srcAttr = pointCloud.getSHCoefficient(SHindex, pointIdx);
 		}
 
     residual[predIdx] = Vec3<int>(srcAttr) - Vec3<int>(predAttr);
@@ -1048,20 +1042,18 @@ AttributeEncoder::encodeColorsPred(
           encoder, context, icpCoeff, quant);
 
 			Vec3<attr_t> color;
-			if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-				if(!desc.params.shCoefficientParameterPresent)
-					color = pointCloud.getColor(pointIndex);
-				else {
-					int SHindex = (int)desc.params.sh_coefficient_label;
-					color = pointCloud.getSHCoefficient(SHindex, pointIndex);
-				}
-			}
+			if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+				color = pointCloud.getColor(pointIndex);
 			else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 				color = pointCloud.getScale(pointIndex);
 			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 				color = pointCloud.getRotation(pointIndex).xyz;
 			}
+		  else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+				int SHindex = (int)desc.params.sh_coefficient_label;
+			  color = pointCloud.getSHCoefficient(SHindex, pointIndex);
+		  }
 
       const Vec3<attr_t> predictedColor =
         predictor.predictColor(pointCloud, _lods.indexes, desc);
@@ -1096,20 +1088,18 @@ AttributeEncoder::encodeColorsPred(
       if (predModeEligible)
         encodePredModeColor(aps, predictor.predMode, values);
 
-			if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-				if(!desc.params.shCoefficientParameterPresent)
-					pointCloud.setColor(pointIndex, reconstructedColor);
-				else {
-					int SHindex = (int)desc.params.sh_coefficient_label;
-					pointCloud.setSHCoefficient(SHindex, pointIndex, reconstructedColor);
-				}
-			}
+			if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+				pointCloud.setColor(pointIndex, reconstructedColor);
 			else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 				pointCloud.setScale(pointIndex, reconstructedColor);
 			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 				pointCloud.setRotation(pointIndex, reconstructedColor);
 			}
+		  else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+				int SHindex = (int)desc.params.sh_coefficient_label;
+			  pointCloud.setSHCoefficient(SHindex, pointIndex, reconstructedColor);
+		  }
 
       encoder.resStatUpdateColor(values);
 
@@ -1245,21 +1235,18 @@ AttributeEncoder::encodeColorsTransformRaht(
     mortonCode[n] = packedVoxel[n].mortonCode;
 
 		Vec3<attr_t> color;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-			if(!desc.params.shCoefficientParameterPresent)
-				color = pointCloud.getColor(packedVoxel[n].index);
-			else {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-				color = pointCloud.getSHCoefficient(SHindex, packedVoxel[n].index);
-			}
-		}
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			color = pointCloud.getColor(packedVoxel[n].index);
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			color = pointCloud.getScale(packedVoxel[n].index);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 			color = pointCloud.getRotation(packedVoxel[n].index).xyz;
 		}
-
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			color = pointCloud.getSHCoefficient(SHindex, packedVoxel[n].index);
+		}
 
     attributes[attribCount * n] = color[0];
     attributes[attribCount * n + 1] = color[1];
@@ -1304,21 +1291,18 @@ AttributeEncoder::encodeColorsTransformRaht(
     color[1] = attr_t(PCCClip(g, 0, clipMax));
     color[2] = attr_t(PCCClip(b, 0, clipMax));
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-			if(!desc.params.shCoefficientParameterPresent)
-				pointCloud.setColor(packedVoxel[n].index, color);
-			else {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-				pointCloud.setSHCoefficient(SHindex, packedVoxel[n].index, color);
-			}
-		}
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			pointCloud.setColor(packedVoxel[n].index, color);
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			pointCloud.setScale(packedVoxel[n].index, color);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 			pointCloud.setRotation(packedVoxel[n].index, color);
 		}
-
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			pointCloud.setSHCoefficient(SHindex, packedVoxel[n].index, color);
+		}
   }
 }
 
@@ -1347,22 +1331,19 @@ AttributeEncoder::encodeColorsLift(
   colors.resize(pointCount);
 
   for (size_t index = 0; index < pointCount; ++index) {
-	Vec3<attr_t> color;
-	if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-		if(!desc.params.shCoefficientParameterPresent)
+		Vec3<attr_t> color;
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
 			color = pointCloud.getColor(_lods.indexes[index]);
-		else {
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			color = pointCloud.getScale(_lods.indexes[index]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			color = pointCloud.getRotation(_lods.indexes[index]).xyz;
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 			int SHindex = (int)desc.params.sh_coefficient_label;
 			color = pointCloud.getSHCoefficient(SHindex, _lods.indexes[index]);
 		}
-	}
-	else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-		color = pointCloud.getScale(_lods.indexes[index]);
-	else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-		assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-		color = pointCloud.getRotation(_lods.indexes[index]).xyz;
-	}
-
 
     for (size_t d = 0; d < 3; ++d) {
       colors[index][d] = int32_t(color[d]) << kFixedPointAttributeShift;
@@ -1450,21 +1431,18 @@ AttributeEncoder::encodeColorsLift(
       color[d] = attr_t(PCCClip(color0[d], 0, clipMax));
     }
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) {
-			if(!desc.params.shCoefficientParameterPresent)
+		if (desc.attributeLabel == KnownAttributeLabel::kColour)
 				pointCloud.setColor(_lods.indexes[f], color);
-			else {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-				pointCloud.setSHCoefficient(SHindex, _lods.indexes[f], color);
-			}
-		}
 		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
 			pointCloud.setScale(_lods.indexes[f], color);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 			pointCloud.setRotation(_lods.indexes[f], color);
 		}
-
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			pointCloud.setSHCoefficient(SHindex, _lods.indexes[f], color);
+		}
   }
 }
 
