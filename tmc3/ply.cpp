@@ -203,11 +203,11 @@ ply::write(
 					<< " " << scale[2];
 			}
 			if (cloud.hasRotations()) {
-				const pcc::PCCPointSet3::Components4<attr_t>& rotation = cloud.getRotation(i);
-				fout << " " << rotation.w
-					<< " " << rotation.xyz[0]
-					<< " " << rotation.xyz[1]
-					<< " " << rotation.xyz[2];
+				const pcc::Vec3<attr_t>& rotation_xyz = cloud.getRotationVec(i);
+        fout << " " << cloud.getRotationScalar(i)
+					<< " " << rotation_xyz[0]
+					<< " " << rotation_xyz[1]
+					<< " " << rotation_xyz[2];
 			}
       fout << std::endl;
     }
@@ -260,11 +260,11 @@ ply::write(
 				fout.write(reinterpret_cast<char*>(&val32b), sizeof(float) * 3);
 			}
 			if (cloud.hasRotations()) {
-				const auto rotation_w = cloud.getRotation(i).w;
+				const auto rotation_w = cloud.getRotationScalar(i);
 				float buf = (float)rotation_w;
 				fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
 
-				const auto rotation_xyz = cloud.getRotation(i).xyz;
+				const auto rotation_xyz = cloud.getRotationVec(i);
 				Vec3<float> val32b{ float(rotation_xyz[0]), float(rotation_xyz[1]), float(rotation_xyz[2]) };
 				fout.write(reinterpret_cast<char*>(&val32b), sizeof(float) * 3);
 			}
@@ -701,48 +701,48 @@ ply::read(
 					if (attributeInfo.byteCount == 4) {
 						float rotationW;
 						ifs.read(reinterpret_cast<char*>(&rotationW), sizeof(float));
-						cloud.getRotation(pointCounter).w = int32_t(rotationW);
+						cloud.getRotationScalar(pointCounter) = int32_t(rotationW);
 					}
 					else if (attributeInfo.byteCount == 2) {
 						uint16_t rotationW;
 						ifs.read(reinterpret_cast<char*>(&rotationW), sizeof(uint16_t));
-						cloud.getRotation(pointCounter).w = int32_t(rotationW);
+						cloud.getRotationScalar(pointCounter) = int32_t(rotationW);
 					}
 				}
 				else if (a == indexRotationX && attributeInfo.byteCount <= 4) {
 					if (attributeInfo.byteCount == 4) {
 						float rotationX;
 						ifs.read(reinterpret_cast<char*>(&rotationX), sizeof(float));
-						cloud.getRotation(pointCounter).xyz[0] = int32_t(rotationX);
+						cloud.getRotationVec(pointCounter)[0] = int32_t(rotationX);
 					}
 					else if (attributeInfo.byteCount == 2) {
 						uint16_t rotationX;
 						ifs.read(reinterpret_cast<char*>(&rotationX), sizeof(uint16_t));
-						cloud.getRotation(pointCounter).xyz[0] = int32_t(rotationX);
+						cloud.getRotationVec(pointCounter)[0] = int32_t(rotationX);
 					}
 				}
 				else if (a == indexRotationY && attributeInfo.byteCount <= 4) {
 					if (attributeInfo.byteCount == 4) {
 						float rotationY;
 						ifs.read(reinterpret_cast<char*>(&rotationY), sizeof(float));
-						cloud.getRotation(pointCounter).xyz[1] = int32_t(rotationY);
+						cloud.getRotationVec(pointCounter)[1] = int32_t(rotationY);
 					}
 					else if (attributeInfo.byteCount == 2) {
 						uint16_t rotationY;
 						ifs.read(reinterpret_cast<char*>(&rotationY), sizeof(uint16_t));
-						cloud.getRotation(pointCounter).xyz[1] = int32_t(rotationY);
+						cloud.getRotationVec(pointCounter)[1] = int32_t(rotationY);
 					}
 				}
 				else if (a == indexRotationZ && attributeInfo.byteCount <= 4) {
 					if (attributeInfo.byteCount == 4) {
 						float rotationZ;
 						ifs.read(reinterpret_cast<char*>(&rotationZ), sizeof(float));
-						cloud.getRotation(pointCounter).xyz[2] = int32_t(rotationZ);
+						cloud.getRotationVec(pointCounter)[2] = int32_t(rotationZ);
 					}
 					else if (attributeInfo.byteCount == 2) {
 						uint16_t rotationZ;
 						ifs.read(reinterpret_cast<char*>(&rotationZ), sizeof(uint16_t));
-						cloud.getRotation(pointCounter).xyz[2] = int32_t(rotationZ);
+						cloud.getRotationVec(pointCounter)[2] = int32_t(rotationZ);
 					}
 				}
 				else {

@@ -981,8 +981,10 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 		if (src.hasScales())
 			dst.setScale(i, src.getScale(inputIdx));
 
-		if (src.hasRotations())
-			dst.setRotation(i, src.getRotation(inputIdx));
+		if (src.hasRotations()) {
+			dst.setRotationVec(i, src.getRotationVec(inputIdx));
+			dst.setRotationScalar(i, src.getRotationScalar(inputIdx));
+		}
 
 		if (src.hasSHCoefficients()) {
 			for (int k = 0; k < src.getNumSHCoeffs(); k++)
@@ -1043,8 +1045,10 @@ getPartition(
 			if (src.hasScales())
 				dst.setScale(dstIdx, src.getScale(srcIdx));
 
-			if (src.hasRotations())
-				dst.setRotation(dstIdx, src.getRotation(srcIdx));
+			if (src.hasRotations()) {
+				dst.setRotationVec(dstIdx, src.getRotationVec(srcIdx));
+				dst.setRotationScalar(dstIdx, src.getRotationScalar(srcIdx));
+			}
 
 			if (src.hasSHCoefficients()) {
 				for (int k = 0; k < src.getNumSHCoeffs(); k++)

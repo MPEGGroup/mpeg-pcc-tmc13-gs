@@ -707,13 +707,15 @@ parseSps(const PayloadBuffer& buf)
     bs.readUe(&num_attribute_parameters);
     bs.byteAlign();
 
-    if (!attr.params.sh_dc_coefficient_flag)			// SH_ac
+    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients
+			&& !attr.params.sh_dc_coefficient_flag)			// SH_ac
       attr.params.num_sh_coefficient_degrees_minus1 = value;
 
     for (int i = 0; i < num_attribute_parameters; i++)
       parseAttributeParameter(attr, bs, attr.params);
 
-    if (attr.params.sh_dc_coefficient_flag)				// SH_dc
+    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients 
+			&& attr.params.sh_dc_coefficient_flag)  // SH_dc
       value = attr.params.num_sh_coefficient_degrees_minus1;
   }
 

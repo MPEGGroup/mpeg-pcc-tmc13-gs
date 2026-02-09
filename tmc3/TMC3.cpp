@@ -1488,21 +1488,21 @@ sanitizeEncoderOpts(
 		}
 
 		if (!it.first.compare(0, 13, "SHCoefficient")) {
-      attr_sps.attr_num_dimensions_minus1 = 2;
-      attrMeta.sh_coefficient_label =
-        (SHCoefficientLabel)attrMeta.sh_coefficient_label_temp;
-      attr_sps.attributeLabel = KnownAttributeLabel::kSH_coefficients;
-      if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
-        attrMeta.sh_dc_coefficient_flag = true;
-      else 
-        attrMeta.sh_dc_coefficient_flag = false;
-      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-      attrMeta.shCoefficientParameterPresent = true;
+			attr_sps.attr_num_dimensions_minus1 = 2;
+			attrMeta.sh_coefficient_label =
+				(SHCoefficientLabel)attrMeta.sh_coefficient_label_temp;
+			attr_sps.attributeLabel = KnownAttributeLabel::kSH_coefficients;
+			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
+				attrMeta.sh_dc_coefficient_flag = true;
+			else 
+				attrMeta.sh_dc_coefficient_flag = false;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+			attrMeta.shCoefficientParameterPresent = true;
 		      
 			if (attrMeta.num_sh_coefficient_degrees_minus1 > 3)
-        attrMeta.num_sh_coefficient_degrees_minus1 = 3;
-      else if (attrMeta.num_sh_coefficient_degrees_minus1 < 0)
-        attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+				attrMeta.num_sh_coefficient_degrees_minus1 = 3;
+			else if (attrMeta.num_sh_coefficient_degrees_minus1 < 0)
+				attrMeta.num_sh_coefficient_degrees_minus1 = 0;
 		}
 
     // Assume that YCgCo is actually YCgCoR for now

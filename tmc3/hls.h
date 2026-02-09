@@ -74,7 +74,7 @@ enum class KnownAttributeLabel : uint32_t
 	// Gaussian Splat Compression
 	kScale = 7,
 	kRotation = 8,
-  kSH_coefficients = 9,
+	kSH_coefficients = 9,
 
   // Indicates that the attrabute label is described by an Oid
   kOid = 0xffffffff,

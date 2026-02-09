@@ -263,7 +263,8 @@ public:
     swap(frameidx, other.frameidx);
     swap(opacities, other.opacities);
     swap(scales, other.scales);
-    swap(rotations, other.rotations);
+    swap(rotations_vec, other.rotations_vec);
+    swap(rotations_scalar, other.rotations_scalar);
     swap(sh_coefficients, other.sh_coefficients);
 
     swap(withColors, other.withColors);
@@ -298,6 +299,7 @@ public:
     assert(index < colors.size() && withColors);
     return colors[index];
   }
+  std::vector<Vec3<attr_t>>& getColor() { return colors; }
   void setColor(const size_t index, const Vec3<attr_t> color)
   {
     assert(index < colors.size() && withColors);
@@ -313,6 +315,7 @@ public:
     assert(index < reflectances.size() && withReflectances);
     return reflectances[index];
   }
+  std::vector<attr_t>& getReflectance() { return reflectances; }
   void setReflectance(const size_t index, const attr_t reflectance)
   {
     assert(index < reflectances.size() && withReflectances);
@@ -342,6 +345,7 @@ public:
     assert(index < opacities.size() && withOpacities);
     return opacities[index];
   }
+  std::vector<attr_t>& getOpacity() { return opacities; }
   void setOpacity(const size_t index, const attr_t opacity)
   {
     assert(index < opacities.size() && withOpacities);
@@ -370,6 +374,7 @@ public:
     assert(index < scales.size() && withScales);
     return scales[index];
   }
+  std::vector<Vec3<attr_t>>& getScale() { return scales; }
   void setScale(const size_t index, const Vec3<attr_t> scale)
   {
     assert(index < scales.size() && withScales);
@@ -387,37 +392,39 @@ public:
     scales.resize(0);
   }
 
-  // Gaussian Splat Compression : Rotation
-  template<typename T>
-  struct Components4 {
-    T w;
-    Vec3<T> xyz;
-  };
+	Vec3<attr_t> getRotationVec(const size_t index) const
+  {
+    assert(index < rotations_vec.size() && withRotations);
+    return rotations_vec[index];
+  }
+  Vec3<attr_t>& getRotationVec(const size_t index)
+  {
+    assert(index < rotations_vec.size() && withRotations);
+    return rotations_vec[index];
+  }
+  std::vector<Vec3<attr_t>>& getRotationVec() { return rotations_vec; }
+  void setRotationVec(const size_t index, const Vec3<attr_t>& val)
+  {
+    assert(index < rotations_vec.size() && withRotations);
+    rotations_vec[index] = val;
+  }
 
-  Components4<attr_t> getRotation(const size_t index) const
+
+  attr_t getRotationScalar(const size_t index) const
   {
-    assert(index < rotations.size() && withRotations);
-    return rotations[index];
+    assert(index < rotations_scalar.size() && withRotations);
+    return rotations_scalar[index];
   }
-  Components4<attr_t>& getRotation(const size_t index)
+  attr_t& getRotationScalar(const size_t index)
   {
-    assert(index < rotations.size() && withRotations);
-    return rotations[index];
+    assert(index < rotations_scalar.size() && withRotations);
+    return rotations_scalar[index];
   }
-  void setRotation(const size_t index, const Components4<attr_t> rotation)
+  std::vector<attr_t>& getRotationScalar() { return rotations_scalar; }
+  void setRotationScalar(const size_t index, const attr_t val)
   {
-    assert(index < rotations.size() && withRotations);
-    rotations[index] = rotation;
-  }
-  void setRotation(const size_t index, const Vec3<attr_t> rotation_xyz)
-  {
-    assert(index < rotations.size() && withRotations);
-    rotations[index].xyz = rotation_xyz;
-  }
-  void setRotation(const size_t index, const attr_t rotation_w)
-  {
-    assert(index < rotations.size() && withRotations);
-    rotations[index].w = rotation_w;
+    assert(index < rotations_scalar.size() && withRotations);
+    rotations_scalar[index] = val;
   }
   bool hasRotations() const { return withRotations; }
   void addRotations()
@@ -428,7 +435,8 @@ public:
   void removeRotations()
   {
     withRotations = false;
-    rotations.resize(0);
+    rotations_vec.resize(0);
+    rotations_scalar.resize(0);
   }
 
   // Gaussian Splat Compression : Spherical harmonics
@@ -446,6 +454,10 @@ public:
       SH_index < sh_coefficients.size()
       && index < sh_coefficients[SH_index].size() && withSHCoefficients);
     return sh_coefficients[SH_index][index];
+  }
+  std::vector<Vec3<attr_t>>& getSHCoefficient(const size_t SH_index)
+  {
+    return sh_coefficients[SH_index];
   }
   void setSHCoefficient(
     const size_t SH_index,
@@ -480,7 +492,7 @@ public:
   {
     numSHCoeffs = 0;
     for (int i = 0; i <= numSHCoeffBandsMinus1; i++)
-      numSHCoeffs += (2 * i + 1);  // 1 + 3 + 5 + 7 + 9 + ...
+      numSHCoeffs += (2 * i + 1);  // 1 + 3 + 5 + 7
   }
 
   int getNumSHCoeffs() const { return numSHCoeffs; }
@@ -585,8 +597,10 @@ public:
       opacities.resize(size);
     if (hasScales())
       scales.resize(size);
-    if (hasRotations())
-      rotations.resize(size);
+    if (hasRotations()) {
+      rotations_vec.resize(size);
+      rotations_scalar.resize(size);
+		}
     if (hasSHCoefficients()) {
       sh_coefficients.resize(numSHCoeffs);
       for (int i = 0; i < numSHCoeffs; i++)
@@ -611,8 +625,10 @@ public:
       opacities.reserve(size);
     if (hasScales())
       scales.reserve(size);
-    if (hasRotations())
-      rotations.reserve(size);
+    if (hasRotations()) {
+      rotations_vec.reserve(size);
+      rotations_scalar.reserve(size);
+		}
     if (hasSHCoefficients()) {
       sh_coefficients.resize(numSHCoeffs);
       for (int i = 0; i < numSHCoeffs; i++)
@@ -629,7 +645,8 @@ public:
     // Gaussian splat compression
     opacities.clear();
     scales.clear();
-    rotations.clear();
+    rotations_vec.clear();
+    rotations_scalar.clear();
     for (int i = 0; i < sh_coefficients.size(); i++)
       sh_coefficients[i].clear();
     sh_coefficients.clear();
@@ -691,10 +708,14 @@ public:
         src.scales.begin(), src.scales.end(),
         std::next(scales.begin(), dstEnd));
 
-    if (hasRotations() && src.hasRotations())
+    if (hasRotations() && src.hasRotations()) {
       std::copy(
-        src.rotations.begin(), src.rotations.end(),
-        std::next(rotations.begin(), dstEnd));
+        src.rotations_vec.begin(), src.rotations_vec.end(),
+        std::next(rotations_vec.begin(), dstEnd));
+      std::copy(
+        src.rotations_scalar.begin(), src.rotations_scalar.end(),
+        std::next(rotations_scalar.begin(), dstEnd));
+    }
 
     if (hasSHCoefficients() && src.hasSHCoefficients()) {
       for (int i = 0; i < sh_coefficients.size(); i++) {
@@ -724,7 +745,8 @@ public:
       std::swap(getScale(index1), getScale(index2));
     }
     if (hasRotations()) {
-      std::swap(getRotation(index1), getRotation(index2));
+      std::swap(getRotationVec(index1), getRotationVec(index2));
+      std::swap(getRotationScalar(index1), getRotationScalar(index2));
     }
     if (hasSHCoefficients()) {
       for (int i = 0; i < sh_coefficients.size(); i++)
@@ -791,7 +813,8 @@ private:
 
   std::vector<attr_t> opacities;
   std::vector<Vec3<attr_t>> scales;
-  std::vector<Components4<attr_t>> rotations;
+  std::vector<Vec3<attr_t>> rotations_vec;		// Quaternion (xyz) 
+  std::vector<attr_t> rotations_scalar;				// Quaternion (w) 
   std::vector<std::vector<Vec3<attr_t>>> sh_coefficients;
   int numSHCoeffs = -1;
 

@@ -158,13 +158,13 @@ predModeEligibleColor(
 				indexes[predictor.neighbors[i].predictorIndex]);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			colorNeighbor = pointCloud.getRotation(
-				indexes[predictor.neighbors[i].predictorIndex]).xyz;
+			colorNeighbor = pointCloud.getRotationVec(
+				indexes[predictor.neighbors[i].predictorIndex]);
 		}
 		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-      int SHindex = (int)desc.params.sh_coefficient_label;
-      colorNeighbor = pointCloud.getSHCoefficient(
-        SHindex, indexes[predictor.neighbors[i].predictorIndex]);
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			colorNeighbor = pointCloud.getSHCoefficient(
+				SHindex, indexes[predictor.neighbors[i].predictorIndex]);
 		}
 
 
@@ -207,8 +207,8 @@ predModeEligibleRefl(
 			  indexes[predictor.neighbors[i].predictorIndex]);
 	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-		  reflectanceNeighbor = pointCloud.getRotation(
-			  indexes[predictor.neighbors[i].predictorIndex]).w;
+		  reflectanceNeighbor = pointCloud.getRotationScalar(
+			  indexes[predictor.neighbors[i].predictorIndex]);
 	  }
     if (i == 0 || reflectanceNeighbor < minValue) {
       minValue = reflectanceNeighbor;

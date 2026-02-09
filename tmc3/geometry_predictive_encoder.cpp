@@ -873,16 +873,18 @@ encodePredictiveGeometry(
         outCloud.setColor(i, cloud.getColor(srcIdx));
       if (cloud.hasReflectances())
         outCloud.setReflectance(i, cloud.getReflectance(srcIdx));    
-			if (cloud.hasOpacities())
-				outCloud.setOpacity(i, cloud.getOpacity(srcIdx));
-			if (cloud.hasScales())
-				outCloud.setScale(i, cloud.getScale(srcIdx));
-			if (cloud.hasRotations())
-				outCloud.setRotation(i, cloud.getRotation(srcIdx));
-			if (cloud.hasSHCoefficients()) {
-				for (int k = 0; k < cloud.getNumSHCoeffs(); k++)
-					outCloud.setSHCoefficient(k, i, cloud.getSHCoefficient(k, srcIdx));
-			}
+      if (cloud.hasOpacities())
+        outCloud.setOpacity(i, cloud.getOpacity(srcIdx));
+      if (cloud.hasScales())
+        outCloud.setScale(i, cloud.getScale(srcIdx));
+      if (cloud.hasRotations()) {
+        outCloud.setRotationVec(i, cloud.getRotationVec(srcIdx));
+        outCloud.setRotationScalar(i, cloud.getRotationScalar(srcIdx));
+      }
+      if (cloud.hasSHCoefficients()) {
+        for (int k = 0; k < cloud.getNumSHCoeffs(); k++)
+          outCloud.setSHCoefficient(k, i, cloud.getSHCoefficient(k, srcIdx));
+      }
     }
   }
 

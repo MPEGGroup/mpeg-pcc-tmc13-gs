@@ -351,60 +351,34 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
 {
   assert(buf.type == PayloadType::kGeometryBrick);
   std::cout << "positions bitstream size " << buf.size() << " B\n";
+	
+  bool hasColour = false;
+  bool hasReflectance = false;
+  bool hasOpacity = false;
+  bool hasScale = false;
+  bool hasRotation = false;
+  bool hasSHCoefficient = false;
 
-  // todo(df): replace with attribute mapping
-  bool hasColour = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kColour;
-    });
+  for (auto attrSet : _sps->attributeSets) {
+    if (attrSet.attributeLabel == KnownAttributeLabel::kColour)
+      hasColour |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kReflectance)
+      hasReflectance |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kOpacity)
+      hasOpacity |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kScale)
+      hasScale |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kRotation)
+      hasRotation |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      hasSHCoefficient |= true;						
+      assert(attrSet.params.num_sh_coefficient_bands_minus1 >= 0);
+      int numSHBandsMinus1 = attrSet.params.num_sh_coefficient_degrees_minus1;
+      _currentPointCloud.setNumSHCoeffsWithNumBandsMinus1(numSHBandsMinus1);
+		}
+	}
 
-  bool hasReflectance = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kReflectance;
-    });
-
-  bool hasOpacity = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kOpacity;
-    });
-
-  bool hasScale = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kScale;
-    });
-
-  bool hasRotation = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kRotation;
-    });
-
-  bool hasSHCoefficient = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kSH_coefficients;
-    });
-
-  if (hasSHCoefficient) {
-    int numSHBandsMinus1 = -1;
-    for (auto attrSet : _sps->attributeSets) {
-      if (attrSet.attributeLabel.known_attribute_label
-          == KnownAttributeLabel::kSH_coefficients
-				&& attrSet.params.sh_dc_coefficient_flag) {
-        assert(attrSet.params.num_sh_coefficient_degrees_minus1 >= 0);
-        numSHBandsMinus1 = attrSet.params.num_sh_coefficient_degrees_minus1;
-        break;
-			}
-    }
-
-		_currentPointCloud.setNumSHCoeffsWithNumBandsMinus1(numSHBandsMinus1);
-  }
-
-  _currentPointCloud.clear();
+	_currentPointCloud.clear();
   _currentPointCloud.addRemoveAttributes(
     hasColour, hasReflectance, hasOpacity, hasScale, hasRotation,
     hasSHCoefficient);
@@ -433,108 +407,40 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
   // set default attribute values (in case an attribute data unit is lost)
   // NB: it is a requirement that geom_num_points_minus1 is correct
   _currentPointCloud.resize(_gbh.footer.geom_num_points_minus1 + 1);
-  if (hasColour) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-        return desc.attributeLabel == KnownAttributeLabel::kColour;
-      });
+  for (auto& desc : _outCloud.attrDesc) {
+    Vec3<attr_t> defAttrVal = 1 << (desc.bitdepth - 1);
+    if (!desc.params.attr_default_value.empty())
+      for (int k = 0; k < desc.attr_num_dimensions_minus1 + 1; k++)
+        defAttrVal[k] = desc.params.attr_default_value[k];
 
-    Vec3<attr_t> defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      for (int k = 0; k < 3; k++)
-        defAttrVal[k] = it->params.attr_default_value[k];
-    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-      _currentPointCloud.setColor(i, defAttrVal);
-  }
-
-  if (hasReflectance) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-        return desc.attributeLabel == KnownAttributeLabel::kReflectance;
-      });
-    attr_t defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      defAttrVal = it->params.attr_default_value[0];
-    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-      _currentPointCloud.setReflectance(i, defAttrVal);
-  }
-
-  if (hasOpacity) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-        return desc.attributeLabel == KnownAttributeLabel::kOpacity;
-      });
-    attr_t defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      defAttrVal = it->params.attr_default_value[0];
-    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-      _currentPointCloud.setOpacity(i, defAttrVal);
-  }
-
-  if (hasScale) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-        return desc.attributeLabel == KnownAttributeLabel::kScale;
-      });
-
-    Vec3<attr_t> defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      for (int k = 0; k < 3; k++)
-        defAttrVal[k] = it->params.attr_default_value[k];
-    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-      _currentPointCloud.setScale(i, defAttrVal);
-  }
-
-  if (hasRotation) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-        return desc.attributeLabel == KnownAttributeLabel::kRotation;
-      });
-
-    if (
-      it->params.rotation_component_label
-      == RotationComponentLabel::kRotation_XYZ) {
-      Vec3<attr_t> defAttrVal = 1 << (it->bitdepth - 1);
-      if (!it->params.attr_default_value.empty()) {
-        for (int k = 0; k < 3; k++)
-          defAttrVal[k] = it->params.attr_default_value[k];
+    if (desc.attributeLabel == KnownAttributeLabel::kColour)    {
+      auto& attrs = _currentPointCloud.getColor();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kReflectance)    {
+      auto& attrs = _currentPointCloud.getReflectance();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)    {
+      auto& attrs = _currentPointCloud.getOpacity();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kScale)    {
+      auto& attrs = _currentPointCloud.getScale();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kRotation)    {
+      if (desc.params.rotation_component_label
+        == RotationComponentLabel::kRotation_XYZ) {
+        auto& attrs = _currentPointCloud.getRotationVec();
+        std::fill(attrs.begin(), attrs.end(), defAttrVal);
+      } else if (desc.params.rotation_component_label
+        == RotationComponentLabel::kRotation_W) {
+        auto& attrs = _currentPointCloud.getRotationScalar();
+        std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
       }
-      for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-        _currentPointCloud.setRotation(i, defAttrVal);
-    } else if (
-      it->params.rotation_component_label
-      == RotationComponentLabel::kRotation_W) {
-      attr_t defAttrVal = 1 << (it->bitdepth - 1);
-      if (!it->params.attr_default_value.empty())
-        defAttrVal = it->params.attr_default_value[0];
-      for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-        _currentPointCloud.setRotation(i, defAttrVal);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      int SHindex = (int)desc.params.sh_coefficient_label;
+      auto& attrs = _currentPointCloud.getSHCoefficient(SHindex);
+      std::fill(attrs.begin(), attrs.end(), defAttrVal);
     }
-  }
-
-  if (hasSHCoefficient) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-      return (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients 
-				&& desc.params.sh_dc_coefficient_flag);
-      });
-
-		for (int SHindex = 0; SHindex < _currentPointCloud.getNumSHCoeffs();
-         SHindex++) {
-			Vec3<attr_t> defAttrVal = 1 << (it->bitdepth - 1);
-			if (!it->params.attr_default_value.empty())
-				for (int k = 0; k < 3; k++)
-					defAttrVal[k] = it->params.attr_default_value[k];
-			for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-				_currentPointCloud.setSHCoefficient(SHindex, i, defAttrVal);
-		}
-  }
+	}
 
   // Calculate a tree level at which to stop
   // It should result in at most max points being decoded
@@ -765,13 +671,13 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
       for (int k = 0; k < 3; k++)
         defAttrVal[k] = attrDesc.params.attr_default_value[k];
       for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-        _currentPointCloud.setRotation(i, defAttrVal);
+        _currentPointCloud.setRotationVec(i, defAttrVal);
     } else if (
       attrDesc.params.rotation_component_label
       == RotationComponentLabel::kRotation_W) {
       attr_t defAttrVal = attrDesc.params.attr_default_value[0];
       for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-        _currentPointCloud.setRotation(i, defAttrVal);
+        _currentPointCloud.setRotationScalar(i, defAttrVal);
     }
   }
 

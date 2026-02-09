@@ -368,7 +368,7 @@ AttributeDecoder::decodeReflectancesPred(
 				pointCloud.setOpacity(pointIndex, reflectance);
 			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-				pointCloud.setRotation(pointIndex, reflectance);
+				pointCloud.setRotationScalar(pointIndex, reflectance);
 			}
     }
   }
@@ -486,7 +486,7 @@ AttributeDecoder::decodeColorsPred(
 					pointCloud.setScale(pointIndex, color);
 				else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 					assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-					pointCloud.setRotation(pointIndex, color);
+					pointCloud.setRotationVec(pointIndex, color);
 				}
 				else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 					int SHindex = (int)desc.params.sh_coefficient_label;
@@ -566,7 +566,7 @@ AttributeDecoder::decodeReflectancesRaht(
 		  pointCloud.setOpacity(_sortedIndex[n], reflectance);
 	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-		  pointCloud.setRotation(_sortedIndex[n], reflectance);
+		  pointCloud.setRotationScalar(_sortedIndex[n], reflectance);
 	  }
   }
 }
@@ -644,9 +644,9 @@ AttributeDecoder::decodeColorsRaht(
       assert(
         desc.params.rotation_component_label
         == RotationComponentLabel::kRotation_XYZ);
-      pointCloud.setRotation(_sortedIndex[n], color);
+      pointCloud.setRotationVec(_sortedIndex[n], color);
     } 
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+    else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
       int SHindex = (int)desc.params.sh_coefficient_label;
       pointCloud.setSHCoefficient(SHindex, _sortedIndex[n], color);
     }
@@ -745,7 +745,7 @@ AttributeDecoder::decodeColorsLift(
 			pointCloud.setScale(_lods.indexes[f], color);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			pointCloud.setRotation(_lods.indexes[f], color);
+			pointCloud.setRotationVec(_lods.indexes[f], color);
 		}
 		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 			int SHindex = (int)desc.params.sh_coefficient_label;
@@ -831,7 +831,7 @@ AttributeDecoder::decodeReflectancesLift(
 				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-			pointCloud.setRotation(
+			pointCloud.setRotationScalar(
 				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
 		}
   }

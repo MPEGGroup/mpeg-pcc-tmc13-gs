@@ -218,8 +218,10 @@ quantizePositions(
   }
 
   if (src.hasRotations()) {
-	  for (int i = 0; i < numSrcPoints; ++i)
-		  dst->setRotation(i, src.getRotation(i));
+    for (int i = 0; i < numSrcPoints; ++i) {
+      dst->setRotationVec(i, src.getRotationVec(i));
+      dst->setRotationScalar(i, src.getRotationScalar(i));
+    }
   }
 
   if (src.hasSHCoefficients()) {

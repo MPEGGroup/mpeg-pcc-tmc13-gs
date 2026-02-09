@@ -344,7 +344,7 @@ struct PCCPredictor {
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 			color =
-				pointCloud.getRotation(indexes[neighbors[predMode - 1].predictorIndex]).xyz;
+				pointCloud.getRotationVec(indexes[neighbors[predMode - 1].predictorIndex]);
 		}
 		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
       int SHindex = (int)desc.params.sh_coefficient_label;
@@ -367,7 +367,7 @@ struct PCCPredictor {
 				else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 					assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
 					color =
-						pointCloud.getRotation(indexes[neighbors[i].predictorIndex]).xyz;
+						pointCloud.getRotationVec(indexes[neighbors[i].predictorIndex]);
 				} 
 				else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 					int SHindex = (int)desc.params.sh_coefficient_label;
@@ -404,8 +404,8 @@ struct PCCPredictor {
 				indexes[neighbors[predMode - 1].predictorIndex]);
 		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-			predicted = pointCloud.getRotation(
-				indexes[neighbors[predMode - 1].predictorIndex]).w;
+			predicted = pointCloud.getRotationScalar(
+				indexes[neighbors[predMode - 1].predictorIndex]);
 		}
     } else {
       for (size_t i = 0; i < neighborCount; ++i) {
@@ -418,7 +418,7 @@ struct PCCPredictor {
 		  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
 			  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
 			  predicted += neighbors[i].weight
-				  * pointCloud.getRotation(indexes[neighbors[i].predictorIndex]).w;
+				  * pointCloud.getRotationScalar(indexes[neighbors[i].predictorIndex]);
 		  }
       }
       predicted = divExp2RoundHalfInf(predicted, kFixedPointWeightShift);
