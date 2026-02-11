@@ -686,6 +686,8 @@ struct GeometryBrickHeader {
 // NB: when updating this, remember to update AttributeLods::isReusable(...)
 
 struct AttributeParameterSet {
+  int aps_attr_parameter_set_id_v1;
+  int aps_attr_parameter_set_id_extension_2bits = 0;
   int aps_attr_parameter_set_id;
   int aps_seq_parameter_set_id;
   AttributeEncoding attr_encoding;
@@ -776,6 +778,8 @@ struct AttributeParameterSet {
 struct AttributeBrickHeader {
   int attr_sps_attr_idx;
   int attr_attr_parameter_set_id;
+  int attr_attr_parameter_set_id_v1;
+  int attr_attr_parameter_set_id_extension_2bits = 0;
   int attr_geom_slice_id;
 
   // Last component prediction coefficients.  Only present for lifting

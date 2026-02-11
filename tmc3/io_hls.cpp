@@ -858,8 +858,7 @@ write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
   PayloadBuffer buf(PayloadType::kAttributeParameterSet);
   auto bs = makeBitWriter(std::back_inserter(buf));
 
-//  bs.writeUn(4, aps.aps_attr_parameter_set_id);
-  bs.writeUn(6, aps.aps_attr_parameter_set_id);
+  bs.writeUn(4, aps.aps_attr_parameter_set_id_v1);
   bs.writeUn(4, aps.aps_seq_parameter_set_id);
   bs.writeUe(aps.attr_encoding);
 
@@ -939,14 +938,26 @@ write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
     }
   }
 
-  bool aps_extension_flag = true;
+  bool aps_extension_flag = false;
+  aps_extension_flag = true; // changed for GS extension
+  bool aps_gs_extension_present_flag = false;
+  aps_gs_extension_present_flag = true; // changed for GS extension
+  int aps_extension_7bits = 0; // fixed to 0
   bs.write(aps_extension_flag);
   if (aps_extension_flag){
+    // assert(!aps_extension_flag);
+    bs.write(aps_gs_extension_present_flag);    
+    bs.writeUn(7, aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       bs.writeUe(aps.raht_fixed_point_precision);
     }
   }
-
+  if (aps_gs_extension_present_flag) {
+    bs.writeUn(2, aps.aps_attr_parameter_set_id_extension_2bits);
+  }
+  if (aps_extension_7bits) {
+    assert(!aps_extension_7bits);
+  }
   bs.byteAlign();
 
   return buf;
@@ -961,8 +972,7 @@ parseAps(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kAttributeParameterSet);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-//  bs.readUn(4, &aps.aps_attr_parameter_set_id);
-  bs.readUn(6, &aps.aps_attr_parameter_set_id);
+  bs.readUn(4, &aps.aps_attr_parameter_set_id_v1);
   bs.readUn(4, &aps.aps_seq_parameter_set_id);
   bs.readUe(&aps.attr_encoding);
 
@@ -1053,11 +1063,21 @@ parseAps(const PayloadBuffer& buf)
   }
 
   bool aps_extension_flag = bs.read();
+  bool aps_gs_extension_present_flag = false;
+  int aps_extension_7bits = 0;
   if (aps_extension_flag) {
-    // todo(df): aps_extension_data;
+    aps_gs_extension_present_flag = bs.read();    
+    bs.readUn(7, &aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       bs.readUe(&aps.raht_fixed_point_precision);
     }
+  }
+  if (aps_gs_extension_present_flag) {
+    bs.readUn(2, &aps.aps_attr_parameter_set_id_extension_2bits);
+  }
+  aps.aps_attr_parameter_set_id = aps.aps_attr_parameter_set_id_v1 + (aps.aps_attr_parameter_set_id_extension_2bits << 4);
+  if (aps_extension_7bits) {
+    assert(!aps_extension_7bits);
   }
   bs.byteAlign();
 
@@ -1353,10 +1373,10 @@ write(
   assert(buf->type == PayloadType::kAttributeBrick);
   auto bs = makeBitWriter(std::back_inserter(*buf));
 
-  int abh_reserved_zero_3bits = 0;
-//  bs.writeUn(4, abh.attr_attr_parameter_set_id);
-  bs.writeUn(6, abh.attr_attr_parameter_set_id);
-  bs.writeUn(3, abh_reserved_zero_3bits);
+  int abh_reserved_zero_1bit = 0;
+  bs.writeUn(4, abh.attr_attr_parameter_set_id_v1);
+  bs.writeUn(2, abh.attr_attr_parameter_set_id_extension_2bits);
+  bs.writeUn(1, abh_reserved_zero_1bit);
   bs.writeUe(abh.attr_sps_attr_idx);
   bs.writeUe(abh.attr_geom_slice_id);
 
@@ -1444,10 +1464,11 @@ parseAbhIds(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kAttributeBrick);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-  int abh_reserved_zero_3bits;
-//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
-  bs.readUn(6, &abh.attr_attr_parameter_set_id);
-  bs.readUn(3, &abh_reserved_zero_3bits);
+  int abh_reserved_zero_1bit;
+  bs.readUn(4, &abh.attr_attr_parameter_set_id_v1);
+  bs.readUn(2, &abh.attr_attr_parameter_set_id_extension_2bits);
+  abh.attr_attr_parameter_set_id = abh.attr_attr_parameter_set_id_v1 + (abh.attr_attr_parameter_set_id_extension_2bits << 4);
+  bs.readUn(1, &abh_reserved_zero_1bit);
   bs.readUe(&abh.attr_sps_attr_idx);
   bs.readUe(&abh.attr_geom_slice_id);
 
@@ -1470,10 +1491,11 @@ parseAbh(
   assert(buf.type == PayloadType::kAttributeBrick);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-  int abh_reserved_zero_3bits;
-//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
-  bs.readUn(6, &abh.attr_attr_parameter_set_id);
-  bs.readUn(3, &abh_reserved_zero_3bits);
+  int abh_reserved_zero_1bit;
+  bs.readUn(4, &abh.attr_attr_parameter_set_id_v1);
+  bs.readUn(2, &abh.attr_attr_parameter_set_id_extension_2bits);
+  abh.attr_attr_parameter_set_id = abh.attr_attr_parameter_set_id_v1 + (abh.attr_attr_parameter_set_id_extension_2bits << 4);
+  bs.readUn(1, &abh_reserved_zero_1bit);
   bs.readUe(&abh.attr_sps_attr_idx);
   bs.readUe(&abh.attr_geom_slice_id);
 

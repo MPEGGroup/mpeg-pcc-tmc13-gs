@@ -525,6 +525,8 @@ PCCTMC3Encoder3::fixupParameterSets(EncoderParams* params)
   for (int i = 0; i < params->aps.size(); i++) {
     params->aps[i].aps_seq_parameter_set_id = 0;
     params->aps[i].aps_attr_parameter_set_id = i;
+    params->aps[i].aps_attr_parameter_set_id_extension_2bits = (i>>4);
+    params->aps[i].aps_attr_parameter_set_id_v1 = (i - ((i>>4)<<4));
   }
 
   // development level / header
@@ -737,6 +739,8 @@ PCCTMC3Encoder3::compressPartition(
     // todo(df): move elsewhere?
     AttributeBrickHeader abh;
     abh.attr_attr_parameter_set_id = attr_aps.aps_attr_parameter_set_id;
+    abh.attr_attr_parameter_set_id_extension_2bits = (abh.attr_attr_parameter_set_id >> 4);
+    abh.attr_attr_parameter_set_id_v1 = abh.attr_attr_parameter_set_id - (abh.attr_attr_parameter_set_id_extension_2bits << 4);
     abh.attr_sps_attr_idx = attrIdx;
     abh.attr_geom_slice_id = _sliceId;
     abh.attr_qp_delta_luma = 0;
