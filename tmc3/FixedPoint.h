@@ -36,7 +36,7 @@
 #pragma once
 
 #include <cstdint>
-
+#include "AttributeCommon.h"
 namespace pcc {
 
 //============================================================================
@@ -44,8 +44,8 @@ namespace pcc {
 class FixedPoint {
 public:
   // Number of fractional bits in fixed point representation
-  static const int kFracBits = 15;
-  static const int kOneHalf = 1 << (kFracBits - 1);
+ static int kFracBits;
+ int kOneHalf = 1 << (kFracBits - 1);
 
   // Fixed point value
   int64_t val;

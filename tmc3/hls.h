@@ -751,6 +751,7 @@ struct AttributeParameterSet {
   bool aps_slice_qp_deltas_present_flag;
 
   //--- raht parameters
+  int raht_fixed_point_precision = 15;
   bool raht_prediction_enabled_flag;
   int raht_prediction_threshold0;
   int raht_prediction_threshold1;
