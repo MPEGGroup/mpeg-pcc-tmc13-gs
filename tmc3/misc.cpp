@@ -35,7 +35,7 @@
 
 #include "PCCMisc.h"
 #include "PCCMath.h"
-
+#include "FixedPoint.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -139,13 +139,34 @@ uint32_t
 isqrt(uint64_t x)
 {
   if (x <= (uint64_t(1) << 46))
-    return 1 + ((x * irsqrt(x)) >> 40);
+    return 1 + ((x * fastIrsqrt(x)) >> 40);
   else {
     uint64_t x0 = (x + 65536) >> 16;
-    return 1 + ((x0 * irsqrt(x0)) >> 32);
+    return 1 + ((x0 * fastIrsqrt(x0)) >> 32);
   }
 }
 
+static int64_t LUT_fastIsqrt[64];     
+static int64_t LUT_fastIrsqrt[64];
+
+void
+init_LUT(){
+  for (uint64_t i = 0; i <= 63; i++)
+    LUT_fastIrsqrt[i] = irsqrt(i);
+  for (uint64_t i = 0; i <= 63; i++)
+    LUT_fastIsqrt[i] = isqrt(i << (2 * FixedPoint::kFracBits));
+}
+
+uint32_t
+fastIsqrt(uint64_t x)
+{
+  assert(x < 1ULL << 34);
+
+  if (x < 64)
+    return LUT_fastIsqrt[x];
+
+  return isqrt(x << (2 * FixedPoint::kFracBits));  // kFracBits bits precision output
+}
 //============================================================================
 // Fixed point inverse square root
 
@@ -224,6 +245,14 @@ irsqrt(uint64_t a64)
     return r >> -shift;
 }
 
+uint64_t
+fastIrsqrt(uint64_t a64)
+{
+  if (a64 < 64)
+    return LUT_fastIrsqrt[a64];
+
+  return irsqrt(a64);
+}
 //============================================================================
 // Fixed point arc tangent
 
@@ -285,7 +314,7 @@ iatan2Core(int y, int x)
     return 0;
 
   uint64_t rinv =
-    irsqrt(uint64_t(x) * uint64_t(x) + uint64_t(y) * uint64_t(y));
+    fastIrsqrt(uint64_t(x) * uint64_t(x) + uint64_t(y) * uint64_t(y));
   int r = (y * rinv) >> 20;  // 40 - 20 = 20 bits precision
   int idx = r >> 11;
   int lambda = r - (idx << 11);

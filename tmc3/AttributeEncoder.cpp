@@ -1111,6 +1111,7 @@ AttributeEncoder::encodeReflectancesTransformRaht(
                                     aps.raht_prediction_threshold1};
 
   FixedPoint::kFracBits = aps.raht_fixed_point_precision;
+  init_LUT();
   // Transform.
   regionAdaptiveHierarchicalTransform(
     aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
@@ -1195,6 +1196,9 @@ AttributeEncoder::encodeColorsTransformRaht(
 
   // Transform.
   FixedPoint::kFracBits = aps.raht_fixed_point_precision;
+
+  init_LUT();
+
   regionAdaptiveHierarchicalTransform(
     aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
     pointQpOffsets.data(), mortonCode.data(), attributes.data(), attribCount,
@@ -1290,7 +1294,7 @@ AttributeEncoder::encodeColorsLift(
       const auto pointIndex = _lods.indexes[predictorIndex];
       auto quant = qpSet.quantizers(pointCloud[pointIndex], quantLayer);
 
-      const int64_t iQuantWeight = irsqrt(weights[predictorIndex]);
+      const int64_t iQuantWeight = fastIrsqrt(weights[predictorIndex]);
       const int64_t quantWeight =
         divExp2RoundHalfUp(weights[predictorIndex] * iQuantWeight, 28);
 
@@ -1441,7 +1445,7 @@ AttributeEncoder::encodeReflectancesLift(
       const auto pointIndex = _lods.indexes[predictorIndex];
       auto quant = qpSet.quantizers(pointCloud[pointIndex], quantLayer);
 
-      const int64_t iQuantWeight = irsqrt(weights[predictorIndex]);
+      const int64_t iQuantWeight = fastIrsqrt(weights[predictorIndex]);
       const int64_t quantWeight =
         (weights[predictorIndex] * iQuantWeight + (1ull << 27)) >> 28;
 
