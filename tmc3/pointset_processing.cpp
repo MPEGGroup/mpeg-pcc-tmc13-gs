@@ -175,7 +175,6 @@ quantizePositions(
   PCCPointSet3* dst)
 {
   int numSrcPoints = src.getPointCount();
-
   // In case dst and src point clouds are the same, don't destroy src.
   if (&src != dst) {
     dst->clear();

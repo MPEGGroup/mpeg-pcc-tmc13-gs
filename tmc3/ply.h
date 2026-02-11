@@ -85,7 +85,7 @@ namespace ply {
     const PropertyNameMap& propertyNames,
     double positionScale,
     PCCPointSet3& cloud,
-    const std::vector<AttributeDescription>& attrDescs);
+    std::vector<AttributeDescription>& attrDescs);
 
   //============================================================================
 

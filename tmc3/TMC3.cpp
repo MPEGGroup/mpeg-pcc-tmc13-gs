@@ -1425,6 +1425,8 @@ sanitizeEncoderOpts(
     //  - pre/post scaling is only currently supported for reflectance
     attrMeta.scalingParametersPresent = attrMeta.attr_offset
       || attrMeta.attr_scale_minus1 || attrMeta.attr_frac_bits;
+      
+    
 
     if (it.first == "reflectance") {
       // Avoid wasting bits signalling chroma quant step size for reflectance
@@ -2121,11 +2123,20 @@ scaleAttributes(
   bool unityScale = !params.attr_scale_minus1 && !params.attr_frac_bits;
   if (unityScale && !params.attr_offset)
     return;
+  
+  if (attrDesc-> is3DGS)
+    return;     
 
   const auto pointCount = cloud.getPointCount();
   for (size_t i = 0; i < pointCount; ++i) {
-    auto& val = cloud.getReflectance(i);
-    val = scaler(params, val);
+    if (attrDesc->is3DGS) {
+      auto key = GSHelper::getGSKey(attrDesc->attr_instance_id);
+      auto& val = cloud.getGSInfo(i, key);  
+      val = scaler(params, val);            
+    } else {
+      auto& val = cloud.getReflectance(i);  
+      val = scaler(params, val);            
+    }
   }
 }
 
