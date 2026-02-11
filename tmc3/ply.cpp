@@ -90,9 +90,9 @@ void RGB2YUV(double (&src)[3])
   double R = src[0];
   double G = src[1];
   double B = src[2];
-  src[0] = +0.29900 * R + 0.58700 * G + 0.11400 * B;
-  src[1] = -0.14713 * R - 0.28886 * G + 0.43600 * B;
-  src[2] = +0.61500 * R - 0.51498 * G - 0.10001 * B;
+  src[0] = +0.2126 * R + 0.7152 * G + 0.0722 * B;
+  src[1] = -0.1146 * R - 0.3854 * G + 0.5 * B;
+  src[2] = +0.5 * R - 0.4542 * G - 0.0458 * B;
   
 }
 void YUV2RGB(double (&src)[3])  
@@ -100,9 +100,9 @@ void YUV2RGB(double (&src)[3])
   double Y = src[0];
   double U = src[1];
   double V = src[2];
-  src[0] = Y + 1.13983 * V;
-  src[1] = Y - 0.39465 * U - 0.58060 * V;
-  src[2] = Y + 2.03211 * U;
+  src[0] = Y + 1.5748 * V;
+  src[1] = Y - 0.1873 * U - 0.4681 * V;
+  src[2] = Y + 1.8556 * U;
   
 }
 
