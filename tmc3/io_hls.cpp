@@ -1598,10 +1598,10 @@ parseConstantAttribute(
   assert(buf.type == PayloadType::kConstantAttribute);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-//  bs.readUn(4, &cadu.constattr_attr_parameter_set_id);
-  bs.readUn(6, &cadu.constattr_attr_parameter_set_id);
+  bs.readUn(4, &cadu.constattr_seq_parameter_set_id);
+  bs.readUn(3, &cadu.constattr_reserved_zero_3bits);
   bs.readUe(&cadu.constattr_sps_attr_idx);
-  bs.readUe(&cadu.constattr_geom_slice_id);
+  bs.readUe(&cadu.constattr_slice_id);
 
   // todo(df): check bounds
   const auto& attrDesc = sps.attributeSets[cadu.constattr_sps_attr_idx];
@@ -1610,8 +1610,29 @@ parseConstantAttribute(
   bs.readUn(attrDesc.bitdepth, &cadu.constattr_default_value[0]);
   for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1; k++)
     bs.readUn(attrDesc.bitdepth, &cadu.constattr_default_value[k]);
-
+  bs.byteAlign();
   return cadu;
+}
+
+void writeConstantAttribute(
+  const SequenceParameterSet& sps, 
+  const ConstantAttributeDataUnit& cadu, 
+  PayloadBuffer* buf)
+{
+  assert(buf->type == PayloadType::kConstantAttribute);
+  auto bs = makeBitWriter(std::back_inserter(*buf));
+
+  bs.writeUn(4, &cadu.constattr_seq_parameter_set_id);
+  bs.writeUn(3, &cadu.constattr_reserved_zero_3bits);
+  bs.writeUe(cadu.constattr_sps_attr_idx);
+  bs.writeUe(cadu.constattr_slice_id);
+
+  // todo(df): check bounds
+  const auto& attrDesc = sps.attributeSets[cadu.constattr_sps_attr_idx];
+  bs.writeUn(attrDesc.bitdepth, cadu.constattr_default_value[0]);
+  for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1; k++)
+    bs.writeUn(attrDesc.bitdepth, cadu.constattr_default_value[k]);
+  bs.byteAlign();
 }
 
 //============================================================================

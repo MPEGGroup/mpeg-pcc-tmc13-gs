@@ -613,11 +613,13 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
   // todo(df): replace assertions with error handling
   assert(_sps);
   assert(_gps);
+  pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
+  clock_user.start();
 
   ConstantAttributeDataUnit cadu = parseConstantAttribute(*_sps, buf);
 
   // verify that this corresponds to the correct geometry slice
-  assert(cadu.constattr_geom_slice_id == _sliceId);
+  assert(cadu.constattr_slice_id == _sliceId);
 
   assert(cadu.constattr_sps_attr_idx < _sps->attributeSets.size());
   const auto& attrDesc = _sps->attributeSets[cadu.constattr_sps_attr_idx];
@@ -627,16 +629,35 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
   if (label == KnownAttributeLabel::kColour) {
     Vec3<attr_t> defAttrVal;
     for (int k = 0; k < 3; k++)
-      defAttrVal[k] = attrDesc.params.attr_default_value[k];
+      defAttrVal[k] = cadu.constattr_default_value[k];
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setColor(i, defAttrVal);
   }
 
+  if (attrDesc.is3DGS){
+    attr_t defAttrVal = cadu.constattr_default_value[0];
+    auto key = GSHelper::getGSKey(attrDesc.attr_instance_id);
+    auto& gs_attrs = _currentPointCloud.getGSInfo(key);
+    std::fill(gs_attrs.begin(), gs_attrs.end(), defAttrVal);
+  }
+
   if (label == KnownAttributeLabel::kReflectance && !attrDesc.is3DGS) {
-    attr_t defAttrVal = attrDesc.params.attr_default_value[0];
+    attr_t defAttrVal = cadu.constattr_default_value[0];
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setReflectance(i, defAttrVal);
   }
+
+  clock_user.stop();
+
+  std::cout << label << "s bitstream size " << buf.size() << " B\n";
+
+  auto total_user =
+    std::chrono::duration_cast<std::chrono::milliseconds>(clock_user.count());
+  std::cout << label
+            << "s processing time (user): " << total_user.count() / 1000.0
+            << " s\n";
+  std::cout << std::endl;
+
 }
 
 //============================================================================

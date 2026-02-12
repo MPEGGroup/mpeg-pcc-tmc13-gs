@@ -114,6 +114,11 @@ AttributeBrickHeader parseAbh(
 ConstantAttributeDataUnit parseConstantAttribute(
   const SequenceParameterSet& sps, const PayloadBuffer& buf);
 
+void  writeConstantAttribute(
+  const SequenceParameterSet& sps, 
+  const ConstantAttributeDataUnit& cadu, 
+  PayloadBuffer* buf);
+
 void write(
   const GeometryParameterSet& gps,
   const GeometryBrickHeader& gbh,
