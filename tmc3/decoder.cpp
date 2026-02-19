@@ -207,9 +207,6 @@ PCCTMC3Decoder3::decompress(
   switch (buf->type) {
   case PayloadType::kSequenceParameterSet: {
     auto sps = parseSps(*buf);
-    if(_params.gs_ext){
-      for(auto& it: sps.attributeSets) it.is3DGS = true;
-    }
     convertXyzToStv(&sps);
     storeSps(std::move(sps));
     return 0;
@@ -355,30 +352,37 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
 {
   assert(buf.type == PayloadType::kGeometryBrick);
   std::cout << "positions bitstream size " << buf.size() << " B\n";
+	
+  bool hasColour = false;
+  bool hasReflectance = false;
+  bool hasOpacity = false;
+  bool hasScale = false;
+  bool hasRotation = false;
+  bool hasSHCoefficient = false;
 
-  // todo(df): replace with attribute mapping
-  bool hasColour = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kColour;
-    });
+  for (auto attrSet : _sps->attributeSets) {
+    if (attrSet.attributeLabel == KnownAttributeLabel::kColour)
+      hasColour |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kReflectance)
+      hasReflectance |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kOpacity)
+      hasOpacity |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kScale)
+      hasScale |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kRotation)
+      hasRotation |= true;
+    else if (attrSet.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      hasSHCoefficient |= true;						
+      assert(attrSet.params.num_sh_coefficient_bands_minus1 >= 0);
+      int numSHBandsMinus1 = attrSet.params.num_sh_coefficient_degrees_minus1;
+      _currentPointCloud.setNumSHCoeffsWithNumBandsMinus1(numSHBandsMinus1);
+		}
+	}
 
-  bool hasReflectance = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.attributeLabel == KnownAttributeLabel::kReflectance;
-    });
-
-  bool hasGSInfo = std::any_of(
-    _sps->attributeSets.begin(), _sps->attributeSets.end(),
-    [](const AttributeDescription& desc) {
-      return desc.is3DGS;
-    }
-  );
-  if(hasGSInfo) hasReflectance = false;
-
-  _currentPointCloud.clear();
-  _currentPointCloud.addRemoveAttributes(hasColour, hasReflectance, hasGSInfo);
+	_currentPointCloud.clear();
+  _currentPointCloud.addRemoveAttributes(
+    hasColour, hasReflectance, hasOpacity, hasScale, hasRotation,
+    hasSHCoefficient);
 
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
   clock_user.start();
@@ -404,49 +408,40 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
   // set default attribute values (in case an attribute data unit is lost)
   // NB: it is a requirement that geom_num_points_minus1 is correct
   _currentPointCloud.resize(_gbh.footer.geom_num_points_minus1 + 1);
-  if (hasColour) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-        return desc.attributeLabel == KnownAttributeLabel::kColour;
-      });
+  for (auto& desc : _outCloud.attrDesc) {
+    Vec3<attr_t> defAttrVal = 1 << (desc.bitdepth - 1);
+    if (!desc.params.attr_default_value.empty())
+      for (int k = 0; k < desc.attr_num_dimensions_minus1 + 1; k++)
+        defAttrVal[k] = desc.params.attr_default_value[k];
 
-    Vec3<attr_t> defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      for (int k = 0; k < 3; k++)
-        defAttrVal[k] = it->params.attr_default_value[k];
-    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-      _currentPointCloud.setColor(i, defAttrVal);
-  }
-
-  if (hasReflectance) {
-    auto it = std::find_if(
-      _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-      [](const AttributeDescription& desc) {
-        return desc.attributeLabel == KnownAttributeLabel::kReflectance;
-      });
-    attr_t defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      defAttrVal = it->params.attr_default_value[0];
-    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-      _currentPointCloud.setReflectance(i, defAttrVal);
-  }
-
-  if (hasGSInfo) {
-    auto it = std::find_if(
-    _outCloud.attrDesc.cbegin(), _outCloud.attrDesc.cend(),
-    [](const AttributeDescription& desc) {
-      return desc.is3DGS;
-    });
-    int32_t defAttrVal = 1 << (it->bitdepth - 1);
-    if (!it->params.attr_default_value.empty())
-      defAttrVal = it->params.attr_default_value[0];
-    for (int n = 0; n < GSHelper::getGSKeysSize(); ++n){
-      auto key = GSHelper::getGSKey(n);
-      for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
-        _currentPointCloud.setGSInfo(i, key, defAttrVal);
+    if (desc.attributeLabel == KnownAttributeLabel::kColour)    {
+      auto& attrs = _currentPointCloud.getColor();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kReflectance)    {
+      auto& attrs = _currentPointCloud.getReflectance();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)    {
+      auto& attrs = _currentPointCloud.getOpacity();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kScale)    {
+      auto& attrs = _currentPointCloud.getScale();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kRotation)    {
+      if (desc.params.rotation_component_label
+        == RotationComponentLabel::kRotation_XYZ) {
+        auto& attrs = _currentPointCloud.getRotationVec();
+        std::fill(attrs.begin(), attrs.end(), defAttrVal);
+      } else if (desc.params.rotation_component_label
+        == RotationComponentLabel::kRotation_W) {
+        auto& attrs = _currentPointCloud.getRotationScalar();
+        std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
+      }
+    } else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      int SHindex = (int)desc.params.sh_coefficient_label;
+      auto& attrs = _currentPointCloud.getSHCoefficient(SHindex);
+      std::fill(attrs.begin(), attrs.end(), defAttrVal);
     }
-  }
+	}
 
   // Calculate a tree level at which to stop
   // It should result in at most max points being decoded
@@ -594,13 +589,30 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
 
   clock_user.stop();
 
-  std::cout << label << "s bitstream size " << buf.size() << " B\n";
-
   auto total_user =
     std::chrono::duration_cast<std::chrono::milliseconds>(clock_user.count());
-  std::cout << label
-            << "s processing time (user): " << total_user.count() / 1000.0
-            << " s\n";
+
+  if (attr_sps.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+    const auto& SH_label = attr_sps.params.sh_coefficient_label;
+    std::cout << attr_sps << "s_" << (int)SH_label
+              << " bitstream size " << buf.size() << " B\n";
+    std::cout << attr_sps << "s_" << (int)SH_label
+							<< " processing time (user): "
+							<< total_user.count() / 1000.0 << " s\n";   
+  } else if (attr_sps.attributeLabel == KnownAttributeLabel::kRotation) {
+    std::cout << attr_sps << " bitstream size " << buf.size() << " B\n";
+    std::cout << attr_sps << " processing time (user): "
+              << total_user.count() / 1000.0 << " s\n";
+  } else if (attr_sps.attributeLabel == KnownAttributeLabel::kOpacity) {
+    std::cout << "opacities bitstream size " << buf.size() << " B\n";
+    std::cout << "opacities processing time (user): "
+              << total_user.count() / 1000.0 << " s\n";
+  } else {
+    std::cout << label << "s bitstream size " << buf.size() << " B\n";
+    std::cout << label
+              << "s processing time (user): " << total_user.count() / 1000.0
+              << " s\n";
+  }
   std::cout << std::endl;
 }
 
@@ -634,19 +646,53 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
       _currentPointCloud.setColor(i, defAttrVal);
   }
 
-  if (attrDesc.is3DGS){
-    attr_t defAttrVal = cadu.constattr_default_value[0];
-    auto key = GSHelper::getGSKey(attrDesc.attr_instance_id);
-    auto& gs_attrs = _currentPointCloud.getGSInfo(key);
-    std::fill(gs_attrs.begin(), gs_attrs.end(), defAttrVal);
-  }
-
-  if (label == KnownAttributeLabel::kReflectance && !attrDesc.is3DGS) {
+  if (label == KnownAttributeLabel::kReflectance) {
     attr_t defAttrVal = cadu.constattr_default_value[0];
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setReflectance(i, defAttrVal);
   }
 
+  if (label == KnownAttributeLabel::kOpacity) {
+    attr_t defAttrVal = cadu.constattr_default_value[0];
+    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+      _currentPointCloud.setOpacity(i, defAttrVal);
+  }
+
+  if (label == KnownAttributeLabel::kScale) {
+    Vec3<attr_t> defAttrVal;
+    for (int k = 0; k < 3; k++)
+      defAttrVal[k] = cadu.constattr_default_value[k];
+    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+      _currentPointCloud.setScale(i, defAttrVal);
+  }
+
+  if (label == KnownAttributeLabel::kRotation) {
+    if (
+      attrDesc.params.rotation_component_label
+      == RotationComponentLabel::kRotation_XYZ) {
+      Vec3<attr_t> defAttrVal;
+      for (int k = 0; k < 3; k++)
+        defAttrVal[k] = cadu.constattr_default_value[k];
+      for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+        _currentPointCloud.setRotationVec(i, defAttrVal);
+    } else if (
+      attrDesc.params.rotation_component_label
+      == RotationComponentLabel::kRotation_W) {
+      attr_t defAttrVal = cadu.constattr_default_value[0];
+      for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+        _currentPointCloud.setRotationScalar(i, defAttrVal);
+    }
+  }
+
+  if (label == KnownAttributeLabel::kSH_coefficients) {
+    int SHIndex = (int)attrDesc.params.sh_coefficient_label;
+    Vec3<attr_t> defAttrVal;
+    for (int k = 0; k < 3; k++)
+      defAttrVal[k] = cadu.constattr_default_value[k];
+    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+      _currentPointCloud.setSHCoefficient(SHIndex, i, defAttrVal);
+  }
+  
   clock_user.stop();
 
   std::cout << label << "s bitstream size " << buf.size() << " B\n";
@@ -657,7 +703,6 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
             << "s processing time (user): " << total_user.count() / 1000.0
             << " s\n";
   std::cout << std::endl;
-
 }
 
 //============================================================================

@@ -110,9 +110,7 @@ bool predModeEligibleRefl(
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
   const std::vector<uint32_t>& indexes,
-  const PCCPredictor& predictor,
-  const std::string& key,
-  const std::vector<int64_t>& reflectances);
+  const PCCPredictor& predictor);
 
 //============================================================================
 

@@ -63,13 +63,18 @@ enum class PayloadType
 
 enum class KnownAttributeLabel : uint32_t
 {
-  kColour = 0,
-  kReflectance = 1,
-  kOpacity = 2,
-  kFrameIndex = 3,
-  kFrameNumber = 4,
-  kMaterialId = 5,
-  kNormal = 6,
+	kColour = 0,
+	kReflectance = 1,
+	kOpacity = 2,
+	kFrameIndex = 3,
+	kFrameNumber = 4,
+	kMaterialId = 5,
+	kNormal = 6,
+
+	// Gaussian Splat Compression
+	kScale = 7,
+	kRotation = 8,
+	kSH_coefficients = 9,
 
   // Indicates that the attrabute label is described by an Oid
   kOid = 0xffffffff,
@@ -220,8 +225,44 @@ enum class AttributeParameterType : uint8_t
   kCicp = 2,
   kScaling = 3,
   kDefaultValue = 4,
+  kSHCoefficientLabel = 5,
+  kRotationLabel = 6,
   /* [3, 127] are reserved for future use */
   /* [128, 255] are specified according to the attribute label */
+};
+
+//============================================================================
+
+enum class SHCoefficientLabel : uint32_t
+{
+	kBand0_Order0 = 0,
+
+	kBand1_OrderM1 = 1,
+	kBand1_Order0 = 2,
+	kBand1_Order1 = 3,
+
+	kBand2_OrderM2 = 4,
+	kBand2_OrderM1 = 5,
+	kBand2_Order0 = 6,
+	kBand2_Order1 = 7,
+	kBand2_Order2 = 8,
+
+	kBand3_OrderM3 = 9,
+	kBand3_OrderM2 = 10,
+	kBand3_OrderM1 = 11,
+	kBand3_Order0 = 12,
+	kBand3_Order1 = 13,
+	kBand3_Order2 = 14,
+	kBand3_Order3 = 15,
+};
+
+//============================================================================
+
+enum class RotationComponentLabel : uint32_t
+{
+	kRotation_XYZ = 0,
+	kRotation_W = 1,
+	kEuler = 2,
 };
 
 //============================================================================
@@ -252,7 +293,7 @@ struct AttributeParameters {
   bool cicp_video_full_range_flag;
 
   // attribute scaling
-  bool scalingParametersPresent;
+  bool scalingParametersPresent = false;
   int attr_scale_minus1;
   int attr_frac_bits;
   int attr_offset;
@@ -261,13 +302,28 @@ struct AttributeParameters {
   // If empty, use hard default values.
   std::vector<int> attr_default_value;
 
+  // Gaussian Splat Compression
+  bool sh_dc_coefficient_flag = false;
+  bool dc_only_flag = false;
+  int num_sh_coefficient_degrees_minus1 = -1;
+
+  bool shCoefficientParameterPresent = false;
+  SHCoefficientLabel sh_coefficient_label;
+
+  bool rotationComponentParameterPresent = false;
+  RotationComponentLabel rotation_component_label;
+
+  int sh_coefficient_label_temp;
+  int rotation_component_label_temp;
+
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;
 
   int numParams() const
   {
     int count = opaqueParameters.size() + cicpParametersPresent
-      + scalingParametersPresent + !attr_default_value.empty();
+      + scalingParametersPresent + !attr_default_value.empty()
+	  + shCoefficientParameterPresent + rotationComponentParameterPresent;
     return count;
   }
 
@@ -277,6 +333,8 @@ struct AttributeParameters {
     scalingParametersPresent = false;
     attr_default_value.clear();
     opaqueParameters.clear();
+		shCoefficientParameterPresent = false;
+		rotationComponentParameterPresent = false;
   }
 };
 
@@ -295,9 +353,11 @@ struct AttributeDescription {
   AttributeLabel attributeLabel;
 
   AttributeParameters params;
-
-  bool is3DGS;
 };
+
+//============================================================================
+
+std::ostream& operator<<(std::ostream& os, const AttributeDescription& label);
 
 //============================================================================
 

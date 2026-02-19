@@ -582,24 +582,23 @@ AttributeEncoder::decidePredModeRefl(
   PCCPredictor& predictor,
   PCCResidualsEncoder& encoder,
   PCCResidualsEntropyEstimator& context,
-  const Quantizer& quant,
-  const std::string& key,
-  const std::vector<int64_t>& reflectances)
+  const Quantizer& quant)
 {
   uint64_t attrValue = 0;
-  uint64_t attrValueT = 0;
-
-  if (!desc.is3DGS) {
-    attrValue = pointCloud.getReflectance(indexesLOD[predictorIndex]);  
-  } else {
-    attrValue = reflectances[indexesLOD[predictorIndex]]; 
+  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+	  attrValue = pointCloud.getReflectance(indexesLOD[predictorIndex]);
+  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+	  attrValue = pointCloud.getOpacity(indexesLOD[predictorIndex]);
+  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+	  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+	  attrValue = pointCloud.getRotationScalar(indexesLOD[predictorIndex]);
   }
+
   // base case: start with the first neighbour
   // NB: skip evaluation of mode 0 (weighted average of n neighbours)
   int startpredIndex = aps.direct_avg_predictor_disabled_flag;
   predictor.predMode = startpredIndex;
-  uint64_t attrPredT = predictor.predictReflectance(desc,pointCloud, indexesLOD,key,reflectances);
-  uint64_t attrPred = predictor.predictReflectance(desc,pointCloud, indexesLOD,key,reflectances);
+  uint64_t attrPred = predictor.predictReflectance(pointCloud, indexesLOD, desc);
   int64_t attrResidualQuant =
     computeReflectanceResidual(attrValue, attrPred, quant);
 
@@ -610,13 +609,17 @@ AttributeEncoder::decidePredModeRefl(
   for (int i = startpredIndex; i < predictor.neighborCount; i++) {
     if (i == aps.max_num_direct_predictors)
       break;
-    if (!desc.is3DGS) {
-      attrPred = pointCloud.getReflectance(indexesLOD[predictor.neighbors[i].predictorIndex]);    
-    } else {
-      attrPred = reflectances[indexesLOD[predictor.neighbors[i].predictorIndex]]; 
-    
-    }
-    
+		if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+			attrPred = pointCloud.getReflectance(
+				indexesLOD[predictor.neighbors[i].predictorIndex]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+			attrPred = pointCloud.getOpacity(
+				indexesLOD[predictor.neighbors[i].predictorIndex]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+			attrPred = pointCloud.getRotationScalar(
+				indexesLOD[predictor.neighbors[i].predictorIndex]);
+		}
     attrResidualQuant = computeReflectanceResidual(attrValue, attrPred, quant);
 
     mode = i + !aps.direct_avg_predictor_disabled_flag;
@@ -673,17 +676,6 @@ AttributeEncoder::encodeReflectancesPred(
   PCCResidualsEntropyEstimator context;
   int zeroRunAcc = 0;
 
-  std::vector<int64_t> reflectances;
-  reflectances.resize(pointCount);
-  std::string key;
-
-  for (size_t index = 0; index < pointCount; ++index) {
-    if (desc.is3DGS) {
-        key = GSHelper::getGSKey(desc.attr_instance_id);
-        reflectances[index] = int32_t(pointCloud.getGSInfo(index,key));    
-    }    
-  }  
-
   const size_t lodCount = _lods.numPointsInLod.size();
   for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
     int quantLayer = std::min(int(qpSet.layers.size()) - 1, int(lod));
@@ -697,27 +689,29 @@ AttributeEncoder::encodeReflectancesPred(
       
 
       bool predModeEligible =
-        predModeEligibleRefl(desc, aps, pointCloud, _lods.indexes, predictor,key,reflectances); ////*****
+        predModeEligibleRefl(desc, aps, pointCloud, _lods.indexes, predictor); 
       if (predModeEligible)
         decidePredModeRefl(
           desc, aps, pointCloud, _lods.indexes, predictorIndex, predictor,
-          encoder, context, quant[0],key,reflectances);
+          encoder, context, quant[0]);
 
-      uint64_t reflectance = 0;
-      uint64_t reflectanceT = 0;
-
-      if (!desc.is3DGS) {
-        reflectance = pointCloud.getReflectance(pointIndex);
-      } else {  
-        reflectance = reflectances[pointIndex];      
-      }
+			int32_t attValue0 = 0;
+			uint64_t reflectance;
+			if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+				reflectance = pointCloud.getReflectance(pointIndex);
+			else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+				reflectance = pointCloud.getOpacity(pointIndex);
+			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+				reflectance = pointCloud.getRotationScalar(pointIndex);
+			}
       const attr_t predictedReflectance =
-        predictor.predictReflectance(desc,pointCloud, _lods.indexes,key, reflectances); ///*****
+        predictor.predictReflectance(pointCloud, _lods.indexes, desc);
       const int64_t quantAttValue = reflectance;
       const int64_t quantPredAttValue = predictedReflectance;
       const int64_t delta = quant[0].quantize(
         (quantAttValue - quantPredAttValue) << kFixedPointAttributeShift);
-      int32_t attValue0 = delta;
+      attValue0 = delta;
 
       if (predModeEligible)
         encodePredModeRefl(aps, predictor.predMode, attValue0);
@@ -726,16 +720,9 @@ AttributeEncoder::encodeReflectancesPred(
         divExp2RoundHalfUp(quant[0].scale(delta), kFixedPointAttributeShift);
       const int64_t reconstructedQuantAttValue =
         quantPredAttValue + reconstructedDelta;
-
-      attr_t reconstructedReflectance = 0;
-      gs_t reconstructedReflectanceGS = 0;
-
-      if (!desc.is3DGS) {
+      attr_t reconstructedReflectance = 
         reconstructedReflectance = attr_t(PCCClip(reconstructedQuantAttValue, int64_t(0), clipMax));
-      } else {
-        const int64_t clipMin = 0;
-        reconstructedReflectanceGS = gs_t(PCCClip(reconstructedQuantAttValue, clipMin, clipMax));
-      }
+
 
       if (!attValue0)
         ++zeroRunAcc;
@@ -744,13 +731,14 @@ AttributeEncoder::encodeReflectancesPred(
         encoder.encode(attValue0);
         zeroRunAcc = 0;
       }
-      if (!desc.is3DGS) {
-        pointCloud.setReflectance(pointIndex, reconstructedReflectance);
-      } else {
-        pointCloud.setGSInfo(pointIndex, key,reconstructedReflectanceGS);
-        reflectances[pointIndex] = reconstructedReflectanceGS;
-      }
-      
+			if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+				pointCloud.setReflectance(pointIndex, reconstructedReflectance);
+			else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+				pointCloud.setOpacity(pointIndex, reconstructedReflectance);
+			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+				pointCloud.setRotationScalar(pointIndex, reconstructedReflectance);
+			}
       encoder.resStatUpdateRefl(attValue0);
     }
   }
@@ -810,12 +798,24 @@ AttributeEncoder::decidePredModeColor(
   const Vec3<int8_t>& icpCoeff,
   const Quantizers& quant)
 {
-  Vec3<attr_t> attrValue = pointCloud.getColor(indexesLOD[predictorIndex]);
+	Vec3<attr_t> attrValue;
+	if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+	  attrValue = pointCloud.getColor(indexesLOD[predictorIndex]);
+	else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+		attrValue = pointCloud.getScale(indexesLOD[predictorIndex]);
+	else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+		assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+		attrValue = pointCloud.getRotationVec(indexesLOD[predictorIndex]);
+	}
+	else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+		int SHindex = (int)desc.params.sh_coefficient_label;
+		attrValue = pointCloud.getSHCoefficient(SHindex, indexesLOD[predictorIndex]);
+	}
 
   // base case: weighted average of n neighbours
   int startpredIndex = aps.direct_avg_predictor_disabled_flag;
   predictor.predMode = startpredIndex;
-  Vec3<attr_t> attrPred = predictor.predictColor(pointCloud, indexesLOD);
+  Vec3<attr_t> attrPred = predictor.predictColor(pointCloud, indexesLOD, desc);
   Vec3<int64_t> attrResidualQuant =
     computeColorResiduals(aps, attrValue, attrPred, icpCoeff, quant);
   auto attrDistortion =
@@ -830,8 +830,24 @@ AttributeEncoder::decidePredModeColor(
     if (i == aps.max_num_direct_predictors)
       break;
 
-    attrPred =
-      pointCloud.getColor(indexesLOD[predictor.neighbors[i].predictorIndex]);
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			attrPred =
+				pointCloud.getColor(indexesLOD[predictor.neighbors[i].predictorIndex]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			attrPred =
+			pointCloud.getScale(indexesLOD[predictor.neighbors[i].predictorIndex]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			attrPred =
+				pointCloud.getRotationVec(indexesLOD[predictor.neighbors[i].predictorIndex]);
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			attrPred =
+				pointCloud.getSHCoefficient(SHindex,
+					indexesLOD[predictor.neighbors[i].predictorIndex]);
+		}
+
     attrResidualQuant =
       computeColorResiduals(aps, attrValue, attrPred, icpCoeff, quant);
     attrDistortion = computeColorDistortions(desc, attrValue, attrPred, quant);
@@ -897,6 +913,7 @@ AttributeEncoder::encodePredModeColor(
 
 std::vector<Vec3<int8_t>>
 AttributeEncoder::computeInterComponentPredictionCoeffs(
+	const AttributeDescription& desc,
   const AttributeParameterSet& aps, const PCCPointSet3& pointCloud)
 {
   int maxNumDetailLevels = aps.maxNumDetailLevels();
@@ -916,8 +933,21 @@ AttributeEncoder::computeInterComponentPredictionCoeffs(
 
     // taking first neighbor for simplicity
     predictor.predMode = 1;
-    auto predAttr = predictor.predictColor(pointCloud, _lods.indexes);
-    auto srcAttr = pointCloud.getColor(pointIdx);
+    auto predAttr = predictor.predictColor(pointCloud, _lods.indexes, desc);
+		Vec3<attr_t> srcAttr;
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			srcAttr = pointCloud.getColor(pointIdx);
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			srcAttr = pointCloud.getScale(pointIdx);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			srcAttr = pointCloud.getRotationVec(pointIdx);
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			srcAttr = pointCloud.getSHCoefficient(SHindex, pointIdx);
+		}
+
     residual[predIdx] = Vec3<int>(srcAttr) - Vec3<int>(predAttr);
 
     // reset is needed as RD would be done later.
@@ -991,7 +1021,7 @@ AttributeEncoder::encodeColorsPred(
 
   bool icpPresent = _abh->icpPresent(desc, aps);
   if (icpPresent)
-    _abh->icpCoeffs = computeInterComponentPredictionCoeffs(aps, pointCloud);
+    _abh->icpCoeffs = computeInterComponentPredictionCoeffs(desc, aps, pointCloud);
 
   const size_t lodCount = _lods.numPointsInLod.size();
   for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
@@ -1012,9 +1042,22 @@ AttributeEncoder::encodeColorsPred(
           desc, aps, pointCloud, _lods.indexes, predictorIndex, predictor,
           encoder, context, icpCoeff, quant);
 
-      const Vec3<attr_t> color = pointCloud.getColor(pointIndex);
+			Vec3<attr_t> color;
+			if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+				color = pointCloud.getColor(pointIndex);
+			else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+				color = pointCloud.getScale(pointIndex);
+			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+				color = pointCloud.getRotationVec(pointIndex);
+			}
+		  else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+				int SHindex = (int)desc.params.sh_coefficient_label;
+			  color = pointCloud.getSHCoefficient(SHindex, pointIndex);
+		  }
+
       const Vec3<attr_t> predictedColor =
-        predictor.predictColor(pointCloud, _lods.indexes);
+        predictor.predictColor(pointCloud, _lods.indexes, desc);
 
       Vec3<attr_t> reconstructedColor;
       int64_t residual0 = 0;
@@ -1046,7 +1089,19 @@ AttributeEncoder::encodeColorsPred(
       if (predModeEligible)
         encodePredModeColor(aps, predictor.predMode, values);
 
-      pointCloud.setColor(pointIndex, reconstructedColor);
+			if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+				pointCloud.setColor(pointIndex, reconstructedColor);
+			else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+				pointCloud.setScale(pointIndex, reconstructedColor);
+			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+				pointCloud.setRotationVec(pointIndex, reconstructedColor);
+			}
+		  else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+				int SHindex = (int)desc.params.sh_coefficient_label;
+			  pointCloud.setSHCoefficient(SHindex, pointIndex, reconstructedColor);
+		  }
+
       encoder.resStatUpdateColor(values);
 
       if (!values[0] && !values[1] && !values[2]) {
@@ -1097,14 +1152,16 @@ AttributeEncoder::encodeReflectancesTransformRaht(
 
   // Populate input arrays.
   for (int n = 0; n < voxelCount; n++) {
-    auto& index = _sortedIndex[n];
-    if(!desc.is3DGS){
-      attributes[attribCount * n] = pointCloud.getReflectance(index);
-    }else{
-      auto key = GSHelper::getGSKey(desc.attr_instance_id);
-      attributes[attribCount * n] = pointCloud.getGSInfo(index,key);
-    }
-    pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[index]);
+		auto& index = _sortedIndex[n];
+		if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+			attributes[attribCount * n] = pointCloud.getReflectance(index); 
+		else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+			attributes[attribCount * n] = pointCloud.getOpacity(index);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+			attributes[attribCount * n] = pointCloud.getRotationScalar(index);
+		}
+		pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[index]);
   }
 
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
@@ -1133,27 +1190,22 @@ AttributeEncoder::encodeReflectancesTransformRaht(
   if (zeroRun)
     encoder.encodeRunLength(zeroRun);
 
-  if(!desc.is3DGS){
-    const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
-    const int64_t minReflectance = 0;
-    for (int n = 0; n < voxelCount; n++) {
-      int64_t val = attributes[attribCount * n];
-      const attr_t reflectance =
-        attr_t(PCCClip(val, minReflectance, maxReflectance));
-      pointCloud.setReflectance(_sortedIndex[n], reflectance);
-    } 
-  }else{
-    auto key = GSHelper::getGSKey(desc.attr_instance_id);
-    const gs_t maxVal = (1 << desc.bitdepth) - 1;
-    const gs_t minVal = 0;
-    for (int n = 0; n < voxelCount; n++) {
-      int64_t val = attributes[attribCount * n];
-      const gs_t attr =
-        gs_t(PCCClip(val, minVal, maxVal));
-      pointCloud.setGSInfo(_sortedIndex[n], key, attr);
-    } 
-  }
-  
+  const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
+  const int64_t minReflectance = 0;
+  for (int n = 0; n < voxelCount; n++) {
+	  int64_t val = attributes[attribCount * n];
+	  const attr_t reflectance =
+		  attr_t(PCCClip(val, minReflectance, maxReflectance));
+
+	  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+		  pointCloud.setReflectance(_sortedIndex[n], reflectance);
+	  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+		  pointCloud.setOpacity(_sortedIndex[n], reflectance);
+	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+		  pointCloud.setRotationScalar(_sortedIndex[n], reflectance);
+	  }
+  }  
 }
 
 //----------------------------------------------------------------------------
@@ -1184,7 +1236,21 @@ AttributeEncoder::encodeColorsTransformRaht(
   // Populate input arrays.
   for (int n = 0; n < voxelCount; n++) {
     mortonCode[n] = packedVoxel[n].mortonCode;
-    const auto color = pointCloud.getColor(packedVoxel[n].index);
+
+		Vec3<attr_t> color;
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			color = pointCloud.getColor(packedVoxel[n].index);
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			color = pointCloud.getScale(packedVoxel[n].index);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			color = pointCloud.getRotationVec(packedVoxel[n].index);
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			color = pointCloud.getSHCoefficient(SHindex, packedVoxel[n].index);
+		}
+
     attributes[attribCount * n] = color[0];
     attributes[attribCount * n + 1] = color[1];
     attributes[attribCount * n + 2] = color[2];
@@ -1231,7 +1297,19 @@ AttributeEncoder::encodeColorsTransformRaht(
     color[0] = attr_t(PCCClip(r, 0, clipMax));
     color[1] = attr_t(PCCClip(g, 0, clipMax));
     color[2] = attr_t(PCCClip(b, 0, clipMax));
-    pointCloud.setColor(packedVoxel[n].index, color);
+
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			pointCloud.setColor(packedVoxel[n].index, color);
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			pointCloud.setScale(packedVoxel[n].index, color);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			pointCloud.setRotationVec(packedVoxel[n].index, color);
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			pointCloud.setSHCoefficient(SHindex, packedVoxel[n].index, color);
+		}
   }
 }
 
@@ -1260,7 +1338,20 @@ AttributeEncoder::encodeColorsLift(
   colors.resize(pointCount);
 
   for (size_t index = 0; index < pointCount; ++index) {
-    const auto& color = pointCloud.getColor(_lods.indexes[index]);
+		Vec3<attr_t> color;
+		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
+			color = pointCloud.getColor(_lods.indexes[index]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			color = pointCloud.getScale(_lods.indexes[index]);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			color = pointCloud.getRotationVec(_lods.indexes[index]);
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			color = pointCloud.getSHCoefficient(SHindex, _lods.indexes[index]);
+		}
+
     for (size_t d = 0; d < 3; ++d) {
       colors[index][d] = int32_t(color[d]) << kFixedPointAttributeShift;
     }
@@ -1346,7 +1437,19 @@ AttributeEncoder::encodeColorsLift(
     for (size_t d = 0; d < 3; ++d) {
       color[d] = attr_t(PCCClip(color0[d], 0, clipMax));
     }
-    pointCloud.setColor(_lods.indexes[f], color);
+
+		if (desc.attributeLabel == KnownAttributeLabel::kColour)
+				pointCloud.setColor(_lods.indexes[f], color);
+		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+			pointCloud.setScale(_lods.indexes[f], color);
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+			pointCloud.setRotationVec(_lods.indexes[f], color);
+		}
+		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+			int SHindex = (int)desc.params.sh_coefficient_label;
+			pointCloud.setSHCoefficient(SHindex, _lods.indexes[f], color);
+		}
   }
 }
 
@@ -1417,12 +1520,20 @@ AttributeEncoder::encodeReflectancesLift(
   reflectances.resize(pointCount);
 
   for (size_t index = 0; index < pointCount; ++index) {
-    if (!desc.is3DGS) {
-        reflectances[index] = int32_t(pointCloud.getReflectance(_lods.indexes[index])) << kFixedPointAttributeShift;
-    } else {
-        auto key = GSHelper::getGSKey(desc.attr_instance_id);
-        reflectances[index] = int32_t(pointCloud.getGSInfo(_lods.indexes[index],key)) << kFixedPointAttributeShift;    
-    }    
+	  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+		  reflectances[index] =
+			  int32_t(pointCloud.getReflectance(_lods.indexes[index]))
+			  << kFixedPointAttributeShift;
+	  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+		  reflectances[index] =
+			  int32_t(pointCloud.getOpacity(_lods.indexes[index]))
+			  << kFixedPointAttributeShift;
+	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+		  reflectances[index] =
+			  int32_t(pointCloud.getRotationScalar(_lods.indexes[index]))
+			  << kFixedPointAttributeShift;
+	  }
   }
 
   const size_t lodCount = _lods.numPointsInLod.size();
@@ -1476,23 +1587,22 @@ AttributeEncoder::encodeReflectancesLift(
     PCCLiftPredict(_lods.predictors, coeffRange, false, reflectances);
   }
 
-  if (!desc.is3DGS) {
-    const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
-    for (size_t f = 0; f < pointCount; ++f) {
-      const int64_t refl = divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
-      pointCloud.setReflectance(_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
-    }  
-  } else {
-    auto key = GSHelper::getGSKey(desc.attr_instance_id);
-    const int64_t maxVal = (1 << desc.bitdepth) - 1;
-    //const int64_t minVal = -1 * (1 << desc.bitdepth);
-    const int64_t minVal = 0;
-    for (int f = 0; f < pointCount; ++f) {
-        const int64_t refl = divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
-        pointCloud.setGSInfo(_lods.indexes[f], key, gs_t(PCCClip(refl,minVal,maxVal)));
- 
-    } 
-  
+  const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
+  for (size_t f = 0; f < pointCount; ++f) {
+    const int64_t refl =
+      divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
+
+		if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+			pointCloud.setReflectance(
+				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
+		else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+			pointCloud.setOpacity(
+				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
+		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+			pointCloud.setRotationScalar(
+				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
+		}
   }
 }
 
