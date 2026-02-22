@@ -46,23 +46,24 @@ WRITE() { echo "$2" >> "$1"; }
 MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 
 ## Experiment name
-JOBNAME="G-PCC-for-GSC-mpeg152"
+JOBNAME="TM13-GS-v1"
 
 ## Experiment settings
-CFG_DIR=cfg_CTC/JEE6.6  # cfg_CTC/JEE6.6 or cfg_CTC/JEE6.2 or cfg_3dgs_sample 
-AUTO_RUN=1              # 0:off, 1:run_local, 2:run_slurm 
+CFG_DIR=cfg
+AUTO_RUN=2              # 0:off, 1:run_local, 2:run_slurm 
 FLAG_1F=1               # 0:NF, 1:1F
+RUN_MODE=0              # 0 = anchor(octree-hybrid), 1 = alternative
 INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
 
 ## Dataset path
-DATASET_PATH=/path/to/CTC/
+DATASET_PATH=/share/pcc_datasets/GS/CTC_32F/
 PLYS_SUBFOLDER="plys"
 
 ## Output path
-BASE_OUTPUT="/path/to/output"
+BASE_OUTPUT="/home/minseok.lee/experiments"
 
 ## Binary and Configuration Paths
-TMC13_DIR="/path/to/g-pcc-for-gsc"
+TMC13_DIR="/path/to/tmc13-GS"
 TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3"
 CFG_PATH="$TMC13_DIR/$CFG_DIR" 
 METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
@@ -78,9 +79,13 @@ ENSURE_EXEC "$TMC13_BIN"
 ENSURE_EXEC "$METRIC"
 ENSURE_FILE "$INPUT_SEQUENCES_CFG"
 
-## Conditions and Tools Candidates
-MODEs=("lossless-geom-lossy-attrs" "lossless-geom-lossless-attrs")
-TOOLs=("octree-raht" "octree-lift" "octree-pred" "predgeom-lift" "predgeom-pred" "predgeom-raht")
+if [[ $RUN_MODE -eq 0 ]]; then
+    MODEs=("lossless-geom-lossy-attrs")
+    TOOLs=("octree-hybrid")
+else
+    MODEs=("lossless-geom-lossy-attrs" "lossless-geom-lossless-attrs")
+    TOOLs=("predgeom-hybrid" "octree-predlift" "octree-raht" "predgeom-predlift" "predgeom-raht")
+fi
 
 ###########################################################################################
 # Prepare dataset sequences
@@ -93,14 +98,13 @@ ADD_SEQ() {
     local seq="$1"
     local width="$2"
     local height="$3"
-
+    
     PATHs["$seq"]="$DATASET_PATH/$seq/$PLYS_SUBFOLDER/"
     REND_RESs["$seq"]="$width $height"
 }
 
 # Load sequences from external file
 source "$INPUT_SEQUENCES_CFG"
-###########################################################################################
 
 # Validate dataset paths
 for SEQ in "${!PATHs[@]}"; do
@@ -155,6 +159,7 @@ RUN_SUMMARY="$OUT/jobs/step3_run_summary.sh"
 : > "$RUN_METRIC"
 : > "$RUN_SUMMARY"
 
+cnt=0
 for MODE in "${MODEs[@]}"; do
     for TOOL in "${TOOLs[@]}"; do
         
@@ -177,14 +182,28 @@ for MODE in "${MODEs[@]}"; do
             if [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi  
 
             SelFILEs=("${files[@]:0:$NUM_FRAMES}")
-            CFG_DIRs=($CFG_PATH/$TOOL/$MODE/*)
+            if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+                CFG_DIRs=("$CFG_PATH/$TOOL/$MODE/$SEQ")
+            else
+                CFG_DIRs=($CFG_PATH/$TOOL/$MODE/$SEQ/*)
+            fi
             for CFG in "${CFG_DIRs[@]}"; do
-                RATE="$(basename "$CFG")"
-                RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/$RATE"
-                MKDIRCK "$RESULT_DIR"
+                if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+                    RATE="r01"   # dummy rate name for CSV and Excel
+                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ"
+                    MKDIRCK "$RESULT_DIR"
+                else
+                    RATE="$(basename "$CFG")"
+                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/$RATE"
+                    MKDIRCK "$RESULT_DIR"
+                fi
 
                 echo "$TOOL/$MODE/$SEQ/$RATE"
+
                 for FILE in "${SelFILEs[@]}"; do
+                    ((cnt+=1))
+                    N=$(( (cnt - 1) % 4 + 1 ))
+                    NODE=$(printf "pcc-worker%02d" "$N")
                     FRAME="$(basename "$FILE" .camerapos.ply)"
                     JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
 
@@ -194,9 +213,8 @@ for MODE in "${MODEs[@]}"; do
                         echo "#SBATCH --ntasks-per-node=1"
                         echo "#SBATCH --nodes=1"
                         echo "#SBATCH --mem-per-cpu=8G"
-                        echo "$PYTHON $GSCTOOL/pre_post_processing/gs_pre_process.py -i \"$FILE\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.pre.ply\""
-                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$RESULT_DIR/$FRAME.pre.ply\""
-                        echo "$PYTHON $GSCTOOL/pre_post_processing/gs_post_process.py -i \"$RESULT_DIR/$FRAME.pre.ply.bin.decoded.ply\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\""
+                        SRC_PLY="${FILE/.camerapos/}"
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\""
                         echo "touch $OUT/jobs/done/gpcc/\$SLURM_JOB_ID"
                     } > "$JOBFILE"
                     chmod +x "$JOBFILE"
@@ -204,6 +222,9 @@ for MODE in "${MODEs[@]}"; do
 
                     numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
                     for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
+                        ((cnt+=1))
+                        N=$(( (cnt - 1) % 4 + 1 ))
+                        NODE=$(printf "pcc-worker%02d" "$N")
                         JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
                         {
                             echo "#!/bin/bash"
@@ -218,16 +239,15 @@ for MODE in "${MODEs[@]}"; do
                         echo "$JOBFILE_MET" >> "$RUN_METRIC"
                     done
                 done
-
                 echo "$PYTHON $SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
             
             done
         done
 
         if [ $FLAG_1F == 1 ]; then
-        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$SCRIPT_DIR/templates/WG04N0751 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/1F_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg152.csv\" -p \"$csv_file\" -x \"$OUT/metrics/1F_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
+        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" -p \"$csv_file\" -x \"$OUT/metrics/1F_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
         else
-        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$SCRIPT_DIR/templates/WG04N0751 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
+        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
         fi
     done
 done

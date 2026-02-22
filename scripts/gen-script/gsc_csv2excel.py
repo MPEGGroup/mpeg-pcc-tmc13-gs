@@ -54,7 +54,7 @@ def get_offset_dict(ws, flag_1f):
     target_flag = "1F" if flag_1f else "NF"
     offset_dict = {}
 
-    for r in range(1, 176):
+    for r in range(1, 194):
         f_flag = ws.cell(row=r, column=2).value
         seqname = ws.cell(row=r, column=3).value
         if f_flag == target_flag and seqname:
