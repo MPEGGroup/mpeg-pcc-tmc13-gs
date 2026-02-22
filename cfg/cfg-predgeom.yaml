@@ -10,6 +10,10 @@ encflags:
  - geomTreeType: 1
  - predGeomSort: 2
  - predGeomAzimuthSortPrecision: 8
+ -
+   - !conditional '"${group}" eq "catGS"'
+   - sortInputByAzimuth: 0
+   - predGeomAzimuthSortPrecision: 0
 
  # configuration for angular predictive geometry
  -
