@@ -20,7 +20,7 @@ ADD_SEQ breakfast_tracked       1920 1080
 if [ "${FLAG_1F:-0}" -eq 1 ]; then
     ADD_SEQ trio                1920 1080
     ADD_SEQ makeup              1920 1080
-    ADD_SEQ musical             1920 1080
+    #ADD_SEQ musical             1920 1080
     ADD_SEQ lego_ferrari        4594 5514
     ADD_SEQ lego_bugatti        3852 2868
     ADD_SEQ cricket_player      4520 2540
