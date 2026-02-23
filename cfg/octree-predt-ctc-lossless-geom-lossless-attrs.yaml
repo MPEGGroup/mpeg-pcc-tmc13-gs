@@ -234,10 +234,6 @@ categories:
     decflags:
      - mode: 1
      -
-       - !conditional '"${group}" eq "catGS"'
-       - mainProfileCompliant: 0
-       - gsProfileCompliant: 1
-     -
        - !conditional '${src-unit-metres}'
        - outputUnitLength: '${src-unit-metres}'
      -
@@ -325,6 +321,9 @@ categories:
       breakdance_untracked:
       bartender_tracked:
       bartender_semitracked:
+      trio:
+      makeup:
+      musical:
       tennis_player:
       solo_tango_male:
       tango_duo:

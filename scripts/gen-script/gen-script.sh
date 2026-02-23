@@ -56,11 +56,11 @@ RUN_MODE=0              # 0 = anchor(octree-hybrid), 1 = alternative
 INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
 
 ## Dataset path
-DATASET_PATH=/share/pcc_datasets/GS/CTC_32F/
+DATASET_PATH=/path/to/CTC/dataset
 PLYS_SUBFOLDER="plys"
 
 ## Output path
-BASE_OUTPUT="/home/minseok.lee/experiments"
+BASE_OUTPUT="/path/to/output"
 
 ## Binary and Configuration Paths
 TMC13_DIR="/path/to/tmc13-GS"

@@ -329,10 +329,6 @@ categories:
     decflags:
      - mode: 1
      -
-       - !conditional '"${group}" eq "catGS"'
-       - mainProfileCompliant: 0
-       - gsProfileCompliant: 1
-     -
        - !conditional '${src-unit-metres}'
        - outputUnitLength: '${src-unit-metres}'
      -
