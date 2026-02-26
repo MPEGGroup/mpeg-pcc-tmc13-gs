@@ -48,7 +48,7 @@ PayloadBuffer
 write(const SequenceParameterSet& sps, const GeometryParameterSet& gps);
 
 PayloadBuffer
-write(const SequenceParameterSet& sps, const AttributeParameterSet& aps);
+write(const SequenceParameterSet& sps,  AttributeParameterSet& aps);
 
 PayloadBuffer
 write(const SequenceParameterSet& sps, const TileInventory& inventory);
@@ -113,6 +113,11 @@ AttributeBrickHeader parseAbh(
 
 ConstantAttributeDataUnit parseConstantAttribute(
   const SequenceParameterSet& sps, const PayloadBuffer& buf);
+
+void  writeConstantAttribute(
+  const SequenceParameterSet& sps, 
+  const ConstantAttributeDataUnit& cadu, 
+  PayloadBuffer* buf);
 
 void write(
   const GeometryParameterSet& gps,

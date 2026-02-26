@@ -1,0 +1,94 @@
+---
+sequences:
+  manwithfruit_tracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  cinema_tracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  cinema_semitracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  breakfast_untracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  breakfast_tracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  breakfast_semitracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  breakdance_untracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  bartender_tracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  bartender_semitracked:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  trio:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  makeup:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  musical:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  tennis_player:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  solo_tango_male:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  tango_duo:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  plant:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  solo_tango_female:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  library:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  lego_bugatti:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  lego_ferrari:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  gymnast:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  flowerdance:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
+  cricket_player:
+    group: catGS
+    has_colour: 0
+    has_refl: 0

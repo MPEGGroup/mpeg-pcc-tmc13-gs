@@ -4,5 +4,5 @@
 Run the `../scripts/gen-cfg.sh` from within the cfg directory:
 
 ```
- $ ../scripts/gen-cfg.sh [--octree|--trisoup] [--raht|--pred-lift]
+ $ ../scripts/gen-cfg.sh [--octree|--predgeom|--trisoup] [--raht|--pred-lift|--hybrid] [--pointcloud|--gaussiansplat] [--1F|--NF]
 ```

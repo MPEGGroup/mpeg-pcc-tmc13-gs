@@ -390,7 +390,8 @@ sub params_from_node {
 
 	my @params;
 	my @todo = @$node;
-	while (my $item = shift @todo) {
+	while (@todo) {
+		my $item = shift @todo;
 		# an unformatted string (not key:value)
 		unless (ref $item) {
 			push @params, [$item];

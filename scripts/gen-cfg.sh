@@ -6,10 +6,12 @@
 set -e
 shopt -s nullglob
 
-script_dir="$(dirname $0)"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 geom="octree"
 attr="predlift"
 src_cfg_dir=""
+mode="pointcloud"
+gs_set=""
 
 while (( $# )); do
 	case $1 in
@@ -18,12 +20,24 @@ while (( $# )); do
 	--trisoup) geom="trisoup" ;;
 	--raht) attr="raht" ;;
 	--pred-lift) attr="predlift" ;;
+	--hybrid) attr="hybrid" ;;
 	--all) all=1 ;;
+	--pointcloud) mode="pointcloud" ;;
+	--gaussiansplat) mode="gaussiansplat" ;;
+	--1F)
+		[[ -z "$gs_set" || "$gs_set" == "1F" ]] || { echo "error: cannot combine --1F and --NF" >&2; exit 1; }
+		gs_set="1F"
+		;;
+	--NF)
+		[[ -z "$gs_set" || "$gs_set" == "NF" ]] || { echo "error: cannot combine --1F and --NF" >&2; exit 1; }
+		gs_set="NF"
+		;;
 	--cfgdir=*) src_cfg_dir="${1#--cfgdir=}/" ;;
 	--) shift; break ;;
 	--help|*)
 		echo -e "usage:\n $0\n" \
-			"    [[--octree|--predgeom|--trisoup] [--raht|--pred-lift] | --all]\n" \
+			"    [[--octree|--predgeom|--trisoup] [--raht|--pred-lift|--hybrid] | --all]\n" \
+			"    [--pointcloud|--gaussiansplat [--1F|--NF]]\n" \
 			"    [--cfgdir=<dir>]"
 		exit 1
 	esac
@@ -48,6 +62,10 @@ cfg_octree_raht=(
 	octree-raht-ctc-lossy-geom-lossy-attrs.yaml
 )
 
+cfg_octree_hybrid=(
+	octree-hybrid-ctc-lossless-geom-lossy-attrs.yaml
+)
+
 cfg_predgeom_predlift=(
 	"${cfg_octree_predlift[@]}"
 	cfg-predgeom.yaml
@@ -55,6 +73,11 @@ cfg_predgeom_predlift=(
 
 cfg_predgeom_raht=(
 	"${cfg_octree_raht[@]}"
+	cfg-predgeom.yaml
+)
+
+cfg_predgeom_hybrid=(
+	"${cfg_octree_hybrid[@]}"
 	cfg-predgeom.yaml
 )
 
@@ -73,33 +96,114 @@ do_one_cfgset() {
 	outdir="$geom-$attr/"
 	mkdir -p "$outdir"
 
-	cfgset="cfg_${geom}_${attr}[@]"
+	local cfgset_name
+	local cfgset_len
+	cfgset_name="cfg_${geom}_${attr}"
+	cfgset="${cfgset_name}[@]"
+
+	eval "cfgset_len=\${#${cfgset_name}[@]}"
+	if (( cfgset_len == 0 )); then
+		echo "No config set for mode=$mode geom=$geom attr=$attr" >&2
+		return 1
+	fi
 
 	for f in ${!cfgset}
 	do
 		echo "${src_cfg_dir}$f -> $outdir" ...
 	done
 
+	sequence_yaml_args=()
+	mode_extra_args=()
+	if [[ "$mode" == "pointcloud" ]]; then
+		sequence_yaml_args=(
+			"${src_cfg_dir}sequences-cat1.yaml"
+			"${src_cfg_dir}sequences-cat3.yaml"
+		)
+
+		# Ensure catGS sequences does not get generated in pointcloud mode.
+		if [[ -f "${src_cfg_dir}sequences-catGS.yaml" ]]; then
+			gs_sequences=($(grep -E '^[[:space:]]+[a-zA-Z0-9_-]+:' "${src_cfg_dir}sequences-catGS.yaml" \
+				| sed -E 's/^[[:space:]]*([a-zA-Z0-9_-]+):.*/\1/'))
+			if (( ${#gs_sequences[@]} )); then
+				# gen-cfg.pl uses --exlude-seqs (sic)
+				mode_extra_args+=(--exlude-seqs="$(IFS=:; echo "${gs_sequences[*]}")")
+			fi
+		fi
+	else
+		 sequence_yaml_args=("${src_cfg_dir}sequences-catGS.yaml")
+
+		# Extract sequence names dynamically from YAML
+		gaussian_sequences=($(grep -E '^[[:space:]]+[a-zA-Z0-9_-]+:' "${src_cfg_dir}sequences-catGS.yaml" \
+			| sed -E 's/^[[:space:]]*([a-zA-Z0-9_-]+):.*/\1/'))
+
+		# Default GS set is 1F (all sequences in sequences-catGS.yaml)
+		: "${gs_set:=1F}"
+
+		if [[ "$gs_set" == "NF" ]]; then
+			filtered_sequences=()
+			for s in "${gaussian_sequences[@]}"; do
+				case "$s" in
+					bartender_*|cinema_*|breakfast_*|manwithfruit_*|breakdance_*)
+						filtered_sequences+=("$s")
+						;;
+				esac
+			done
+			gaussian_sequences=("${filtered_sequences[@]}")
+		fi
+
+		if (( ${#gaussian_sequences[@]} == 0 )); then
+			echo "error: no gaussiansplat sequences selected (gs_set=$gs_set)" >&2
+			exit 1
+		fi
+
+		# Pass them to gen-cfg.pl
+		mode_extra_args=(
+			--only-seqs="$(IFS=:; echo "${gaussian_sequences[*]}")"
+		)
+	fi
+
 	# NB: specifying extra_args at the end does not affect option
 	# processing since gen-cfg.pl is flexible in argument positions
 	$script_dir/gen-cfg.pl \
 		--prefix="$outdir" --no-skip-sequences-without-src \
 		"${!cfgset/#/${src_cfg_dir}}" \
-		"${src_cfg_dir}sequences-cat1.yaml" \
-		"${src_cfg_dir}sequences-cat3.yaml" \
+		"${sequence_yaml_args[@]}" \
+		"${mode_extra_args[@]}" \
 		"${extra_args[@]}"
+
+	# In gaussiansplat mode, prune any legacy outputs that may already exist.
+	# (gen-cfg.pl won't touch mtimes if content is unchanged, but it also won't
+	# delete obsolete variants / files.)
+	if [[ "$mode" == "gaussiansplat" ]]; then
+		find "$outdir" -type d -name "r06" -prune -exec rm -rf {} + 2>/dev/null || true
+		find "$outdir" -type f -name "pcerror.cfg" -exec rm -f {} + 2>/dev/null || true
+	fi
 
 	rm -f "$outdir/config-merged.yaml"
 }
 
-if [[ "$all" != "1" ]]
-then
-	do_one_cfgset "$geom" "$attr"
+if [[ "$mode" == "pointcloud" ]]; then
+	if [[ "$all" != "1" ]]
+	then
+		do_one_cfgset "$geom" "$attr"
+	else
+		do_one_cfgset "octree" "predlift"
+		do_one_cfgset "octree" "raht"
+		do_one_cfgset "predgeom" "predlift"
+		do_one_cfgset "predgeom" "raht"
+		do_one_cfgset "trisoup" "predlift"
+		do_one_cfgset "trisoup" "raht"
+	fi
 else
-	do_one_cfgset "octree" "predlift"
-	do_one_cfgset "octree" "raht"
-	do_one_cfgset "predgeom" "predlift"
-	do_one_cfgset "predgeom" "raht"
-	do_one_cfgset "trisoup" "predlift"
-	do_one_cfgset "trisoup" "raht"
+	if [[ "$all" != "1" ]]
+	then
+		do_one_cfgset "$geom" "$attr"
+	else
+		do_one_cfgset "octree" "predlift"
+		do_one_cfgset "octree" "raht"
+		do_one_cfgset "octree" "hybrid"
+		do_one_cfgset "predgeom" "predlift"
+		do_one_cfgset "predgeom" "raht"
+		do_one_cfgset "predgeom" "hybrid"
+	fi
 fi

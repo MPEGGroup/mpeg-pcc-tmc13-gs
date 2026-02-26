@@ -54,6 +54,7 @@
 #include "partitioning.h"
 #include "pcc_chrono.h"
 #include "ply.h"
+#include <cmath>
 
 namespace pcc {
 
@@ -80,7 +81,6 @@ PCCTMC3Encoder3::PCCTMC3Encoder3() : _frameCounter(-1)
 PCCTMC3Encoder3::~PCCTMC3Encoder3() = default;
 
 //============================================================================
-
 int
 PCCTMC3Encoder3::compress(
   const PCCPointSet3& inputPointCloud,
@@ -124,33 +124,109 @@ PCCTMC3Encoder3::compress(
     if (!bboxSizeDefined)
       params->sps.seqBoundingBoxSize = (1 << 21) - 1;
 
-    // Then scale the bounding box to match the reconstructed output
-    for (int k = 0; k < 3; k++) {
-      auto min_k = bbox.min[k];
-      auto max_k = bbox.max[k];
+    if (params->sps.profile.gs_profile_compliant) {
+      double inputscale = static_cast<double>(params->sps.seqGeomScale);
+      double minX = std::floor(bbox.min[0] / inputscale);
+      double minY = std::floor(bbox.min[1] / inputscale);
+      double minZ = std::floor(bbox.min[2] / inputscale);
 
-      // the sps bounding box is in terms of the conformance scale
-      // not the source scale.
-      // NB: plus one to convert to range
-      min_k = std::round(min_k * params->seqGeomScale);
-      max_k = std::round(max_k * params->seqGeomScale);
-      params->sps.seqBoundingBoxOrigin[k] = min_k;
-      params->sps.seqBoundingBoxSize[k] = max_k - min_k + 1;
+      double maxX = std::ceil(bbox.max[0] / inputscale);
+      double maxY = std::ceil(bbox.max[1] / inputscale);
+      double maxZ = std::ceil(bbox.max[2] / inputscale);
+      
+      int64_t seqOriginGlobal = std::min({minX, minY, minZ});  
+      int64_t seqMaxGlobal = std::max({maxX, maxY, maxZ});  
+      int64_t seqSizeGlobal = (seqMaxGlobal - seqOriginGlobal);
 
-      // Compensate the sequence origin such that source point (0,0,0) coded
-      // as P_c is reconstructed as (0,0,0):
-      //   0 = P_c * globalScale + seqOrigin
-      auto gs = Rational(params->sps.globalScale);
-      int rem = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
+      params->codedGeomScale = (double)std::pow(2, 18) / (inputscale*(double)seqSizeGlobal);
+      params->sps.globalScale = Rational(params->seqGeomScale / params->codedGeomScale);
+
+      
+
+      const double val = params->seqGeomScale / params->codedGeomScale;  
+
+      int exp = static_cast<int>(std::floor(std::log2(val)));
+      const double mant = val / std::ldexp(1.0, exp);  
+
+      auto choose_fp_bits_min_exact = [](double m, int maxBits = 16) -> int {
+        for (int b = 0; b <= maxBits; ++b) {
+          const double x = (m - 1.0) * (1 << b);
+          if (std::abs(x - std::round(x)) < 1e-12)
+            return b;
+        }
+        return maxBits;  
+      };
+
+      int fp_bits = choose_fp_bits_min_exact(mant, 16);
+      int rem = static_cast<int>(std::llround((mant - 1.0) * (1 << fp_bits)));
+
+      const int maxRem = (1 << fp_bits) - 1;
+      if (rem > maxRem) {
+        // carry into exponent
+        ++exp;
+        rem = 0;
+      }
+
+      params->sps.globalScale.numeratorMulLog2 = exp;     // mul_log2 (ue)
+      params->sps.globalScale.denominatorLog2 = fp_bits;  // fp_bits (ue)
+      params->sps.globalScale.numeratorModDenominator = rem;  // rem     (u(fp_bits))
+
+      const double recon =  (1.0 + params->sps.globalScale.numeratorModDenominator / double(1 << params->sps.globalScale.denominatorLog2)) * std::ldexp(1.0, params->sps.globalScale.numeratorMulLog2);
+
+      assert(params->sps.globalScale.numeratorMulLog2 >= 0);
+      assert(params->sps.globalScale.denominatorLog2 >= 0);
+      assert(std::abs(recon - val) < 1e-12);
+
+      for (int k = 0; k < 3; ++k) {
+        params->sps.seqBoundingBoxOrigin[k] = (int)seqOriginGlobal* inputscale;
+        params->sps.seqBoundingBoxSize[k] = (int)seqSizeGlobal * inputscale;
+      }
+
+      auto gs = Rational(params->sps.globalScale);  
+      int64_t L = gs.numerator; 
+      
+      seqOriginGlobal *= inputscale;
+      seqMaxGlobal *= inputscale;
+      seqSizeGlobal *= inputscale;
+
+      for (int k = 0; k < 3; ++k) {
+        _originInSeqCoords_rem[k] = (int)(seqOriginGlobal % L);
+        _originInCodingCoords[k] = (double)seqOriginGlobal;
+        _originInCodingCoords[k] /= (double)gs; 
+      }
+    }
+    else{    
+      // Then scale the bounding box to match the reconstructed output
+      for (int k = 0; k < 3; k++) {
+        auto min_k = bbox.min[k];
+        auto max_k = bbox.max[k];
+
+        // the sps bounding box is in terms of the conformance scale
+        // not the source scale.
+        // NB: plus one to convert to range
+        min_k = std::round(min_k * params->seqGeomScale);
+        max_k = std::round(max_k * params->seqGeomScale);
+        params->sps.seqBoundingBoxOrigin[k] = min_k;
+        params->sps.seqBoundingBoxSize[k] = max_k - min_k + 1;
+
+        // Compensate the sequence origin such that source point (0,0,0) coded
+        // as P_c is reconstructed as (0,0,0):
+        //   0 = P_c * globalScale + seqOrigin
+        auto gs = Rational(params->sps.globalScale);
+        /* int rem = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
       rem += rem < 0 ? gs.numerator : 0;
       params->sps.seqBoundingBoxOrigin[k] -= rem;
-      params->sps.seqBoundingBoxSize[k] += rem;
+      params->sps.seqBoundingBoxSize[k] += rem;*/
+        _originInSeqCoords_rem[k] =
+          params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
 
-      // Convert the origin to coding coordinate system
-      _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k];
-      _originInCodingCoords[k] /= double(gs);
+        // Convert the origin to coding coordinate system
+        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k];
+        _originInCodingCoords[k] /= double(gs);
+      }
     }
 
+    _srcToCodingScale = params->codedGeomScale;
     // Determine the number of bits to signal the bounding box
     params->sps.sps_bounding_box_offset_bits =
       numBits(params->sps.seqBoundingBoxOrigin.abs().max());
@@ -198,7 +274,7 @@ PCCTMC3Encoder3::compress(
   _sps = &params->sps;
   _gps = &params->gps;
   _aps.clear();
-  for (const auto& aps : params->aps) {
+  for (auto& aps : params->aps) {
     _aps.push_back(&aps);
   }
 
@@ -229,7 +305,7 @@ PCCTMC3Encoder3::compress(
   // write out all parameter sets prior to encoding
   callback->onOutputBuffer(write(*_sps));
   callback->onOutputBuffer(write(*_sps, *_gps));
-  for (const auto aps : _aps) {
+  for (auto aps : _aps) {
     callback->onOutputBuffer(write(*_sps, *aps));
   }
 
@@ -449,6 +525,8 @@ PCCTMC3Encoder3::fixupParameterSets(EncoderParams* params)
   for (int i = 0; i < params->aps.size(); i++) {
     params->aps[i].aps_seq_parameter_set_id = 0;
     params->aps[i].aps_attr_parameter_set_id = i;
+    params->aps[i].aps_attr_parameter_set_id_extension_2bits = (i>>4);
+    params->aps[i].aps_attr_parameter_set_id_v1 = (i - ((i>>4)<<4));
   }
 
   // development level / header
@@ -652,15 +730,19 @@ PCCTMC3Encoder3::compressPartition(
     const auto& attr_aps = *_aps[attrIdx];
     const auto& attr_enc = params->attr[attrIdx];
     const auto& label = attr_sps.attributeLabel;
-
-    PayloadBuffer payload(PayloadType::kAttributeBrick);
-
     pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
     clock_user.start();
+
+    PayloadBuffer* payload = nullptr;
+    auto attr_DU_mode = params->attr_DU_modes[attrIdx];
+    if (attr_DU_mode == 1) { // ADU
+      payload =  new PayloadBuffer(PayloadType::kAttributeBrick);
 
     // todo(df): move elsewhere?
     AttributeBrickHeader abh;
     abh.attr_attr_parameter_set_id = attr_aps.aps_attr_parameter_set_id;
+    abh.attr_attr_parameter_set_id_extension_2bits = (abh.attr_attr_parameter_set_id >> 4);
+    abh.attr_attr_parameter_set_id_v1 = abh.attr_attr_parameter_set_id - (abh.attr_attr_parameter_set_id_extension_2bits << 4);
     abh.attr_sps_attr_idx = attrIdx;
     abh.attr_geom_slice_id = _sliceId;
     abh.attr_qp_delta_luma = 0;
@@ -730,25 +812,69 @@ PCCTMC3Encoder3::compressPartition(
 
     auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
     attrEncoder->encode(
-      *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, &payload);
+      *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, payload);
 
     if (attr_aps.spherical_coord_flag)
       pointCloud.swapPoints(altPositions);
+      
+    } else if (attr_DU_mode == 2) { // DADU
+      if (!attr_sps.params.attr_default_value.empty()) {
+        ConstantAttributeDataUnit cadu;
+        cadu.constattr_seq_parameter_set_id = _sps->sps_seq_parameter_set_id;
+        cadu.constattr_reserved_zero_3bits = 0;
+        cadu.constattr_sps_attr_idx = attrIdx;
+        cadu.constattr_slice_id = _sliceId;
+        // currently, equal to attribute property; 
+        cadu.constattr_default_value = attr_sps.params.attr_default_value; 
+
+        // If slice defualt values are equal to seq defualt values, 
+        // skip DADU
+        if (cadu.constattr_default_value != attr_sps.params.attr_default_value) {
+          payload =  new PayloadBuffer(PayloadType::kConstantAttribute);
+          writeConstantAttribute(*_sps, cadu, payload);
+        }
+      }
+    }
 
     clock_user.stop();
 
-    int coded_size = int(payload.size());
+    int coded_size = payload ? int(payload->size()) : 0;
     double bpp = double(8 * coded_size) / inputPointCloud.getPointCount();
-    std::cout << label << "s bitstream size " << coded_size << " B (" << bpp
-              << " bpp)\n";
 
-    auto time_user = std::chrono::duration_cast<std::chrono::milliseconds>(
-      clock_user.count());
-    std::cout << label
-              << "s processing time (user): " << time_user.count() / 1000.0
-              << " s" << std::endl;
+		auto time_user = std::chrono::duration_cast<std::chrono::milliseconds>(
+			clock_user.count());
 
-    callback->onOutputBuffer(payload);
+		if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kSH_coefficients) {
+			const auto& SH_label = attr_sps.params.sh_coefficient_label;
+			std::cout << attr_sps << "s_" << (int)SH_label << " bitstream size "
+								<< coded_size << " B (" << bpp << " bpp)\n";
+			std::cout << attr_sps << "s_" << (int)SH_label
+								<< " processing time (user): " << time_user.count() / 1000.0
+								<< " s" << std::endl;
+		} else if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kRotation) {
+			std::cout << attr_sps << " bitstream size " << coded_size << " B ("
+								<< bpp << " bpp)\n";
+			std::cout << attr_sps << " processing time (user): " << time_user.count() / 1000.0
+								<< " s" << std::endl;
+		}
+		else if (attr_sps.attributeLabel.known_attribute_label == KnownAttributeLabel::kOpacity) {
+			std::cout << "opacities bitstream size " << coded_size << " B (" << bpp
+				<< " bpp)\n";
+			std::cout << "opacities processing time (user): " << time_user.count() / 1000.0
+				<< " s" << std::endl;
+		}
+		else {
+			std::cout << label << "s bitstream size " << coded_size << " B (" << bpp
+				<< " bpp)\n";
+			std::cout << label
+				<< "s processing time (user): " << time_user.count() / 1000.0
+				<< " s" << std::endl;
+		}
+
+    if (payload) {
+      callback->onOutputBuffer(*payload);
+      delete(payload);
+    }
   }
 
   // Note the current slice id for loss detection with entropy continuation
@@ -915,15 +1041,15 @@ PCCTMC3Encoder3::quantization(const PCCPointSet3& src)
   // the predictive geometry coder quantise internally.
   if (_inputDecimationScale != 1.)
     return samplePositionsUniq(
-      _inputDecimationScale, _srcToCodingScale, _originInCodingCoords, src);
+      _inputDecimationScale, _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, src);
 
   if (_gps->geom_unique_points_flag)
     return quantizePositionsUniq(
-      _srcToCodingScale, _originInCodingCoords, clampBox, src);
+      _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, clampBox, src);
 
   SrcMappedPointSet dst;
   quantizePositions(
-    _srcToCodingScale, _originInCodingCoords, clampBox, src, &dst.cloud);
+    _srcToCodingScale, _originInSeqCoords_rem, _originInCodingCoords, clampBox, src, &dst.cloud);
   return dst;
 }
 
@@ -934,7 +1060,11 @@ PCCPointSet3
 getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 {
   PCCPointSet3 dst;
-  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
+  if (src.hasSHCoefficients())
+	  dst.setNumSHCoeffs(src.getNumSHCoeffs());
+  dst.addRemoveAttributes(
+    src.hasColors(), src.hasReflectances(), src.hasOpacities(),
+    src.hasScales(), src.hasRotations(), src.hasSHCoefficients());		
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -949,10 +1079,21 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
     if (src.hasReflectances())
       dst.setReflectance(i, src.getReflectance(inputIdx));
 
-    if (src.hasGSInfo()){
-      for(auto& key : GSHelper::gskeys)
-        dst.setGSInfo(i, key, src.getGSInfo(inputIdx, key));
-    }
+		if (src.hasOpacities())
+			dst.setOpacity(i, src.getOpacity(inputIdx));
+
+		if (src.hasScales())
+			dst.setScale(i, src.getScale(inputIdx));
+
+		if (src.hasRotations()) {
+			dst.setRotationVec(i, src.getRotationVec(inputIdx));
+			dst.setRotationScalar(i, src.getRotationScalar(inputIdx));
+		}
+
+		if (src.hasSHCoefficients()) {
+			for (int k = 0; k < src.getNumSHCoeffs(); k++)
+				dst.setSHCoefficient(k, i, src.getSHCoefficient(k, inputIdx));
+		}
   }
 
   return dst;
@@ -984,7 +1125,10 @@ getPartition(
   }
 
   PCCPointSet3 dst;
-  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
+  if (src.hasSHCoefficients())
+    dst.setNumSHCoeffs(src.getNumSHCoeffs());
+  dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
+	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
   dst.resize(size);
 
   int dstIdx = 0;
@@ -999,10 +1143,21 @@ getPartition(
       if (src.hasReflectances())
         dst.setReflectance(dstIdx, src.getReflectance(srcIdx));
 
-      if (src.hasGSInfo()){
-        for(auto& key : GSHelper::gskeys)
-          dst.setGSInfo(dstIdx, key, src.getGSInfo(srcIdx, key));
-      }
+			if (src.hasOpacities())
+				dst.setOpacity(dstIdx, src.getOpacity(srcIdx));
+
+			if (src.hasScales())
+				dst.setScale(dstIdx, src.getScale(srcIdx));
+
+			if (src.hasRotations()) {
+				dst.setRotationVec(dstIdx, src.getRotationVec(srcIdx));
+				dst.setRotationScalar(dstIdx, src.getRotationScalar(srcIdx));
+			}
+
+			if (src.hasSHCoefficients()) {
+				for (int k = 0; k < src.getNumSHCoeffs(); k++)
+					dst.setSHCoefficient(k, dstIdx, src.getSHCoefficient(k, srcIdx));
+			}
 
       dstIdx++;
       prevIdx = srcIdx;

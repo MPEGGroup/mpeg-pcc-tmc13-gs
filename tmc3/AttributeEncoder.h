@@ -157,9 +157,7 @@ protected:
     PCCPredictor& predictor,
     PCCResidualsEncoder& encoder,
     PCCResidualsEntropyEstimator& context,
-    const Quantizer& quant,
-    const std::string& key,
-    const std::vector<int64_t>& reflectances);
+    const Quantizer& quant);
 
   static void encodePredModeRefl(
     const AttributeParameterSet& aps, int predMode, int32_t& coeff);
@@ -170,6 +168,7 @@ private:
     const std::vector<Vec3<int64_t>>& coeffs);
 
   std::vector<Vec3<int8_t>> computeInterComponentPredictionCoeffs(
+	const AttributeDescription& desc,
     const AttributeParameterSet& aps, const PCCPointSet3& pointCloud);
 
 private:

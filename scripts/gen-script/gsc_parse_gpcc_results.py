@@ -37,15 +37,15 @@ import argparse
 import os
 
 # ===== Constants =====
-SHDC_KEYS  = [f"f_dc_{c}" for c in range(3)]
-SHAC0_KEYS = [f"f_rest_{15*c + m}" for c in range(3) for m in range(0, 3)]
-SHAC1_KEYS = [f"f_rest_{15*c + m}" for c in range(3) for m in range(3, 8)]
-SHAC2_KEYS = [f"f_rest_{15*c + m}" for c in range(3) for m in range(8, 15)]
-ROT_KEYS   = [f"rot_{c}" for c in range(4)]
-SCALE_KEYS = [f"scale_{c}" for c in range(3)]
+SH_B0_KEYS = ["SH_dc_coefficients_0"]
+SH_B1_KEYS = [f"SH_ac_coefficients_{m}" for m in range(1,4)]
+SH_B2_KEYS = [f"SH_ac_coefficients_{m}" for m in range(4,9)]
+SH_B3_KEYS = [f"SH_ac_coefficients_{m}" for m in range(9,16)]
+ROT_KEYS   = ["rotations_XYZ", "rotations_W"]
+SCALE_KEYS = ["scales"]
 
-ATTR_KEYS = SHDC_KEYS + SHAC0_KEYS + SHAC1_KEYS + SHAC2_KEYS + ROT_KEYS + SCALE_KEYS + ["opacity"]
-ATTR_KEY_ORDER = ["positions","f_dc_0","f_dc_1","f_dc_2","f_rest_0","f_rest_1","f_rest_10","f_rest_11","f_rest_12","f_rest_13","f_rest_14","f_rest_15","f_rest_16","f_rest_17","f_rest_18","f_rest_19","f_rest_2","f_rest_20","f_rest_21","f_rest_22","f_rest_23","f_rest_24","f_rest_25","f_rest_26","f_rest_27","f_rest_28","f_rest_29","f_rest_3","f_rest_30","f_rest_31","f_rest_32","f_rest_33","f_rest_34","f_rest_35","f_rest_36","f_rest_37","f_rest_38","f_rest_39","f_rest_4","f_rest_40","f_rest_41","f_rest_42","f_rest_43","f_rest_44","f_rest_5","f_rest_6","f_rest_7","f_rest_8","f_rest_9","opacity","rot_0","rot_1","rot_2","rot_3","scale_0","scale_1","scale_2"]
+ATTR_KEYS = SH_B0_KEYS + SH_B1_KEYS + SH_B2_KEYS + SH_B3_KEYS + ROT_KEYS + SCALE_KEYS + ["opacities"]
+ATTR_KEY_ORDER = ["positions","SH_dc_coefficients_0","SH_ac_coefficients_1","SH_ac_coefficients_10","SH_ac_coefficients_11","SH_ac_coefficients_12","SH_ac_coefficients_13","SH_ac_coefficients_14","SH_ac_coefficients_15","SH_ac_coefficients_2","SH_ac_coefficients_3","SH_ac_coefficients_4","SH_ac_coefficients_5","SH_ac_coefficients_6","SH_ac_coefficients_7","SH_ac_coefficients_8","SH_ac_coefficients_9","opacities","rotations_XYZ","rotations_W","scales"]
 
 # ===== Results structure =====
 results = {
@@ -174,26 +174,26 @@ def main():
         args.rate,
         sum(results["TMC13Info"]["Total"]["byte"]),
         sum(results["TMC13Info"]["positions"]["byte"]),
-        sum(sum(results["TMC13Info"][k]["byte"]) for k in SHDC_KEYS),
-        sum(sum(results["TMC13Info"][k]["byte"]) for k in SHAC0_KEYS),
-        sum(sum(results["TMC13Info"][k]["byte"]) for k in SHAC1_KEYS),
-        sum(sum(results["TMC13Info"][k]["byte"]) for k in SHAC2_KEYS),
+        sum(sum(results["TMC13Info"][k]["byte"]) for k in SH_B0_KEYS),
+        sum(sum(results["TMC13Info"][k]["byte"]) for k in SH_B1_KEYS),
+        sum(sum(results["TMC13Info"][k]["byte"]) for k in SH_B2_KEYS),
+        sum(sum(results["TMC13Info"][k]["byte"]) for k in SH_B3_KEYS),
         sum(sum(results["TMC13Info"][k]["byte"]) for k in ROT_KEYS),
         sum(sum(results["TMC13Info"][k]["byte"]) for k in SCALE_KEYS),
-        sum(results["TMC13Info"]["opacity"]["byte"]),
+        sum(results["TMC13Info"]["opacities"]["byte"]),
         avg(results["MetricInfo"]["RGB-PSNR"]),
         avg(results["MetricInfo"]["YUV-PSNR"]),
         avg(results["MetricInfo"]["YUV-SSIM"]),
         avg(results["MetricInfo"]["YUV-IVSSIM"]),
         avg(results["MetricInfo"]["GT-RGB-PSNR"]),
         
-        min(results["MetricInfo"]["RGB-PSNR"]),
-        min(results["MetricInfo"]["YUV-PSNR"]),
-        min(results["MetricInfo"]["YUV-SSIM"]),
+        min(results["MetricInfo"]["RGB-PSNR"], default=0),
+        min(results["MetricInfo"]["YUV-PSNR"], default=0),
+        min(results["MetricInfo"]["YUV-SSIM"], default=0),
         
-        max(results["MetricInfo"]["RGB-PSNR"]),
-        max(results["MetricInfo"]["YUV-PSNR"]),
-        max(results["MetricInfo"]["YUV-SSIM"]),
+        max(results["MetricInfo"]["RGB-PSNR"], default=0),
+        max(results["MetricInfo"]["YUV-PSNR"], default=0),
+        max(results["MetricInfo"]["YUV-SSIM"], default=0),
 
         sum(results["TMC13Info"]["Total"]["encT"]),
         sum(results["TMC13Info"]["positions"]["encT"]),

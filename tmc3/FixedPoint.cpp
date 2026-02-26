@@ -38,6 +38,7 @@
 namespace pcc {
 
 //============================================================================
+int FixedPoint::kFracBits;
 
 void
 FixedPoint::operator/=(const FixedPoint& that)

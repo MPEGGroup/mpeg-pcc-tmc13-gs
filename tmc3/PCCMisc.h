@@ -214,11 +214,23 @@ rotateRight(T val, int n)
 }
 
 //---------------------------------------------------------------------------
+// Initialize LUT_fastIsqrt and LUT_fastIrsqrt
+void init_LUT();
+
+//---------------------------------------------------------------------------
 // Compute an approximation of \left\floor \sqrt{x} \right\floor
 
 uint32_t isqrt(uint64_t x) __attribute__((const));
 
 //---------------------------------------------------------------------------
+//fast Compute an approximation of \left\floor \sqrt{x} \right\floor
+uint32_t fastIsqrt(uint64_t x) __attribute__((const));
+
+//---------------------------------------------------------------------------
+//fast Compute an approximation of reciprocal sqrt
+uint64_t fastIrsqrt(uint64_t a64) __attribute__((const));
+
+  //---------------------------------------------------------------------------
 // Compute an approximation of reciprocal sqrt
 
 uint64_t irsqrt(uint64_t a64) __attribute__((const));

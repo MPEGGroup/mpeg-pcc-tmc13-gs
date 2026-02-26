@@ -761,7 +761,10 @@ encodePredictiveGeometry(
 
   // storage for reordering the output point cloud
   PCCPointSet3 outCloud;
-  outCloud.addRemoveAttributes(cloud.hasColors(), cloud.hasReflectances(), cloud.hasGSInfo());
+  if (cloud.hasSHCoefficients())
+    outCloud.setNumSHCoeffs(cloud.getNumSHCoeffs());
+  outCloud.addRemoveAttributes(cloud.hasColors(), cloud.hasReflectances()
+	  , cloud.hasOpacities(), cloud.hasScales(), cloud.hasRotations(), cloud.hasSHCoefficients());
   outCloud.resize(numPoints);
 
   // storage for spherical point co-ordinates determined in angular mode
@@ -870,12 +873,18 @@ encodePredictiveGeometry(
         outCloud.setColor(i, cloud.getColor(srcIdx));
       if (cloud.hasReflectances())
         outCloud.setReflectance(i, cloud.getReflectance(srcIdx));    
-      if (cloud.hasGSInfo()){
-        for(auto& key : GSHelper::gskeys){
-          outCloud.setGSInfo(i, key, cloud.getGSInfo(srcIdx, key));
-        }
+      if (cloud.hasOpacities())
+        outCloud.setOpacity(i, cloud.getOpacity(srcIdx));
+      if (cloud.hasScales())
+        outCloud.setScale(i, cloud.getScale(srcIdx));
+      if (cloud.hasRotations()) {
+        outCloud.setRotationVec(i, cloud.getRotationVec(srcIdx));
+        outCloud.setRotationScalar(i, cloud.getRotationScalar(srcIdx));
       }
-
+      if (cloud.hasSHCoefficients()) {
+        for (int k = 0; k < cloud.getNumSHCoeffs(); k++)
+          outCloud.setSHCoefficient(k, i, cloud.getSHCoefficient(k, srcIdx));
+      }
     }
   }
 

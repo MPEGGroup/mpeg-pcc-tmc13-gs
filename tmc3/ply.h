@@ -39,6 +39,7 @@
 #include <string>
 
 #include "PCCPointSet.h"
+#include "hls.h"
 
 namespace pcc {
 namespace ply {
@@ -72,7 +73,8 @@ namespace ply {
     double positionScale,
     Vec3<double> positionOffset,
     const std::string& fileName,
-    bool asAscii);
+    bool asAscii,
+    const std::vector<AttributeDescription>& attrDescs);
 
   ///
   // Read @a pointCloud to a PLY file called @a fileName.
@@ -82,7 +84,8 @@ namespace ply {
     const std::string& fileName,
     const PropertyNameMap& propertyNames,
     double positionScale,
-    PCCPointSet3& cloud);
+    PCCPointSet3& cloud,
+    std::vector<AttributeDescription>& attrDescs);
 
   //============================================================================
 

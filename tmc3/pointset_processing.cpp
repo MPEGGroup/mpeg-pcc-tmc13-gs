@@ -92,8 +92,10 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
   }
 
   // Add attribute storage to match src
-  dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances());
-
+  if (src.hasSHCoefficients())
+    dst.cloud.setNumSHCoeffs(src.getNumSHCoeffs());
+  dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
+	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
   return dst;
 }
 
@@ -107,8 +109,9 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
 
 SrcMappedPointSet
 samplePositionsUniq(
-  float sampleScale,
-  float quantScale,
+  double sampleScale,
+  double quantScale,
+  Vec3<int> seq_origin_rem,
   Vec3<int> offset,
   const PCCPointSet3& src)
 {
@@ -123,8 +126,8 @@ samplePositionsUniq(
     },
     [=](Vec3<int> point) {
       for (int k = 0; k < 3; k++)
-        point[k] = std::round(point[k] * quantScale);
-      return point - offset;
+        point[k] = std::round((point[k] - seq_origin_rem[k]) * quantScale) - offset[k];
+      return point ;
     });
 }
 
@@ -137,14 +140,16 @@ samplePositionsUniq(
 
 SrcMappedPointSet
 quantizePositionsUniq(
-  const float scaleFactor,
+  const double scaleFactor,
+  const Vec3<int> seq_origin_rem,
   const Vec3<int> offset,
   const Box3<int> clamp,
   const PCCPointSet3& src)
 {
+
   auto qFn = [=](Vec3<int> point) {
     for (int k = 0; k < 3; k++) {
-      double posk = std::round(point[k] * scaleFactor) - offset[k];
+      double posk = std::round((point[k] - seq_origin_rem[k]) * scaleFactor) - offset[k];
       point[k] = PCCClip(int32_t(posk), clamp.min[k], clamp.max[k]);
     }
     return point;
@@ -164,18 +169,21 @@ quantizePositionsUniq(
 
 void
 quantizePositions(
-  const float scaleFactor,
+  const double scaleFactor,
+  const Vec3<int> seq_origin_rem,
   const Vec3<int> offset,
   const Box3<int> clamp,
   const PCCPointSet3& src,
   PCCPointSet3* dst)
 {
   int numSrcPoints = src.getPointCount();
-
   // In case dst and src point clouds are the same, don't destroy src.
   if (&src != dst) {
     dst->clear();
-    dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasGSInfo());
+    if (src.hasSHCoefficients())
+      dst->setNumSHCoeffs(src.getNumSHCoeffs());
+		dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
+		src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
     dst->resize(numSrcPoints);
   }
 
@@ -183,7 +191,7 @@ quantizePositions(
     const auto point = src[i];
     auto& dstPoint = (*dst)[i];
     for (int k = 0; k < 3; ++k) {
-      double k_pos = std::round(point[k] * scaleFactor) - offset[k];
+      double k_pos = std::round((point[k] - seq_origin_rem[k]) * scaleFactor) - offset[k];
       dstPoint[k] = PCCClip(int32_t(k_pos), clamp.min[k], clamp.max[k]);
     }
   }
@@ -202,11 +210,28 @@ quantizePositions(
       dst->setReflectance(i, src.getReflectance(i));
   }
 
-  if (src.hasGSInfo()){
-    for (auto& key : GSHelper::gskeys){
-      for(int i = 0; i < numSrcPoints; ++i)
-        dst->setGSInfo(i, key, src.getGSInfo(i,key));
+  if (src.hasOpacities()) {
+	  for (int i = 0; i < numSrcPoints; ++i)
+		  dst->setOpacity(i, src.getOpacity(i));
+  }
+
+  if (src.hasScales()) {
+	  for (int i = 0; i < numSrcPoints; ++i)
+		  dst->setScale(i, src.getScale(i));
+  }
+
+  if (src.hasRotations()) {
+    for (int i = 0; i < numSrcPoints; ++i) {
+      dst->setRotationVec(i, src.getRotationVec(i));
+      dst->setRotationScalar(i, src.getRotationScalar(i));
     }
+  }
+
+  if (src.hasSHCoefficients()) {
+	  for (int i = 0; i < numSrcPoints; ++i) {
+		  for (int k = 0; k < src.getNumSHCoeffs(); k++)
+			  dst->setSHCoefficient(k, i, src.getSHCoefficient(k, i));
+	  }
   }
 }
 
@@ -940,7 +965,7 @@ recolour(
     }
   }
 
-  if (desc.attributeLabel == KnownAttributeLabel::kReflectance && !desc.is3DGS) {
+  if (desc.attributeLabel == KnownAttributeLabel::kReflectance) {
     bool ok = recolourReflectance(
       desc, cfg, source, sourceToTargetScaleFactor, tgtToSrcOffset, *target);
 

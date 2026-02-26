@@ -135,6 +135,9 @@ struct EncoderParams {
 
   // Qp used for IDCM quantisation (used to derive HLS values)
   int idcmQp;
+
+  // 0: None, 1: ADU, 2:DADU
+  std::vector<int> attr_DU_modes;
 };
 
 //============================================================================
@@ -190,6 +193,8 @@ private:
   double _srcToCodingScale;
 
   // Sequence origin in terms of coding coordinate system
+  Vec3<int> _originInSeqCoords_rem;
+
   Vec3<int> _originInCodingCoords;
 
   // Position of the slice in the translated+scaled co-ordinate system.
@@ -201,7 +206,7 @@ private:
   // The active parameter sets
   const SequenceParameterSet* _sps;
   const GeometryParameterSet* _gps;
-  std::vector<const AttributeParameterSet*> _aps;
+  std::vector<AttributeParameterSet*> _aps;
 
   // Cached copy of the curent _gbh (after encoding geometry)
   GeometryBrickHeader _gbh;

@@ -374,11 +374,11 @@ public:
   RahtKernel(int weightLeft, int weightRight)
   {
     uint64_t w = weightLeft + weightRight;
-    uint64_t isqrtW = irsqrt(w);
+    uint64_t isqrtW = fastIrsqrt(w);
     _a.val =
-      (isqrt(uint64_t(weightLeft) << (2 * _a.kFracBits)) * isqrtW) >> 40;
+      (fastIsqrt(uint64_t(weightLeft)) * isqrtW) >> 40;
     _b.val =
-      (isqrt(uint64_t(weightRight) << (2 * _b.kFracBits)) * isqrtW) >> 40;
+      (fastIsqrt(uint64_t(weightRight)) * isqrtW) >> 40;
   }
 
   void fwdTransform(
@@ -792,7 +792,7 @@ uraht_process(
           FixedPoint rsqrtWeight;
           uint64_t w = weights[childIdx];
           int shift = w > 1024 ? ilog2(w - 1) >> 1 : 0;
-          rsqrtWeight.val = irsqrt(w) >> (40 - shift - FixedPoint::kFracBits);
+          rsqrtWeight.val =fastIrsqrt(w) >> (40 - shift - FixedPoint::kFracBits);
           for (int k = 0; k < numAttrs; k++) {
             transformBuf[k][childIdx].val >>= shift;
             transformBuf[k][childIdx] *= rsqrtWeight;
@@ -802,8 +802,7 @@ uraht_process(
         // Predicted attribute values
         if (enablePrediction) {
           FixedPoint sqrtWeight;
-          sqrtWeight.val =
-            isqrt(uint64_t(weights[childIdx]) << (2 * FixedPoint::kFracBits));
+          sqrtWeight.val = fastIsqrt(uint64_t(weights[childIdx]) );
           for (int k = 0; k < numAttrs; k++)
             transformPredBuf[k][childIdx] *= sqrtWeight;
         }
@@ -917,9 +916,9 @@ uraht_process(
           attrRecParentIt++;
           int64_t val = *attrRecParentUsIt++;
           if (val > 0)
-            transformPredBuf[k][0].val = val << (15 - 2);
+            transformPredBuf[k][0].val = val << (FixedPoint::kFracBits - 2);
           else
-            transformPredBuf[k][0].val = -((-val) << (15 - 2));
+            transformPredBuf[k][0].val = -((-val) << (FixedPoint::kFracBits - 2));
         }
       }
 
@@ -940,7 +939,7 @@ uraht_process(
           FixedPoint rsqrtWeight;
           uint64_t w = weights[nodeIdx];
           int shift = w > 1024 ? ilog2(w - 1) >> 1 : 0;
-          rsqrtWeight.val = irsqrt(w) >> (40 - shift - FixedPoint::kFracBits);
+          rsqrtWeight.val =fastIrsqrt(w) >> (40 - shift - FixedPoint::kFracBits);
           for (int k = 0; k < numAttrs; k++) {
             transformPredBuf[k][nodeIdx].val >>= shift;
             transformPredBuf[k][nodeIdx] *= rsqrtWeight;
@@ -978,7 +977,7 @@ uraht_process(
     FixedPoint attrSum[3];
     FixedPoint attrRecDc[3];
     FixedPoint sqrtWeight;
-    sqrtWeight.val = isqrt(uint64_t(weight) << (2 * FixedPoint::kFracBits));
+    sqrtWeight.val =fastIsqrt(uint64_t(weight));
 
     int64_t sumCoeff = 0;
     for (int k = 0; k < numAttrs; k++) {
@@ -993,7 +992,7 @@ uraht_process(
       RahtKernel kernel(w, 1);
       int shift = w > 1024 ? ilog2(uint32_t(w - 1)) >> 1 : 0;
       if (isEncoder)
-        rsqrtWeight.val = irsqrt(w) >> (40 - shift - FixedPoint::kFracBits);
+        rsqrtWeight.val =fastIrsqrt(w) >> (40 - shift - FixedPoint::kFracBits);
 
       auto quantizers = qpset.quantizers(qpLayer, nodeQp);
       for (int k = 0; k < numAttrs; k++) {

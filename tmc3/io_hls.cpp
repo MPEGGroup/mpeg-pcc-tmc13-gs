@@ -145,7 +145,54 @@ operator<<(std::ostream& os, const AttributeLabel& label)
   case KnownAttributeLabel::kMaterialId: os << "material id"; break;
   case KnownAttributeLabel::kOpacity: os << "opacity"; break;
   case KnownAttributeLabel::kNormal: os << "normal"; break;
-  case KnownAttributeLabel::kOid: os << std::string(label.oid);
+  case KnownAttributeLabel::kOid:
+    os << std::string(label.oid);
+    // Gaussian Splat Compression
+  case KnownAttributeLabel::kScale: os << "scale"; break;
+  case KnownAttributeLabel::kRotation: os << "rotation"; break;
+  case KnownAttributeLabel::kSH_coefficients: os << "SH_coefficient"; break;
+  default:
+    // An unknown known attribute
+    auto iosFlags = os.flags(std::ios::hex);
+    os << std::setw(8) << label.known_attribute_label;
+    os.flags(iosFlags);
+  }
+
+  return os;
+}
+
+//============================================================================
+
+std::ostream&
+operator<<(std::ostream& os, const AttributeDescription& desc)
+{
+  auto label = desc.attributeLabel;
+  switch (label.known_attribute_label) {
+  case KnownAttributeLabel::kColour:      os << "color";    break;
+	case KnownAttributeLabel::kReflectance: os << "reflectance"; break;
+  case KnownAttributeLabel::kFrameIndex: os << "frame index"; break;
+  case KnownAttributeLabel::kFrameNumber: os << "frame number"; break;
+  case KnownAttributeLabel::kMaterialId: os << "material id"; break;
+  case KnownAttributeLabel::kOpacity: os << "opacity"; break;
+  case KnownAttributeLabel::kNormal: os << "normal"; break;
+  case KnownAttributeLabel::kOid:
+    os << std::string(label.oid);
+    // Gaussian Splat Compression
+  case KnownAttributeLabel::kScale: os << "scale"; break;
+  case KnownAttributeLabel::kRotation: 
+		if (desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ)
+      os << "rotations_XYZ";
+    else if (
+      desc.params.rotation_component_label
+      == RotationComponentLabel::kRotation_W)
+      os << "rotations_W"; 		
+		break;
+  case KnownAttributeLabel::kSH_coefficients: 
+		if (desc.params.sh_dc_coefficient_flag)
+			os << "SH_dc_coefficient"; 
+		else
+      os << "SH_ac_coefficient"; 
+		break;
   default:
     // An unknown known attribute
     auto iosFlags = os.flags(std::ios::hex);
@@ -247,6 +294,78 @@ parseAttrParamDefaultValue(
 
 template<typename Bs>
 void
+writeAttrParamSHCoefficientLabel(Bs& bs, const AttributeParameters& param)
+{
+  bs.write(param.sh_dc_coefficient_flag);
+  if (param.sh_dc_coefficient_flag) {
+    bs.write(param.dc_only_flag);
+    if (param.dc_only_flag == 0)
+	    bs.writeUn(2, param.num_sh_coefficient_degrees_minus1);
+  } else {
+    int numSHCoeff = 0;
+    for (int i = 0; i <= param.num_sh_coefficient_degrees_minus1; i++)
+      numSHCoeff += (2 * i + 1);  // 1 + 3 + 5 + 7
+    int numSHCoeffDegreesBits = numBits(numSHCoeff - 1);
+
+    bs.writeUn(numSHCoeffDegreesBits, (int)param.sh_coefficient_label - 1);
+  }
+
+  bs.byteAlign();
+}
+
+//----------------------------------------------------------------------------
+
+template<typename Bs>
+void
+parseAttrParamSHCoeffieicientLabel(Bs& bs, AttributeParameters* param)
+{
+  bs.read(&param->sh_dc_coefficient_flag);
+  if (param->sh_dc_coefficient_flag) {
+    bs.read(&param->dc_only_flag);
+    if (param->dc_only_flag == 0)
+      bs.readUn(2, &param->num_sh_coefficient_degrees_minus1);
+    else
+      param->num_sh_coefficient_degrees_minus1 = 0;
+		param->sh_coefficient_label = SHCoefficientLabel::kBand0_Order0;		
+  } else {
+    int numSHCoeff = 0;
+    for (int i = 0; i <= param->num_sh_coefficient_degrees_minus1; i++)
+      numSHCoeff += (2 * i + 1);  // 1 + 3 + 5 + 7 
+    int numSHCoeffDegreesBits = numBits(numSHCoeff - 1);
+
+    int shAcCoeffMinus1 = 0;
+    bs.readUn(numSHCoeffDegreesBits, &shAcCoeffMinus1);
+
+    param->sh_coefficient_label = (SHCoefficientLabel)(shAcCoeffMinus1 + 1);
+  }
+
+  bs.byteAlign();
+}
+
+//============================================================================
+
+template<typename Bs>
+void
+writeAttrParamRotationLabel(Bs& bs, const AttributeParameters& param)
+{
+  bs.writeUn(2, param.rotation_component_label);
+  bs.byteAlign();
+}
+
+//----------------------------------------------------------------------------
+
+template<typename Bs>
+void
+parseAttrParamRotationLabel(Bs& bs, AttributeParameters* param)
+{
+  bs.readUn(2, &param->rotation_component_label);
+  bs.byteAlign();
+}
+
+//============================================================================
+
+template<typename Bs>
+void
 writeAttrParamOpaque(Bs& bs, const OpaqueAttributeParameter& param)
 {
   if (param.attr_param_type == AttributeParameterType::kItuT35) {
@@ -341,6 +460,28 @@ writeAttributeParameters(
     writeAttrParamScaling(bs, params);
   }
 
+  if (params.shCoefficientParameterPresent) {
+    int attr_param_len = 0;
+    auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
+    writeAttrParamSHCoefficientLabel(bsCounter, params);
+
+    auto attr_param_type = AttributeParameterType::kSHCoefficientLabel;
+    bs.writeUn(8, attr_param_type);
+    bs.writeUn(8, attr_param_len);
+    writeAttrParamSHCoefficientLabel(bs, params);
+  }
+
+  if (params.rotationComponentParameterPresent) {
+    int attr_param_len = 0;
+    auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
+    writeAttrParamRotationLabel(bsCounter, params);
+
+    auto attr_param_type = AttributeParameterType::kRotationLabel;
+    bs.writeUn(8, attr_param_type);
+    bs.writeUn(8, attr_param_len);
+    writeAttrParamRotationLabel(bs, params);
+  }
+
   for (const auto& param : params.opaqueParameters) {
     int attr_param_len = 0;
     auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
@@ -370,6 +511,14 @@ parseAttributeParameter(
   case Type::kScaling: parseAttrParamScaling(bs, &params); break;
   case Type::kDefaultValue:
     parseAttrParamDefaultValue(attr, bs, &params);
+    break;
+  case Type::kSHCoefficientLabel:
+    parseAttrParamSHCoeffieicientLabel(bs, &params);
+    params.shCoefficientParameterPresent = true;
+    break;
+  case Type::kRotationLabel:
+    parseAttrParamRotationLabel(bs, &params);
+    params.rotationComponentParameterPresent = true;
     break;
 
   case Type::kItuT35:
@@ -533,6 +682,7 @@ parseSps(const PayloadBuffer& buf)
   bs.readUe(&sps.global_scale_fp_bits());
   bs.readUn(sps.global_scale_fp_bits(), &sps.global_scale_rem());
 
+  int value = -1;
   int num_attribute_sets = int(bs.readUe());
   for (int i = 0; i < num_attribute_sets; i++) {
     sps.attributeSets.emplace_back();
@@ -556,8 +706,17 @@ parseSps(const PayloadBuffer& buf)
     int num_attribute_parameters;
     bs.readUe(&num_attribute_parameters);
     bs.byteAlign();
+
+    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients
+			&& !attr.params.sh_dc_coefficient_flag)			// SH_ac
+      attr.params.num_sh_coefficient_degrees_minus1 = value;
+
     for (int i = 0; i < num_attribute_parameters; i++)
       parseAttributeParameter(attr, bs, attr.params);
+
+    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients 
+			&& attr.params.sh_dc_coefficient_flag)  // SH_dc
+      value = attr.params.num_sh_coefficient_degrees_minus1;
   }
 
   bs.readUn(3, &sps.geometry_axis_order);
@@ -853,13 +1012,12 @@ convertXyzToStv(const SequenceParameterSet& sps, GeometryParameterSet* gps)
 //============================================================================
 
 PayloadBuffer
-write(const SequenceParameterSet& sps, const AttributeParameterSet& aps)
+write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
 {
   PayloadBuffer buf(PayloadType::kAttributeParameterSet);
   auto bs = makeBitWriter(std::back_inserter(buf));
 
-//  bs.writeUn(4, aps.aps_attr_parameter_set_id);
-  bs.writeUn(6, aps.aps_attr_parameter_set_id);
+  bs.writeUn(4, aps.aps_attr_parameter_set_id_v1);
   bs.writeUn(4, aps.aps_seq_parameter_set_id);
   bs.writeUe(aps.attr_encoding);
 
@@ -940,7 +1098,25 @@ write(const SequenceParameterSet& sps, const AttributeParameterSet& aps)
   }
 
   bool aps_extension_flag = false;
+  aps_extension_flag = true; // changed for GS extension
+  bool aps_gs_extension_present_flag = false;
+  aps_gs_extension_present_flag = true; // changed for GS extension
+  int aps_extension_7bits = 0; // fixed to 0
   bs.write(aps_extension_flag);
+  if (aps_extension_flag){
+    // assert(!aps_extension_flag);
+    bs.write(aps_gs_extension_present_flag);    
+    bs.writeUn(7, aps_extension_7bits);
+    if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
+      bs.writeUe(aps.raht_fixed_point_precision);
+    }
+  }
+  if (aps_gs_extension_present_flag) {
+    bs.writeUn(2, aps.aps_attr_parameter_set_id_extension_2bits);
+  }
+  if (aps_extension_7bits) {
+    assert(!aps_extension_7bits);
+  }
   bs.byteAlign();
 
   return buf;
@@ -955,8 +1131,7 @@ parseAps(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kAttributeParameterSet);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-//  bs.readUn(4, &aps.aps_attr_parameter_set_id);
-  bs.readUn(6, &aps.aps_attr_parameter_set_id);
+  bs.readUn(4, &aps.aps_attr_parameter_set_id_v1);
   bs.readUn(4, &aps.aps_seq_parameter_set_id);
   bs.readUe(&aps.attr_encoding);
 
@@ -1047,9 +1222,21 @@ parseAps(const PayloadBuffer& buf)
   }
 
   bool aps_extension_flag = bs.read();
+  bool aps_gs_extension_present_flag = false;
+  int aps_extension_7bits = 0;
   if (aps_extension_flag) {
-    // todo(df): aps_extension_data;
-    assert(!aps_extension_flag);
+    aps_gs_extension_present_flag = bs.read();    
+    bs.readUn(7, &aps_extension_7bits);
+    if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
+      bs.readUe(&aps.raht_fixed_point_precision);
+    }
+  }
+  if (aps_gs_extension_present_flag) {
+    bs.readUn(2, &aps.aps_attr_parameter_set_id_extension_2bits);
+  }
+  aps.aps_attr_parameter_set_id = aps.aps_attr_parameter_set_id_v1 + (aps.aps_attr_parameter_set_id_extension_2bits << 4);
+  if (aps_extension_7bits) {
+    assert(!aps_extension_7bits);
   }
   bs.byteAlign();
 
@@ -1345,10 +1532,10 @@ write(
   assert(buf->type == PayloadType::kAttributeBrick);
   auto bs = makeBitWriter(std::back_inserter(*buf));
 
-  int abh_reserved_zero_3bits = 0;
-//  bs.writeUn(4, abh.attr_attr_parameter_set_id);
-  bs.writeUn(6, abh.attr_attr_parameter_set_id);
-  bs.writeUn(3, abh_reserved_zero_3bits);
+  int abh_reserved_zero_1bit = 0;
+  bs.writeUn(4, abh.attr_attr_parameter_set_id_v1);
+  bs.writeUn(2, abh.attr_attr_parameter_set_id_extension_2bits);
+  bs.writeUn(1, abh_reserved_zero_1bit);
   bs.writeUe(abh.attr_sps_attr_idx);
   bs.writeUe(abh.attr_geom_slice_id);
 
@@ -1436,10 +1623,11 @@ parseAbhIds(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kAttributeBrick);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-  int abh_reserved_zero_3bits;
-//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
-  bs.readUn(6, &abh.attr_attr_parameter_set_id);
-  bs.readUn(3, &abh_reserved_zero_3bits);
+  int abh_reserved_zero_1bit;
+  bs.readUn(4, &abh.attr_attr_parameter_set_id_v1);
+  bs.readUn(2, &abh.attr_attr_parameter_set_id_extension_2bits);
+  abh.attr_attr_parameter_set_id = abh.attr_attr_parameter_set_id_v1 + (abh.attr_attr_parameter_set_id_extension_2bits << 4);
+  bs.readUn(1, &abh_reserved_zero_1bit);
   bs.readUe(&abh.attr_sps_attr_idx);
   bs.readUe(&abh.attr_geom_slice_id);
 
@@ -1462,10 +1650,11 @@ parseAbh(
   assert(buf.type == PayloadType::kAttributeBrick);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-  int abh_reserved_zero_3bits;
-//  bs.readUn(4, &abh.attr_attr_parameter_set_id);
-  bs.readUn(6, &abh.attr_attr_parameter_set_id);
-  bs.readUn(3, &abh_reserved_zero_3bits);
+  int abh_reserved_zero_1bit;
+  bs.readUn(4, &abh.attr_attr_parameter_set_id_v1);
+  bs.readUn(2, &abh.attr_attr_parameter_set_id_extension_2bits);
+  abh.attr_attr_parameter_set_id = abh.attr_attr_parameter_set_id_v1 + (abh.attr_attr_parameter_set_id_extension_2bits << 4);
+  bs.readUn(1, &abh_reserved_zero_1bit);
   bs.readUe(&abh.attr_sps_attr_idx);
   bs.readUe(&abh.attr_geom_slice_id);
 
@@ -1568,10 +1757,10 @@ parseConstantAttribute(
   assert(buf.type == PayloadType::kConstantAttribute);
   auto bs = makeBitReader(buf.begin(), buf.end());
 
-//  bs.readUn(4, &cadu.constattr_attr_parameter_set_id);
-  bs.readUn(6, &cadu.constattr_attr_parameter_set_id);
+  bs.readUn(4, &cadu.constattr_seq_parameter_set_id);
+  bs.readUn(3, &cadu.constattr_reserved_zero_3bits);
   bs.readUe(&cadu.constattr_sps_attr_idx);
-  bs.readUe(&cadu.constattr_geom_slice_id);
+  bs.readUe(&cadu.constattr_slice_id);
 
   // todo(df): check bounds
   const auto& attrDesc = sps.attributeSets[cadu.constattr_sps_attr_idx];
@@ -1580,8 +1769,29 @@ parseConstantAttribute(
   bs.readUn(attrDesc.bitdepth, &cadu.constattr_default_value[0]);
   for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1; k++)
     bs.readUn(attrDesc.bitdepth, &cadu.constattr_default_value[k]);
-
+  bs.byteAlign();
   return cadu;
+}
+
+void writeConstantAttribute(
+  const SequenceParameterSet& sps, 
+  const ConstantAttributeDataUnit& cadu, 
+  PayloadBuffer* buf)
+{
+  assert(buf->type == PayloadType::kConstantAttribute);
+  auto bs = makeBitWriter(std::back_inserter(*buf));
+
+  bs.writeUn(4, &cadu.constattr_seq_parameter_set_id);
+  bs.writeUn(3, &cadu.constattr_reserved_zero_3bits);
+  bs.writeUe(cadu.constattr_sps_attr_idx);
+  bs.writeUe(cadu.constattr_slice_id);
+
+  // todo(df): check bounds
+  const auto& attrDesc = sps.attributeSets[cadu.constattr_sps_attr_idx];
+  bs.writeUn(attrDesc.bitdepth, cadu.constattr_default_value[0]);
+  for (int k = 1; k <= attrDesc.attr_num_dimensions_minus1; k++)
+    bs.writeUn(attrDesc.bitdepth, cadu.constattr_default_value[k]);
+  bs.byteAlign();
 }
 
 //============================================================================

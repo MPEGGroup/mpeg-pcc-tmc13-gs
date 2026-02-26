@@ -536,7 +536,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   } params_attr;
 
   bool print_help = false;
-  bool gs_ext = false;
 
   // a helper to set the attribute
   std::function<po::OptionFunc::Func> attribute_setter =
@@ -553,17 +552,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       // NB: insert returns any existing element
       const auto& it = params.encoder.attributeIdxMap.insert(
         {name, int(params.encoder.attributeIdxMap.size())});
-
-      if(params.isDecoder) {
-        GSHelper::addGSKey(it.first->first);
-        params.decoder.gs_ext = true;
-        return;
-      }
-      if(gs_ext && !params.isDecoder){
-        GSHelper::addGSKey(it.first->first);
-        params_attr.desc.is3DGS = true;
-        params.encoder.sps.profile.gs_profile_compliant = true;
-      }
 
       if (it.second) {
         params.encoder.sps.attributeSets.push_back(params_attr.desc);
@@ -801,10 +789,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.sps.level, 0,
     "Abort if level limits exceeded")
 
-  ("3DGS",
-    gs_ext, false,
-    "3DGS Extension")
-
   (po::Section("Geometry"))
 
   ("geomTreeType",
@@ -1020,6 +1004,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.desc.params.attr_offset, 0,
     "Offset used to interpret coded attribute values")
 
+  ("attrFracBits",
+    params_attr.desc.params.attr_frac_bits, 0,
+    "Fractional bits used to interpret coded attribute values")
+
   ("bitdepth",
     params_attr.desc.bitdepth, 8,
     "Attribute bitdepth")
@@ -1036,12 +1024,46 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  1: ITU-T BT.709\n"
     "  8: YCgCo")
 
+	("numSHCoeffBandsMinus1", 
+		params_attr.desc.params.num_sh_coefficient_degrees_minus1, 3,
+		"number of SH coefficient bands.")
+
+  ("shCoefficientLabel",
+    params_attr.desc.params.sh_coefficient_label_temp, (int)SHCoefficientLabel::kBand0_Order0,
+    "SH coefficients label \n"
+	"  0 : DC (band 0, order 0)\n"
+	"  1 : AC (1, -1)\t"
+	"  2 : AC (1, 0)\t"
+	"  3 : AC (1, 1)\n"
+	"  4 : AC (2, -2)\t"
+	"  5 : AC (2, -1)\t"
+	"  6 : AC (2, 0)\t"
+	"  7 : AC (2, 1)\t"
+	"  8 : AC (2, 2)\n"
+	"  9 : AC (3, -3)\t"
+	"  10 : AC (3, -2)\t"
+	"  11 : AC (3, -1)\t"
+	"  12 : AC (3, 0)\t"
+	"  13 : AC (3, 1)\t"
+	"  14 : AC (3, 2)\t"
+	"  15 : AC (3, 3)")
+
+  ("rotationComponentLabel",
+    params_attr.desc.params.rotation_component_label_temp, (int)RotationComponentLabel::kRotation_XYZ,
+    "Rotation component label\n"
+	"  0: xyz\n"
+	"  1: w")
+
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
     "Coding method to use for attribute:\n"
     "  0: Region Adaptive Hierarchical Transform (RAHT)\n"
     "  1: Hierarchical neighbourhood prediction\n"
     "  2: Hierarchical neighbourhood prediction as lifting transform")
+
+  ("rahtPrecision",
+    params_attr.aps.raht_fixed_point_precision, 20,
+    "Number of fractional bits in fixed point representation")
 
   ("rahtPredictionEnabled",
     params_attr.aps.raht_prediction_enabled_flag, true,
@@ -1403,6 +1425,9 @@ sanitizeEncoderOpts(
     params.encoder.aps.clear();
   }
 
+  // allocate list of attr DU mode
+  params.encoder.attr_DU_modes.resize(params.encoder.attributeIdxMap.size());
+
   // fixup any per-attribute settings
   for (const auto& it : params.encoder.attributeIdxMap) {
     auto& attr_sps = params.encoder.sps.attributeSets[it.second];
@@ -1416,19 +1441,15 @@ sanitizeEncoderOpts(
     attrMeta.cicp_transfer_characteristics_idx = 2;
     attrMeta.cicp_video_full_range_flag = true;
     attrMeta.cicpParametersPresent = false;
-    attrMeta.attr_frac_bits = 0;
-    attrMeta.scalingParametersPresent = false;
+		attrMeta.shCoefficientParameterPresent = false;
+		attrMeta.rotationComponentParameterPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
     attrMeta.scalingParametersPresent = attrMeta.attr_offset
       || attrMeta.attr_scale_minus1 || attrMeta.attr_frac_bits;
-
-    // todo(df): remove this hack when scaling is generalised
-    if (it.first != "reflectance" && attrMeta.scalingParametersPresent) {
-      err.warn() << it.first << ": scaling not supported, disabling\n";
-      attrMeta.scalingParametersPresent = 0;
-    }
+      
+    
 
     if (it.first == "reflectance") {
       // Avoid wasting bits signalling chroma quant step size for reflectance
@@ -1441,24 +1462,53 @@ sanitizeEncoderOpts(
       attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
     }
 
-    if (attr_sps.is3DGS) {
-      // Avoid wasting bits signalling chroma quant step size for reflectance
-      attr_aps.aps_chroma_qp_offset = 0;
-      attr_enc.abh.attr_layer_qp_delta_chroma.clear();
-
-      // There is no matrix for reflectace
-      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-      attr_sps.attr_num_dimensions_minus1 = 0;
-      attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
-
-      attr_sps.attr_instance_id = it.second;
-    }
-
     if (it.first == "color") {
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kColour;
       attrMeta.cicpParametersPresent = true;
     }
+
+		// Gaussian Splat Compression
+		if (it.first == "opacity") {
+			attr_sps.attr_num_dimensions_minus1 = 0;
+			attr_sps.attributeLabel = KnownAttributeLabel::kOpacity;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+		}
+
+		if (it.first == "scale") {
+			attr_sps.attr_num_dimensions_minus1 = 2;
+			attr_sps.attributeLabel = KnownAttributeLabel::kScale;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+		}
+
+		if (!it.first.compare(0, 8, "rotation")) {
+			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
+			attrMeta.rotation_component_label = (RotationComponentLabel)attrMeta.rotation_component_label_temp;
+			if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_XYZ)
+				attr_sps.attr_num_dimensions_minus1 = 2;
+			else if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_W)
+				attr_sps.attr_num_dimensions_minus1 = 0;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+			attrMeta.rotationComponentParameterPresent = true;
+		}
+
+		if (!it.first.compare(0, 13, "SHCoefficient")) {
+			attr_sps.attr_num_dimensions_minus1 = 2;
+			attrMeta.sh_coefficient_label =
+				(SHCoefficientLabel)attrMeta.sh_coefficient_label_temp;
+			attr_sps.attributeLabel = KnownAttributeLabel::kSH_coefficients;
+			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
+				attrMeta.sh_dc_coefficient_flag = true;
+			else 
+				attrMeta.sh_dc_coefficient_flag = false;
+			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+			attrMeta.shCoefficientParameterPresent = true;
+		      
+			if (attrMeta.num_sh_coefficient_degrees_minus1 > 3)
+				attrMeta.num_sh_coefficient_degrees_minus1 = 3;
+			else if (attrMeta.num_sh_coefficient_degrees_minus1 < 0)
+				attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+		}
 
     // Assume that YCgCo is actually YCgCoR for now
     // This requires an extra bit to represent chroma (luma will have a
@@ -1466,12 +1516,33 @@ sanitizeEncoderOpts(
     if (attrMeta.cicp_matrix_coefficients_idx == ColourMatrix::kYCgCo)
       attr_sps.bitdepth++;
 
+    attr_sps.attr_instance_id = it.second; //todo: fix temporary implementation
+
     // Extend the default attribute value to the correct width if present
-    if (!attrMeta.attr_default_value.empty())
+    int& attr_DU_mode = params.encoder.attr_DU_modes[attr_sps.attr_instance_id];
+    attr_DU_mode = 1; // ADU
+    if (!attrMeta.attr_default_value.empty()) {
       attrMeta.attr_default_value.resize(
         attr_sps.attr_num_dimensions_minus1 + 1,
         attrMeta.attr_default_value.back());
 
+      if (attrMeta.attr_default_value[0] == -1)
+        attrMeta.attr_default_value.clear();
+      else {
+        // check default values are same as maximum value
+        attr_DU_mode = 0; // None, infered at decoder
+        int InferedDefaultValue = 1<<(attr_sps.bitdepth-1);
+        int attrDim = attr_sps.attr_num_dimensions_minus1+1;
+        for (int c = 0; c < attrDim ; c++) {
+          if (attrMeta.attr_default_value[c] != InferedDefaultValue) {
+            attr_DU_mode = 2; // DADU
+            break;
+          }
+        }
+        if (!attr_DU_mode)
+          attrMeta.attr_default_value.clear(); 
+      }
+    }
     // In order to simplify specification of dist2 values, which are
     // depending on the scale of the coded point cloud, the following
     // adjust the dist2 values according to PQS.  The user need only
@@ -1770,8 +1841,20 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
 {
   std::string srcName{expandNum(params->uncompressedDataPath, frameNum)};
   PCCPointSet3 pointCloud;
+
+	int numBandsMinus1 = 3;
+	for (int i = 0; i < params->encoder.sps.attributeSets.size(); i++) {
+    auto tmp = params->encoder.sps.attributeSets[i];
+    if (tmp.attributeLabel.known_attribute_label
+      == KnownAttributeLabel::kSH_coefficients
+			&& tmp.params.sh_dc_coefficient_flag) {
+      numBandsMinus1 = tmp.params.num_sh_coefficient_degrees_minus1;
+		}
+	}
+  pointCloud.setNumSHCoeffsWithNumBandsMinus1(numBandsMinus1);
+
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
@@ -1796,28 +1879,31 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     pointCloud.removeReflectances();
   assert(codeReflectance == pointCloud.hasReflectances());
 
-  bool codeGSInfo = GSHelper::getGSKeysSize() > 0;
-  if (!codeGSInfo)
-    pointCloud.removeGSInfo();
-  assert(codeGSInfo == pointCloud.hasGSInfo());
+  bool codeOpacity = params->encoder.attributeIdxMap.count("opacity");
+  if (!codeOpacity)
+	  pointCloud.removeOpacities();
+  assert(codeOpacity == pointCloud.hasOpacities());
+
+  bool codeRotation = params->encoder.attributeIdxMap.count("rotationXYZ");
+  if (!codeRotation) {
+	  pointCloud.removeRotations();
+  }
+  assert(codeRotation == pointCloud.hasRotations());
+
+  bool codeScale = params->encoder.attributeIdxMap.count("scale");
+  if (!codeScale)
+	  pointCloud.removeScales();
+  assert(codeScale == pointCloud.hasScales());
+
+  bool codeSHCoefficient = params->encoder.attributeIdxMap.count("SHCoefficient0");
+  if (!codeSHCoefficient)
+	  pointCloud.removeSHCoefficients();
+  assert(codeSHCoefficient == pointCloud.hasSHCoefficients());
 
   clock->start();
 
   if (params->convertColourspace)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
-
-  //Fix: replace by parameter likes dynamicAttrRange
-  if (codeGSInfo)
-  {
-    for(auto& desc : params->encoder.sps.attributeSets){
-      auto key = GSHelper::getGSKey(desc.attr_instance_id);
-      auto& gsinfo = pointCloud.getGSInfo(key);
-      gs_t min = *std::min_element(gsinfo.begin(),gsinfo.end());
-      desc.params.scalingParametersPresent = false;
-      desc.params.attr_offset = 0;
-    }
-  }
-
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
 
   // The reconstructed point cloud
@@ -1986,7 +2072,7 @@ SequenceCodec::writeOutputFrame(
   // Dump the decoded colour using the pre inverse scaled geometry
   if (!preInvScalePath.empty()) {
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly);
+    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
@@ -1994,7 +2080,7 @@ SequenceCodec::writeOutputFrame(
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
         cloud, attrNames, plyScale, plyOrigin, decName,
-        !params->outputBinaryPly)) {
+        !params->outputBinaryPly, frame.attrDesc)) {
     cout << "Error: can't open output file!" << endl;
   }
 }
@@ -2136,36 +2222,9 @@ scaleAttributes(
 
   const auto pointCount = cloud.getPointCount();
   for (size_t i = 0; i < pointCount; ++i) {
-    auto& val = cloud.getReflectance(i);
+    auto& val = cloud.getReflectance(i); //todo: extend to other attributes
     val = scaler(params, val);
   }
-}
-
-//----------------------------------------------------------------------------
-
-template<typename Op>
-void
-scaleEachAttributes(
-  const std::vector<AttributeDescription>& attrDescs,
-  PCCPointSet3& cloud,
-  Op scaler)
-{
-  // todo(df): extend this to other attributes
-  const AttributeDescription* attrDesc = findReflAttrDesc(attrDescs);
-  if (!attrDesc || !attrDesc->params.scalingParametersPresent)
-    return;
-
-  const auto pointCount = cloud.getPointCount();
-  for(auto& desc : attrDescs){
-    if(!desc.is3DGS) continue;
-
-    auto key = GSHelper::getGSKey(desc.attr_instance_id);
-    for (size_t i = 0; i < pointCount; ++i) {
-      auto& val = cloud.getGSInfo(i,key);
-      val = scaler(desc.params, val);
-    }
-  }
-
 }
 
 //----------------------------------------------------------------------------
