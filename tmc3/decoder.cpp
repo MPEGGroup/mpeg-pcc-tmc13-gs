@@ -373,7 +373,7 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
       hasRotation |= true;
     else if (attrSet.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
       hasSHCoefficient |= true;						
-      assert(attrSet.params.num_sh_coefficient_bands_minus1 >= 0);
+      assert(attrSet.params.num_sh_coefficient_degrees_minus1 >= 0);
       int numSHBandsMinus1 = attrSet.params.num_sh_coefficient_degrees_minus1;
       _currentPointCloud.setNumSHCoeffsWithNumBandsMinus1(numSHBandsMinus1);
 		}
