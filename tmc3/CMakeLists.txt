@@ -174,8 +174,10 @@ add_dependencies(tmc3 genversion)
 
 add_executable (ply-merge EXCLUDE_FROM_ALL
   "../tools/ply-merge.cpp"
+  "FixedPoint.cpp"
   "misc.cpp"
   "ply.cpp"
+  "gstable.cpp"
   "../dependencies/program-options-lite/program_options_lite.cpp"
   ${VERSION_FILE}
 )

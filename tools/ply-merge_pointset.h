@@ -1,0 +1,838 @@
+/* The copyright in this software is being made available under the BSD
+ * Licence, included below.  This software may be subject to other third
+ * party and contributor rights, including patent rights, and no such
+ * rights are granted under this licence.
+ *
+ * Copyright (c) 2017-2018, ISO/IEC
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright
+ *   notice, this list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright
+ *   notice, this list of conditions and the following disclaimer in the
+ *   documentation and/or other materials provided with the distribution.
+ *
+ * * Neither the name of the ISO/IEC nor the names of its contributors
+ *   may be used to endorse or promote products derived from this
+ *   software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#ifndef PCCPointSet_h
+#define PCCPointSet_h
+
+#include <assert.h>
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <iterator>
+#include <string>
+#include <vector>
+#include <unordered_map>
+
+#include "PCCMath.h"
+#include "PCCMisc.h"
+
+#include "gstable.h"
+
+namespace pcc {
+
+//============================================================================
+typedef uint16_t attr_t; //for regular point cloud attributes
+typedef float gs_attr_t; //for GS attributes
+typedef Vec3<gs_attr_t> point_t;
+
+//============================================================================
+
+class PCCPointSet3 {
+public:
+  typedef point_t PointType;
+
+  //=========================================================================
+  // proxy object for use with iterator, allowing handling of PCCPointSet3's
+  // structure-of-arrays as a single array.
+
+  class iterator;
+  class Proxy {
+    friend class iterator;
+
+    PCCPointSet3* parent_;
+    size_t idx_;
+
+  public:
+    //-----------------------------------------------------------------------
+
+    Proxy() : parent_(nullptr), idx_() {}
+
+    Proxy(PCCPointSet3* parent, size_t idx) : parent_(parent), idx_(idx) {}
+
+    //-----------------------------------------------------------------------
+
+    PointType operator*() const { return (*parent_)[idx_]; }
+
+    PointType& operator*() { return (*parent_)[idx_]; }
+
+    //-----------------------------------------------------------------------
+    // Swap the position of the current proxied point (including attributes)
+    // with that of @other in the same PointSet.
+
+    void swap(const Proxy& other) const
+    {
+      assert(parent_ == other.parent_);
+      parent_->swapPoints(idx_, other.idx_);
+    }
+
+    //-----------------------------------------------------------------------
+  };
+
+  //=========================================================================
+  // iterator for use with stl algorithms
+
+  class iterator {
+  private:
+    Proxy p_;
+
+  public:
+    typedef std::random_access_iterator_tag iterator_category;
+    typedef const Proxy value_type;
+    typedef std::ptrdiff_t difference_type;
+    typedef const Proxy* pointer;
+    typedef const Proxy& reference;
+
+    //-----------------------------------------------------------------------
+
+    iterator() = default;
+    iterator(const iterator&) = default;
+
+    //-----------------------------------------------------------------------
+
+    explicit iterator(PCCPointSet3* parent) : p_{parent, 0} {}
+
+    explicit iterator(PCCPointSet3* parent, size_t idx) : p_{parent, idx} {}
+
+    //-----------------------------------------------------------------------
+    // :: Iterator
+
+    reference operator*() const { return p_; }
+
+    //-----------------------------------------------------------------------
+
+    iterator& operator++()
+    {
+      p_.idx_++;
+      return *this;
+    }
+
+    //-----------------------------------------------------------------------
+    // :: ForwardIterator
+
+    iterator operator++(int)
+    {
+      iterator retval = *this;
+      ++(*this);
+      return retval;
+    }
+
+    //-----------------------------------------------------------------------
+
+    pointer operator->() const { return &p_; }
+
+    //-----------------------------------------------------------------------
+
+    bool operator==(const iterator& other) const
+    {
+      return p_.idx_ == other.p_.idx_;
+    }
+
+    //-----------------------------------------------------------------------
+
+    bool operator!=(const iterator& other) const { return !(*this == other); }
+
+    //-----------------------------------------------------------------------
+    // :: BidirectionalIterator
+
+    iterator& operator--()
+    {
+      p_.idx_--;
+      return *this;
+    }
+
+    //-----------------------------------------------------------------------
+
+    iterator operator--(int)
+    {
+      iterator retval = *this;
+      --(*this);
+      return retval;
+    }
+
+    //-----------------------------------------------------------------------
+    // :: RandomAccessIterator
+
+    value_type operator[](difference_type n)
+    {
+      return Proxy{p_.parent_, p_.idx_ + n};
+    }
+
+    //-----------------------------------------------------------------------
+
+    iterator& operator+=(difference_type n)
+    {
+      p_.idx_ += n;
+      return *this;
+    }
+
+    //-----------------------------------------------------------------------
+
+    iterator operator+(difference_type n) const
+    {
+      iterator it(*this);
+      it += n;
+      return it;
+    }
+
+    //-----------------------------------------------------------------------
+
+    iterator& operator-=(difference_type n)
+    {
+      p_.idx_ -= n;
+      return *this;
+    }
+
+    //-----------------------------------------------------------------------
+
+    iterator operator-(difference_type n) const
+    {
+      iterator it(*this);
+      it -= n;
+      return it;
+    }
+
+    //-----------------------------------------------------------------------
+
+    difference_type operator-(const iterator& other) const
+    {
+      return p_.idx_ - other.p_.idx_;
+    }
+
+    //-----------------------------------------------------------------------
+  };
+
+  //=========================================================================
+
+  PCCPointSet3()
+  {
+    withColors = false;
+    withReflectances = false;
+    withFrameIndex = false;
+    withOpacities = false;
+    withScales = false;
+    withRotations = false;
+    withSHCoefficients = false;
+  }
+  PCCPointSet3(const PCCPointSet3&) = default;
+  PCCPointSet3& operator=(const PCCPointSet3& rhs) = default;
+  ~PCCPointSet3() = default;
+
+  void swap(PCCPointSet3& other)
+  {
+    using std::swap;
+    swap(positions, other.positions);
+    swap(colors, other.colors);
+    swap(reflectances, other.reflectances);
+    swap(frameidx, other.frameidx);
+    swap(opacities, other.opacities);
+    swap(scales, other.scales);
+    swap(rotations_vec, other.rotations_vec);
+    swap(rotations_scalar, other.rotations_scalar);
+    swap(sh_coefficients, other.sh_coefficients);
+
+    swap(withColors, other.withColors);
+    swap(withReflectances, other.withReflectances);
+    swap(withFrameIndex, other.withFrameIndex);
+    swap(withOpacities, other.withOpacities);
+    swap(withScales, other.withScales);
+    swap(withRotations, other.withRotations);
+    swap(withSHCoefficients, other.withSHCoefficients);
+  }
+
+  PointType operator[](const size_t index) const
+  {
+    assert(index < positions.size());
+    return positions[index];
+  }
+  PointType& operator[](const size_t index)
+  {
+    assert(index < positions.size());
+    return positions[index];
+  }
+
+  void swapPoints(std::vector<PointType>& other) { positions.swap(other); }
+
+  Vec3<attr_t> getColor(const size_t index) const
+  {
+    assert(index < colors.size() && withColors);
+    return colors[index];
+  }
+  Vec3<attr_t>& getColor(const size_t index)
+  {
+    assert(index < colors.size() && withColors);
+    return colors[index];
+  }
+  std::vector<Vec3<attr_t>>& getColor() { return colors; }
+  void setColor(const size_t index, const Vec3<attr_t> color)
+  {
+    assert(index < colors.size() && withColors);
+    colors[index] = color;
+  }
+  attr_t getReflectance(const size_t index) const
+  {
+    assert(index < reflectances.size() && withReflectances);
+    return reflectances[index];
+  }
+  attr_t& getReflectance(const size_t index)
+  {
+    assert(index < reflectances.size() && withReflectances);
+    return reflectances[index];
+  }
+  std::vector<attr_t>& getReflectance() { return reflectances; }
+  void setReflectance(const size_t index, const attr_t reflectance)
+  {
+    assert(index < reflectances.size() && withReflectances);
+    reflectances[index] = reflectance;
+  }
+
+  bool hasReflectances() const { return withReflectances; }
+  void addReflectances()
+  {
+    withReflectances = true;
+    resize(getPointCount());
+  }
+  void removeReflectances()
+  {
+    withReflectances = false;
+    reflectances.resize(0);
+  }
+
+  gs_attr_t getOpacity(const size_t index) const
+  {
+    assert(index < opacities.size() && withOpacities);
+    return opacities[index];
+  }
+  gs_attr_t& getOpacity(const size_t index)
+  {
+    assert(index < opacities.size() && withOpacities);
+    return opacities[index];
+  }
+  std::vector<gs_attr_t>& getOpacity() { return opacities; }
+  void setOpacity(const size_t index, const gs_attr_t opacity)
+  {
+    assert(index < opacities.size() && withOpacities);
+    opacities[index] = opacity;
+  }
+  bool hasOpacities() const { return withOpacities; }
+  void addOpacities()
+  {
+    withOpacities = true;
+    resize(getPointCount());
+  }
+  void removeOpacities()
+  {
+    withOpacities = false;
+    opacities.resize(0);
+  }
+
+  Vec3<gs_attr_t> getScale(const size_t index) const
+  {
+    assert(index < scales.size() && withScales);
+    return scales[index];
+  }
+  Vec3<gs_attr_t>& getScale(const size_t index)
+  {
+    assert(index < scales.size() && withScales);
+    return scales[index];
+  }
+  std::vector<Vec3<gs_attr_t>>& getScale() { return scales; }
+  void setScale(const size_t index, const Vec3<gs_attr_t> scale)
+  {
+    assert(index < scales.size() && withScales);
+    scales[index] = scale;
+  }
+  bool hasScales() const { return withScales; }
+  void addScales()
+  {
+    withScales = true;
+    resize(getPointCount());
+  }
+  void removeScales()
+  {
+    withScales = false;
+    scales.resize(0);
+  }
+
+  Vec3<gs_attr_t> getRotationVec(const size_t index) const
+  {
+    assert(index < rotations_vec.size() && withRotations);
+    return rotations_vec[index];
+  }
+  Vec3<gs_attr_t>& getRotationVec(const size_t index)
+  {
+    assert(index < rotations_vec.size() && withRotations);
+    return rotations_vec[index];
+  }
+  std::vector<Vec3<gs_attr_t>>& getRotationVec() { return rotations_vec; }
+  void setRotationVec(const size_t index, const Vec3<gs_attr_t>& val)
+  {
+    assert(index < rotations_vec.size() && withRotations);
+    rotations_vec[index] = val;
+  }
+
+  gs_attr_t getRotationScalar(const size_t index) const
+  {
+    assert(index < rotations_scalar.size() && withRotations);
+    return rotations_scalar[index];
+  }
+  gs_attr_t& getRotationScalar(const size_t index)
+  {
+    assert(index < rotations_scalar.size() && withRotations);
+    return rotations_scalar[index];
+  }
+  std::vector<gs_attr_t>& getRotationScalar() { return rotations_scalar; }
+  void setRotationScalar(const size_t index, const gs_attr_t val)
+  {
+    assert(index < rotations_scalar.size() && withRotations);
+    rotations_scalar[index] = val;
+  }
+  bool hasRotations() const { return withRotations; }
+  void addRotations()
+  {
+    withRotations = true;
+    resize(getPointCount());
+  }
+  void removeRotations()
+  {
+    withRotations = false;
+    rotations_vec.resize(0);
+    rotations_scalar.resize(0);
+  }
+
+  Vec3<gs_attr_t>
+  getSHCoefficient(const size_t SH_index, const size_t index) const
+  {
+    assert(
+      SH_index < sh_coefficients.size()
+      && index < sh_coefficients[SH_index].size() && withSHCoefficients);
+    return sh_coefficients[SH_index][index];
+  }
+  Vec3<gs_attr_t>& getSHCoefficient(const size_t SH_index, const size_t index)
+  {
+    assert(
+      SH_index < sh_coefficients.size()
+      && index < sh_coefficients[SH_index].size() && withSHCoefficients);
+    return sh_coefficients[SH_index][index];
+  }
+  std::vector<Vec3<gs_attr_t>>& getSHCoefficient(const size_t SH_index)
+  {
+    return sh_coefficients[SH_index];
+  }
+  void setSHCoefficient(
+    const size_t SH_index,
+    const size_t index,
+    const Vec3<gs_attr_t> sh_coefficient)
+  {
+    assert(
+      SH_index < sh_coefficients.size()
+      && index < sh_coefficients[SH_index].size() && withSHCoefficients);
+    sh_coefficients[SH_index][index] = sh_coefficient;
+  }
+  bool hasSHCoefficients() const { return withSHCoefficients; }
+  void addSHCoefficients()
+  {
+    withSHCoefficients = true;
+    resize(getPointCount());
+  }
+  void removeSHCoefficients()
+  {
+    withSHCoefficients = false;
+    for (int i = 0; i < sh_coefficients.size(); i++)
+      sh_coefficients[i].resize(0);
+    sh_coefficients.resize(0);
+  }
+
+  void setNumSHCoeffs(int src_NumSHCoeffs)
+  {
+    numSHCoeffs = src_NumSHCoeffs;
+  }
+
+	void setNumSHCoeffsWithNumBandsMinus1(int numSHCoeffBandsMinus1)
+  {
+    numSHCoeffs = 0;
+    for (int i = 0; i <= numSHCoeffBandsMinus1; i++)
+      numSHCoeffs += (2 * i + 1);  // 1 + 3 + 5 + 7
+  }
+
+  int getNumSHCoeffs() const { return numSHCoeffs; }
+
+  uint8_t getFrameIndex(const size_t index) const
+  {
+    assert(index < frameidx.size() && withFrameIndex);
+    return frameidx[index];
+  }
+
+  uint8_t& getFrameIndex(const size_t index)
+  {
+    assert(index < frameidx.size() && withFrameIndex);
+    return frameidx[index];
+  }
+
+  void setFrameIndex(const size_t index, const uint8_t frameindex)
+  {
+    assert(index < frameidx.size() && withFrameIndex);
+    frameidx[index] = frameindex;
+  }
+
+  bool hasFrameIndex() const { return withFrameIndex; }
+  void addFrameIndex()
+  {
+    withFrameIndex = true;
+    resize(getPointCount());
+  }
+  void removeFrameIndex()
+  {
+    withFrameIndex = false;
+    frameidx.resize(0);
+  }
+
+  bool hasColors() const { return withColors; }
+  void addColors()
+  {
+    withColors = true;
+    resize(getPointCount());
+  }
+  void removeColors()
+  {
+    withColors = false;
+    colors.resize(0);
+  }
+
+  void addRemoveAttributes(
+    bool withColors,
+    bool withReflectances,
+    bool withOpacities = false,
+    bool withScales = false,
+    bool withRotations = false,
+    bool withSHCoefficients = false)
+  {
+    if (withColors)
+      addColors();
+    else
+      removeColors();
+
+    if (withReflectances)
+      addReflectances();
+    else
+      removeReflectances();
+
+    if (withOpacities)
+      addOpacities();
+    else
+      removeOpacities();
+
+    if (withScales)
+      addScales();
+    else
+      removeScales();
+
+    if (withRotations)
+      addRotations();
+    else
+      removeRotations();
+
+    if (withSHCoefficients)
+      addSHCoefficients();
+    else
+      removeSHCoefficients();
+  }
+
+  size_t getPointCount() const { return positions.size(); }
+  void resize(const size_t size)
+  {
+    positions.resize(size);
+    if (hasColors()) {
+      colors.resize(size);
+    }
+    if (hasReflectances()) {
+      reflectances.resize(size);
+    }
+    if (hasFrameIndex()) {
+      frameidx.resize(size);
+    }
+    if (hasOpacities())
+      opacities.resize(size);
+    if (hasScales())
+      scales.resize(size);
+    if (hasRotations()) {
+      rotations_vec.resize(size);
+      rotations_scalar.resize(size);
+		}
+    if (hasSHCoefficients()) {
+      sh_coefficients.resize(numSHCoeffs);
+      for (int i = 0; i < numSHCoeffs; i++)
+        sh_coefficients[i].resize(size);
+    }
+  }
+
+  void reserve(const size_t size)
+  {
+    positions.reserve(size);
+    if (hasColors()) {
+      colors.reserve(size);
+    }
+    if (hasReflectances()) {
+      reflectances.reserve(size);
+    }
+    if (hasFrameIndex()) {
+      frameidx.reserve(size);
+    }
+    if (hasOpacities())
+      opacities.reserve(size);
+    if (hasScales())
+      scales.reserve(size);
+    if (hasRotations()) {
+      rotations_vec.reserve(size);
+      rotations_scalar.reserve(size);
+		}
+    if (hasSHCoefficients()) {
+      sh_coefficients.resize(numSHCoeffs);
+      for (int i = 0; i < numSHCoeffs; i++)
+        sh_coefficients[i].reserve(size);
+    }
+  }
+  void clear()
+  {
+    positions.clear();
+    colors.clear();
+    reflectances.clear();
+    frameidx.clear();
+
+    opacities.clear();
+    scales.clear();
+    rotations_vec.clear();
+    rotations_scalar.clear();
+    for (int i = 0; i < sh_coefficients.size(); i++)
+      sh_coefficients[i].clear();
+    sh_coefficients.clear();
+  }
+
+  size_t removeDuplicatePointInQuantizedPoint(int minGeomNodeSizeLog2)
+  {
+    for (int i = 0; i < positions.size(); i++) {
+      PointType newPoint = positions[i];
+      if (minGeomNodeSizeLog2 > 0) {
+        uint32_t mask = ((uint32_t)-1) << minGeomNodeSizeLog2;
+        positions[i].x() = ((int32_t)(positions[i].x()) & mask);
+        positions[i].y() = ((int32_t)(positions[i].y()) & mask);
+        positions[i].z() = ((int32_t)(positions[i].z()) & mask);
+      }
+    }
+    positions.erase(
+      std::unique(positions.begin(), positions.end()), positions.end());
+
+    return positions.size();
+  }
+
+  void append(const PCCPointSet3& src)
+  {
+    if (!getPointCount()) {
+      if (src.hasSHCoefficients())
+        setNumSHCoeffs(src.getNumSHCoeffs());
+      addRemoveAttributes(
+        src.hasColors(), src.hasReflectances(), src.hasOpacities(),
+        src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+    }
+
+    int dstEnd = positions.size();
+    int srcSize = src.positions.size();
+    resize(dstEnd + srcSize);
+
+    std::copy(
+      src.positions.begin(), src.positions.end(),
+      std::next(positions.begin(), dstEnd));
+
+    if (hasColors() && src.hasColors())
+      std::copy(
+        src.colors.begin(), src.colors.end(),
+        std::next(colors.begin(), dstEnd));
+
+    if (hasReflectances() && src.hasReflectances())
+      std::copy(
+        src.reflectances.begin(), src.reflectances.end(),
+        std::next(reflectances.begin(), dstEnd));
+
+    if (hasOpacities() && src.hasOpacities())
+      std::copy(
+        src.opacities.begin(), src.opacities.end(),
+        std::next(opacities.begin(), dstEnd));
+
+    if (hasScales() && src.hasScales())
+      std::copy(
+        src.scales.begin(), src.scales.end(),
+        std::next(scales.begin(), dstEnd));
+
+    if (hasRotations() && src.hasRotations()) {
+      std::copy(
+        src.rotations_vec.begin(), src.rotations_vec.end(),
+        std::next(rotations_vec.begin(), dstEnd));
+      std::copy(
+        src.rotations_scalar.begin(), src.rotations_scalar.end(),
+        std::next(rotations_scalar.begin(), dstEnd));
+    }
+
+    if (hasSHCoefficients() && src.hasSHCoefficients()) {
+      for (int i = 0; i < sh_coefficients.size(); i++) {
+        std::copy(
+          src.sh_coefficients[i].begin(), src.sh_coefficients[i].end(),
+          std::next(sh_coefficients[i].begin(), dstEnd));
+      }
+    }
+  }
+
+  void swapPoints(const size_t index1, const size_t index2)
+  {
+    assert(index1 < getPointCount());
+    assert(index2 < getPointCount());
+    std::swap((*this)[index1], (*this)[index2]);
+    if (hasColors()) {
+      std::swap(getColor(index1), getColor(index2));
+    }
+    if (hasReflectances()) {
+      std::swap(getReflectance(index1), getReflectance(index2));
+    }
+    if (hasOpacities()) {
+      std::swap(getOpacity(index1), getOpacity(index2));
+    }
+    if (hasScales()) {
+      std::swap(getScale(index1), getScale(index2));
+    }
+    if (hasRotations()) {
+      std::swap(getRotationVec(index1), getRotationVec(index2));
+      std::swap(getRotationScalar(index1), getRotationScalar(index2));
+    }
+    if (hasSHCoefficients()) {
+      for (int i = 0; i < sh_coefficients.size(); i++)
+        std::swap(getSHCoefficient(i, index1), getSHCoefficient(i, index2));
+    }
+  }
+
+  Box3<int32_t> computeBoundingBox() const
+  {
+    Box3<int32_t> bbox(
+      std::numeric_limits<int32_t>::max(),
+      std::numeric_limits<int32_t>::lowest());
+    const size_t pointCount = getPointCount();
+    for (size_t i = 0; i < pointCount; ++i) {
+      const auto& pt = (*this)[i];
+      for (int k = 0; k < 3; ++k) {
+        if (pt[k] > bbox.max[k]) {
+          bbox.max[k] = pt[k];
+        }
+        if (pt[k] < bbox.min[k]) {
+          bbox.min[k] = pt[k];
+        }
+      }
+    }
+    return bbox;
+  }
+
+  //--------------------------------------------------------------------------
+  // Determine the bounding box of the set of points given by the indicies
+  // given by iterating over [begin, end)
+
+  template<typename ForwardIt>
+  Box3<int32_t> computeBoundingBox(ForwardIt begin, ForwardIt end) const
+  {
+    Box3<int32_t> bbox(
+      std::numeric_limits<int32_t>::max(),
+      std::numeric_limits<int32_t>::lowest());
+
+    for (auto it = begin; it != end; ++it) {
+      int i = *it;
+      const auto& pt = (*this)[i];
+      for (int k = 0; k < 3; ++k) {
+        if (pt[k] > bbox.max[k]) {
+          bbox.max[k] = pt[k];
+        }
+        if (pt[k] < bbox.min[k]) {
+          bbox.min[k] = pt[k];
+        }
+      }
+    }
+    return bbox;
+  }
+
+  //--------------------------------------------------------------------------
+
+private:
+  std::vector<PointType> positions;
+  std::vector<Vec3<attr_t>> colors;
+  std::vector<attr_t> reflectances;
+  std::vector<uint8_t> frameidx;
+  bool withColors;
+  bool withReflectances;
+  bool withFrameIndex;
+
+  std::vector<gs_attr_t> opacities;
+  std::vector<Vec3<gs_attr_t>> scales;
+  std::vector<Vec3<gs_attr_t>> rotations_vec;		// Quaternion (xyz) 
+  std::vector<gs_attr_t> rotations_scalar;				// Quaternion (w) 
+  std::vector<std::vector<Vec3<gs_attr_t>>> sh_coefficients;
+  int numSHCoeffs = -1;
+
+  bool withOpacities;
+  bool withScales;
+  bool withRotations;
+  bool withSHCoefficients;
+};
+
+//===========================================================================
+// Swap the position of two points (including attributes) in the PointSet
+// as referenced by the proxies a and b.
+
+inline void
+swap(const PCCPointSet3::Proxy& a, const PCCPointSet3::Proxy& b)
+{
+  a.swap(b);
+}
+
+//---------------------------------------------------------------------------
+// Swap two point clouds
+
+inline void
+swap(PCCPointSet3& a, PCCPointSet3& b)
+{
+  a.swap(b);
+}
+
+//---------------------------------------------------------------------------
+
+} /* namespace pcc */
+
+#endif /* PCCPointSet_h */

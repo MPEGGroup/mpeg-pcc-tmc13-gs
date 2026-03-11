@@ -37,8 +37,8 @@
 #include <exception>
 
 #include "PCCMisc.h"
-#include "PCCPointSet.h"
-#include "ply.h"
+#include "ply-merge_pointset.h"
+#include "ply-merge_readwrite.h"
 #include "program_options_lite.h"
 #include "version.h"
 
@@ -219,7 +219,7 @@ parseParameters(int argc, char* argv[], Options& params)
 void
 runMerge(const Options& opts)
 {
-  ply::PropertyNameMap propNames;
+  PropertyNameMap propNames;
   propNames.position = {"x", "y", "z"};
 
   // iterate over all input frames in groups
@@ -235,8 +235,9 @@ runMerge(const Options& opts)
 
       srcClouds.emplace_back();
       auto& srcCloud = srcClouds.back();
+      srcCloud.setNumSHCoeffsWithNumBandsMinus1(3);
       if (
-        !ply::read(srcName, propNames, srcCloud)
+        !read(srcName, propNames, 1.0, srcCloud)
         || srcCloud.getPointCount() == 0) {
         throw runtime_error("failed to read input file: " + srcName);
       }
@@ -249,11 +250,20 @@ runMerge(const Options& opts)
     // merge sources, setting the frameIndex of each point in the merged
     // cloud to the group index of the corresponding source frame.
     PCCPointSet3 outCloud;
+    outCloud.setNumSHCoeffsWithNumBandsMinus1(3);
     outCloud.addFrameIndex();
     if (srcClouds[0].hasColors())
       outCloud.addColors();
     if (srcClouds[0].hasReflectances())
       outCloud.addReflectances();
+    if (srcClouds[0].hasSHCoefficients())
+      outCloud.addSHCoefficients();
+    if (srcClouds[0].hasOpacities())
+      outCloud.addOpacities();
+    if (srcClouds[0].hasScales())
+      outCloud.addScales();
+    if (srcClouds[0].hasRotations())
+      outCloud.addRotations();
     outCloud.resize(totalPoints);
 
     int outPtIdx = 0;
@@ -269,11 +279,26 @@ runMerge(const Options& opts)
 
         if (cloud.hasReflectances())
           outCloud.setReflectance(outPtIdx, cloud.getReflectance(ptIdx));
+        
+        if (cloud.hasSHCoefficients())
+        	for (int k = 0; k < cloud.getNumSHCoeffs(); k++)
+            outCloud.setSHCoefficient(k, outPtIdx, cloud.getSHCoefficient(k, ptIdx));
+        
+        if (cloud.hasOpacities())
+          outCloud.setOpacity(outPtIdx, cloud.getOpacity(ptIdx));
+        
+        if (cloud.hasScales())
+          outCloud.setScale(outPtIdx, cloud.getScale(ptIdx));
+        
+        if (cloud.hasRotations()) {
+          outCloud.setRotationScalar(outPtIdx, cloud.getRotationScalar(ptIdx));
+          outCloud.setRotationVec(outPtIdx, cloud.getRotationVec(ptIdx));
+        }
       }
     }
 
     string outName{expandNum(opts.outPath, outFrameNum)};
-    if (!ply::write(outCloud, propNames, 1, 0, outName, !opts.outputBinaryPly))
+    if (!write(outCloud, propNames, 1, 0, outName, !opts.outputBinaryPly))
       throw runtime_error("failed to write output file: " + outName);
     cout << outName << endl;
   }
@@ -286,7 +311,7 @@ runMerge(const Options& opts)
 void
 runSplit(const Options& opts)
 {
-  ply::PropertyNameMap propNames;
+  PropertyNameMap propNames;
   propNames.position = {"x", "y", "z"};
 
   int outFrameNum = opts.firstOutputFrameNum;
@@ -296,8 +321,9 @@ runSplit(const Options& opts)
     string srcName{expandNum(opts.srcPath, srcFrameNum)};
 
     PCCPointSet3 srcCloud;
+    srcCloud.setNumSHCoeffsWithNumBandsMinus1(3);
     if (
-      !ply::read(srcName, propNames, srcCloud)
+      !read(srcName, propNames, 1.0, srcCloud)
       || srcCloud.getPointCount() == 0) {
       throw runtime_error("failed to read input file: " + srcName);
     }
@@ -311,10 +337,19 @@ runSplit(const Options& opts)
     int frameIdx = 0;
     do {
       PCCPointSet3 outCloud;
+      outCloud.setNumSHCoeffsWithNumBandsMinus1(3);
       if (srcCloud.hasColors())
         outCloud.addColors();
       if (srcCloud.hasReflectances())
         outCloud.addReflectances();
+      if (srcCloud.hasSHCoefficients())
+        outCloud.addSHCoefficients();
+      if (srcCloud.hasOpacities())
+        outCloud.addOpacities();
+      if (srcCloud.hasScales())
+        outCloud.addScales();
+      if (srcCloud.hasRotations())
+        outCloud.addRotations();
       outCloud.resize(srcCloud.getPointCount());
 
       int nextFrameIdx = INT_MAX;
@@ -335,13 +370,28 @@ runSplit(const Options& opts)
         if (srcCloud.hasReflectances())
           outCloud.setReflectance(outPtIdx, srcCloud.getReflectance(ptIdx));
 
+        if (srcCloud.hasSHCoefficients())
+        	for (int k = 0; k < srcCloud.getNumSHCoeffs(); k++)
+            outCloud.setSHCoefficient(k, outPtIdx, srcCloud.getSHCoefficient(k, ptIdx));
+        
+        if (srcCloud.hasOpacities())
+          outCloud.setOpacity(outPtIdx, srcCloud.getOpacity(ptIdx));
+        
+        if (srcCloud.hasScales())
+          outCloud.setScale(outPtIdx, srcCloud.getScale(ptIdx));
+        
+        if (srcCloud.hasRotations()) {
+          outCloud.setRotationScalar(outPtIdx, srcCloud.getRotationScalar(ptIdx));
+          outCloud.setRotationVec(outPtIdx, srcCloud.getRotationVec(ptIdx));
+        }
+
         outPtIdx++;
       }
       outCloud.resize(outPtIdx);
 
       string outName{expandNum(opts.outPath, outFrameNum)};
       if (outCloud.getPointCount() > 0)
-        if (!ply::write(
+        if (!write(
               outCloud, propNames, 1, 0, outName, !opts.outputBinaryPly))
           throw runtime_error("failed to write output file: " + outName);
       cout << outName << endl;
