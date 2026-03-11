@@ -247,7 +247,7 @@ for MODE in "${MODEs[@]}"; do
         if [ $FLAG_1F == 1 ]; then
         echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" -p \"$csv_file\" -x \"$OUT/metrics/1F_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
         else
-        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
+        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/NF_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
         fi
     done
 done
