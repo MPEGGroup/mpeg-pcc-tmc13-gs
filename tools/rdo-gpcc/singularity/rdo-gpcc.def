@@ -1,0 +1,56 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+%environment
+    export UV_INSTALL_DIR="/opt/uv/bin"
+    export UV_PYTHON_INSTALL_DIR="/opt/uv/share"
+    export PATH="$PATH:/opt/uv/bin:/opt/cmake/bin"
+
+%post
+    # (Optional) Setup mirror server to speed up apt update.
+    sed -i.bak -r 's@http://(jp\.)?archive\.ubuntu\.com/ubuntu/?@https://ftp.udx.icscoe.jp/Linux/ubuntu/@g' /etc/apt/sources.list
+
+    # Install packages.
+    export DEBIAN_FRONTEND=noninteractive
+    apt update
+    apt install -y --no-install-recommends --no-install-suggests \
+        curl wget clang git time \
+        libwayland-dev libxkbcommon-dev xorg-dev `# Required by GLFW`
+    apt clean
+    rm -rf /var/lib/apt/lists/*
+
+    # Install cmake.
+    CMAKE_VERSION=3.31.8
+    wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.sh
+    mkdir -p /opt/cmake
+    bash cmake-${CMAKE_VERSION}-linux-x86_64.sh --skip-license --prefix=/opt/cmake
+    export PATH="$PATH:/opt/cmake/bin"
+
+    # Install GLFW
+    cd /opt
+    git clone https://github.com/glfw/glfw.git
+    cd glfw
+    cmake -S . -B build
+    cd build
+    make
+
+    # Install GLM
+    cd /opt
+    git clone https://github.com/g-truc/glm.git
+    cd glm
+    cmake -S . -B build
+    cd build
+    make
+
+    # Install List::MoreUtils and YAML for gen-cfg.sh.
+    cpan List::MoreUtils
+    cpan YAML
+
+    # Install uv and python.
+    export PYTHON_VERSION=3.10
+    export UV_INSTALL_DIR="/opt/uv/bin"
+    export UV_PYTHON_INSTALL_DIR="/opt/uv/share"
+    export PATH="/opt/uv/bin:$PATH"
+    curl -LsSf https://astral.sh/uv/install.sh | env sh
+    uv python install ${PYTHON_VERSION}
+    ln -s /opt/uv/share/cpython-${PYTHON_VERSION}/bin/python${PYTHON_VERSION} /opt/uv/bin/

@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rdo-gpcc"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch==2.9.1",
+    "torchvision==0.24.1",
+    "gsplat==1.4.0",
+    "tqdm>=4.67.1",
+    "tyro>=0.9.19",
+    "plyfile>=1.1",
+    "imageio[ffmpeg]>=2.37.0",
+    "torchmetrics[image]>=1.7.1",
+    "opencv-python-headless>=4.11.0.86",
+    "pycolmap",
+    "numpy<2.0.0",
+    "tensorboard>=2.19.0",
+    "scikit-learn>=1.6.1",
+    "matplotlib>=3.10.1",
+    "pyyaml>=6.0.2",
+    "pandas>=2.2.3",
+    "pytest>=8.3.5",
+    "lpips==0.1.4",
+    "openpyxl==3.1.5",
+    "networkx>=3.4.2",
+]
+
+[project.optional-dependencies]
+compile = ["fused-ssim"]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+fused-ssim = { git = "https://github.com/rahul-goel/fused-ssim", rev = "1272e21a282342e89537159e4bad508b19b34157" }
+pycolmap = { path = "third_party/pycolmap", editable = true }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+
+[tool.uv]
+no-build-isolation-package = ["fused-ssim"]
+
+[[tool.uv.dependency-metadata]]
+name = "fused-ssim"
+version = "0.0.0"
+requires-dist = ["torch", "setuptools"]
+
+[tool.ruff]
+line-length = 120
+respect-gitignore = false
+lint.select = [
+    "E",  # pycodestyle errors.
+    "F",  # Pyflakes rules.
+    "I",  # isort formatting.
+    "PLC",  # Pylint convention warnings.
+    "PLE",  # Pylint errors.
+    "PLR",  # Pylint refactor recommendations.
+    "PLW",  # Pylint warnings.
+    "NPY201" # NumPY 2.0 migration https://numpy.org/devdocs/numpy_2_0_migration_guide.html#ruff-plugin
+]
+lint.ignore = [
+    "E501",  # Line too long.
+    "F722",  # Forward annotation false positive from jaxtyping. Should be caught by pyright.
+    "F821",  # Forward annotation false positive from jaxtyping. Should be caught by pyright.
+    "PLR2004",  # Magic value used in comparison.
+    "PLR0915",  # Too many statements.
+    "PLR0913",  # Too many arguments.
+    "PLC0414",  # Import alias does not rename variable. (this is used for exporting names)
+    "PLC1901",  # Use falsey strings.
+    "PLR5501",  # Use `elif` instead of `else if`.
+    "PLR0911",  # Too many return statements.
+    "PLR0912",  # Too many branches.
+    "PLW0603",  # Globa statement updates are discouraged.
+    "PLW2901",  # For loop variable overwritten.
+    "PLR1730",  # Replace if statement with min/max
+    "PLC0206",  # Extracting value from dictionary without calling `.items()`
+]

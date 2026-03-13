@@ -1,0 +1,1 @@
+# Files are copied from https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/ce/mpeg-pcc-tmc13/-/tree/mpeg147/mtg/m68773_3dgs_support_on_v12.10/sample_files/JEE6.2?ref_type=heads
