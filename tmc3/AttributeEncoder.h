@@ -37,7 +37,7 @@
 
 #include <stdint.h>
 #include <vector>
-
+#include <map>
 #include "Attribute.h"
 #include "AttributeCommon.h"
 #include "PayloadBuffer.h"
@@ -64,7 +64,17 @@ public:
     AttributeBrickHeader& abh,
     AttributeContexts& ctxtMem,
     PCCPointSet3& pointCloud,
-    PayloadBuffer* payload) override;
+    PayloadBuffer* payload,
+    std::unordered_map<int, std::vector<int>> *bufferRahtCoefficients) override;
+
+  void encodeMultiAttributeRAHT(
+    const SequenceParameterSet& sps,
+    std::vector<AttributeParameterSet*> attr_aps,
+    PCCPointSet3& pointCloud,
+    std::map<std::string, int> attributeIdxMap,
+    int rahtMaxAttributeGroupNum,
+    std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients)
+    override;
 
   bool isReusable(
     const AttributeParameterSet& aps,
@@ -72,7 +82,6 @@ public:
 
 protected:
   // todo(df): consider alternative encapsulation
-
   void encodeReflectancesLift(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
@@ -113,7 +122,8 @@ protected:
     const AttributeParameterSet& aps,
     const QpSet& qpSet,
     PCCPointSet3& pointCloud,
-    PCCResidualsEncoder& encoder);
+    PCCResidualsEncoder& encoder,
+    std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients);
 
   static Vec3<int64_t> computeColorResiduals(
     const AttributeParameterSet& aps,

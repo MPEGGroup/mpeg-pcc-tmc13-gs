@@ -299,10 +299,13 @@ void
 intraDcPred(
   int numAttrs,
   const int neighIdx[19],
-  int occupancy,
+  int Occupancy,
   It first,
   FixedPoint predBuf[][8])
 {
+  static uint8_t div3_lookup[27] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4,
+                                    4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8};
+
   static const uint8_t predMasks[19] = {255, 15, 240, 51, 204, 85,  170,
                                         3,   12, 5,   10, 48,  192, 80,
                                         160, 17, 34,  68, 136};
@@ -315,53 +318,60 @@ intraDcPred(
                                     1820, 1725, 1638, 1560, 1489, 1425, 1365,
                                     1311, 1260, 1214, 1170};
 
-  int weightSum[8] = {-4, -4, -4, -4, -4, -4, -4, -4};
-
   std::fill_n(&predBuf[0][0], 8 * numAttrs, FixedPoint(0));
+  int attr_num = div3_lookup[numAttrs-1] + 1;
 
-  int64_t neighValue[3];
-  int64_t limitLow = 0;
-  int64_t limitHigh = 0;
-  for (int i = 0; i < 19; i++) {
-    if (neighIdx[i] == -1)
-      continue;
+  for (int attr_i = 0; attr_i < attr_num; attr_i++) {
+    int occupancy = Occupancy;
+    int start = 3 * attr_i;
+    int end = start + (numAttrs == 1 ? 1 : 3);
 
-    auto neighValueIt = std::next(first, numAttrs * neighIdx[i]);
-    for (int k = 0; k < numAttrs; k++)
-      neighValue[k] = *neighValueIt++;
+    int weightSum[8] = {-4, -4, -4, -4, -4, -4, -4, -4};
 
-    // skip neighbours that are outside of threshold limits
-    if (i) {
-      if (10 * neighValue[0] <= limitLow || 10 * neighValue[0] >= limitHigh)
+    int64_t neighValue[3];
+    int64_t limitLow = 0;
+    int64_t limitHigh = 0;
+    for (int i = 0; i < 19; i++) {
+      if (neighIdx[i] == -1)
         continue;
-    } else {
-      constexpr int ratioThreshold1 = 2;
-      constexpr int ratioThreshold2 = 25;
-      limitLow = ratioThreshold1 * neighValue[0];
-      limitHigh = ratioThreshold2 * neighValue[0];
-    }
 
-    // apply weighted neighbour value to masked positions
-    for (int k = 0; k < numAttrs; k++)
-      neighValue[k] *= predWeight[i] << pcc::FixedPoint::kFracBits;
+      auto neighValueIt = std::next(first, numAttrs * neighIdx[i]);
+      for (int k = start; k < end; k++)
+        neighValue[k-start] = *(neighValueIt+k);
 
-    int mask = predMasks[i] & occupancy;
-    for (int j = 0; mask; j++, mask >>= 1) {
-      if (mask & 1) {
-        weightSum[j] += predWeight[i];
-        for (int k = 0; k < numAttrs; k++)
-          predBuf[k][j].val += neighValue[k];
+      // skip neighbours that are outside of threshold limits
+      if (i) {
+        if (10 * neighValue[0] <= limitLow || 10 * neighValue[0] >= limitHigh)
+          continue;
+      } else {
+        constexpr int ratioThreshold1 = 2;
+        constexpr int ratioThreshold2 = 25;
+        limitLow = ratioThreshold1 * neighValue[0];
+        limitHigh = ratioThreshold2 * neighValue[0];
+      }
+
+      // apply weighted neighbour value to masked positions
+      for (int k = start; k < end; k++)
+        neighValue[k-start] *= predWeight[i] << pcc::FixedPoint::kFracBits;
+
+      int mask = predMasks[i] & occupancy;
+      for (int j = 0; mask; j++, mask >>= 1) {
+        if (mask & 1) {
+          weightSum[j] += predWeight[i];
+          for (int k = start; k < end; k++)
+            predBuf[k][j].val += neighValue[k-start];
+        }
       }
     }
-  }
 
-  // normalise
-  FixedPoint div;
-  for (int i = 0; i < 8; i++, occupancy >>= 1) {
-    if (occupancy & 1) {
-      div.val = kDivisors[weightSum[i]];
-      for (int k = 0; k < numAttrs; k++)
-        predBuf[k][i] *= div;
+    // normalise
+    FixedPoint div;
+    for (int i = 0; i < 8; i++, occupancy >>= 1) {
+      if (occupancy & 1) {
+        div.val = kDivisors[weightSum[i]];
+        for (int k = start; k < end; k++)
+          predBuf[k][i] *= div;
+      }
     }
   }
 }
@@ -555,7 +565,7 @@ isSibling(int64_t pos0, int64_t pos1, int level)
   return ((pos0 ^ pos1) >> level) == 0;
 }
 
-//============================================================================
+  //============================================================================
 // Core transform process (for encoder/decoder)
 
 template<bool isEncoder>
@@ -563,7 +573,7 @@ void
 uraht_process(
   bool raht_prediction_enabled_flag,
   const int predictionThreshold[2],
-  const QpSet& qpset,
+  const std::vector<QpSet> &qpsets,
   const Qps* pointQpOffsets,
   int numPoints,
   int numAttrs,
@@ -573,16 +583,19 @@ uraht_process(
 {
   // coefficients are stored in three planar arrays.  coeffBufItK is a set
   // of iterators to each array.
-  int32_t* coeffBufItK[3] = {
-    coeffBufIt,
-    coeffBufIt + numPoints,
-    coeffBufIt + numPoints * 2,
-  };
+  int32_t* coeffBufItK[27];
+
+  for (int i = 0; i < numAttrs; i++)
+    coeffBufItK[i] = coeffBufIt + numPoints * i;
+
+  static uint8_t div3_lookup[27] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4,
+                                     4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8};
 
   if (numPoints == 1) {
-    auto quantizers = qpset.quantizers(0, pointQpOffsets[0]);
+    
     for (int k = 0; k < numAttrs; k++) {
-      auto& q = quantizers[std::min(k, int(quantizers.size()) - 1)];
+      auto quantizers = qpsets[div3_lookup[k]].quantizers(0, pointQpOffsets[0]);
+      auto& q = quantizers[std::min(k%3, int(quantizers.size()) - 1)];
 
       if (isEncoder) {
         auto coeff = attributes[k];
@@ -658,12 +671,13 @@ uraht_process(
   numGrandParentNeigh.resize(numPoints);
 
   // quant layer selection
-  auto qpLayer = -1;
+  int qpLayer[9];
+  std::fill(std::begin(qpLayer), std::end(qpLayer), -1);
 
   // descend tree
   weightsLf.resize(1);
   attrsLf.resize(numAttrs);
-  int trainZeros = 0;
+  int trainZeros[9] = {};
   for (int level = levelHfPos.size() - 1, isFirst = 1; level > 0; /*nop*/) {
     int numNodes = weightsHf.size() - levelHfPos[level];
     weightsLf.resize(weightsLf.size() + numNodes);
@@ -688,7 +702,8 @@ uraht_process(
     isFirst = 0;
 
     // select quantiser according to transform layer
-    qpLayer = std::min(qpLayer + 1, int(qpset.layers.size()) - 1);
+    for (int attr_id = 0; attr_id < qpsets.size(); attr_id++)
+      qpLayer[attr_id] = std::min(qpLayer[attr_id] + 1, int(qpsets[attr_id].layers.size()) - 1);
 
     // prepare reconstruction buffers
     //  previous reconstruction -> attrRecParent
@@ -699,11 +714,11 @@ uraht_process(
     auto attrRecParentIt = attrRecParent.cbegin();
     auto weightsParentIt = weightsParent.cbegin();
     auto numGrandParentNeighIt = numGrandParentNeigh.cbegin();
+    FixedPoint transformBuf[54][8] = {};
+    FixedPoint(*transformPredBuf)[8] = &transformBuf[numAttrs];
 
     for (int i = 0, iLast, iEnd = weightsLf.size(); i < iEnd; i = iLast) {
       // todo(df): hoist and dynamically allocate
-      FixedPoint transformBuf[6][8] = {};
-      FixedPoint(*transformPredBuf)[8] = &transformBuf[numAttrs];
       int weights[8 + 8 + 8 + 8] = {};
       Qps nodeQp[8] = {};
       uint8_t occupancy = 0;
@@ -835,77 +850,100 @@ uraht_process(
         }
 
         // decision for RDOQ
-        int64_t sumCoeff = 0;
-        bool flagRDOQ = false;
+        int64_t sumCoeff[9] = {};
+        bool flagRDOQ[9] = {};
         if (isEncoder) {
-          int64_t dist2 = 0;
-          int rateCoeff = 0;
-          int64_t lambda0;
 
-          for (int k = 0; k < numAttrs; k++) {
-            //auto q = Quantizer(qpLayer[std::min(k, int(quantizers.size()) - 1)] + nodeQp[idx]);
-            auto quantizers = qpset.quantizers(qpLayer, nodeQp[idx]);
-            auto& q = quantizers[std::min(k, int(quantizers.size()) - 1)];
-            auto coeff = transformBuf[k][idx].round();
-            dist2 += coeff * coeff;
-            auto Qcoeff = q.quantize(coeff << kFixedPointAttributeShift);
-            sumCoeff += std::abs(Qcoeff);
-            //rateCoeff += !!Qcoeff; // sign
-            rateCoeff += int(std::log2(1 + std::abs(Qcoeff)) * 256.);
-            if (!k)
-              lambda0 = q.scale(1);
-          }
+          for (int attr_id = 0; attr_id < qpsets.size(); attr_id++) {
 
-          if (sumCoeff < 3) {
-            int LUTbins[11] = {1, 2, 3, 5, 5, 7, 7, 9, 9, 11, 11};
-            int rate = LUTbins[trainZeros > 10 ? 10 : trainZeros];
-            if (trainZeros > 10) {
-              int temp = trainZeros - 11;
-              // prefix k =2
-              temp += 1;
-              int a = 0;
-              while (temp) {
-                a++;
-                temp >>= 1;
-              }
-              rate += 2 * a - 1;
-              // suffix  k=2
-              rate += 2;
+            int attr_start = 3 * attr_id;
+            int attr_end = attr_start + (numAttrs > 1 ? 3 : 1);
+            int64_t dist2 = 0;
+            int rateCoeff = 0;
+            int64_t lambda0;
+  
+            for (int k = attr_start; k < attr_end; k++) {
+              //auto q = Quantizer(qpLayer[std::min(k, int(quantizers.size()) - 1)] + nodeQp[idx]);
+              auto quantizers = qpsets[div3_lookup[k]].quantizers(
+                qpLayer[div3_lookup[k]], nodeQp[idx]);
+              auto& q = quantizers[std::min(
+                k - attr_start, int(quantizers.size()) - 1)];
+              auto coeff = transformBuf[k][idx].round();
+              dist2 += coeff * coeff;
+              auto Qcoeff = q.quantize(coeff << kFixedPointAttributeShift);
+              sumCoeff[attr_id] += std::abs(Qcoeff);
+              //rateCoeff += !!Qcoeff; // sign
+              rateCoeff += int(std::log2(1 + std::abs(Qcoeff)) * 256.);
+              if (k==attr_start)
+                lambda0 = q.scale(1);
             }
-            //rate = rate / std::max(1, trainZeros);
-            rate += (rateCoeff + 128) >> 8;
 
-            int64_t lambda = lambda0 * lambda0 * (numAttrs == 1 ? 25 : 35);
-            flagRDOQ = (dist2 << 26) < lambda * rate;
+            if (sumCoeff[attr_id] < 3) {
+              int LUTbins[11] = {1, 2, 3, 5, 5, 7, 7, 9, 9, 11, 11};
+              int rate =
+                LUTbins[trainZeros[attr_id] > 10 ? 10 : trainZeros[attr_id]];
+              if (trainZeros[attr_id] > 10) {
+                int temp = trainZeros[attr_id] - 11;
+                // prefix k =2
+                temp += 1;
+                int a = 0;
+                while (temp) {
+                  a++;
+                  temp >>= 1;
+                }
+                rate += 2 * a - 1;
+                // suffix  k=2
+                rate += 2;
+              }
+              //rate = rate / std::max(1, trainZeros);
+              rate += (rateCoeff + 128) >> 8;
+
+              int64_t lambda = lambda0 * lambda0 * (numAttrs == 1 ? 25 : 35);
+              flagRDOQ[attr_id] = (dist2 << 26) < lambda * rate;
+            }
           }
         }
-
+        
         // Track RL for RDOQ
-        if (flagRDOQ || sumCoeff == 0)
-          trainZeros++;
-        else
-          trainZeros = 0;
-
+        for (int attr_id = 0; attr_id < qpsets.size(); attr_id++) {
+          if (flagRDOQ[attr_id] || sumCoeff[attr_id] == 0)
+            trainZeros[attr_id]++;
+          else
+            trainZeros[attr_id] = 0;
+        }
 
         // The RAHT transform
-        auto quantizers = qpset.quantizers(qpLayer, nodeQp[idx]);
-        for (int k = 0; k < numAttrs; k++) {
-          if (flagRDOQ) // apply RDOQ
-            transformBuf[k][idx].val = 0;
+        std::vector<Quantizers> quantizers;
+        quantizers.reserve(9);
+        for (int attr_id = 0; attr_id < qpsets.size(); attr_id++)
+          quantizers.emplace_back(qpsets[attr_id].quantizers(qpLayer[attr_id], nodeQp[idx]));
 
-          auto& q = quantizers[std::min(k, int(quantizers.size()) - 1)];
+        for (int k = 0; k < numAttrs; k++) {
+          if (flagRDOQ[div3_lookup[k]])  // apply RDOQ
+            transformBuf[k][idx].val = 0;
+   
+          auto& q =quantizers[div3_lookup[k]][std::min(k%3, int(quantizers[div3_lookup[k]].size()) - 1)];
 
           if (isEncoder) {
             auto coeff = transformBuf[k][idx].round();
             assert(coeff <= INT_MAX && coeff >= INT_MIN);
             *coeffBufItK[k]++ = coeff =
               q.quantize(coeff << kFixedPointAttributeShift);
-            transformPredBuf[k][idx] +=
-              divExp2RoundHalfUp(q.scale(coeff), kFixedPointAttributeShift);
+            if (enablePrediction)
+                transformPredBuf[k][idx] +=
+                    divExp2RoundHalfUp(q.scale(coeff), kFixedPointAttributeShift);
+            else
+              transformPredBuf[k][idx] =
+                divExp2RoundHalfUp(q.scale(coeff), kFixedPointAttributeShift);
+
           } else {
             int64_t coeff = *coeffBufItK[k]++;
-            transformPredBuf[k][idx] +=
-              divExp2RoundHalfUp(q.scale(coeff), kFixedPointAttributeShift);
+            if (enablePrediction)
+                transformPredBuf[k][idx] +=
+                  divExp2RoundHalfUp(q.scale(coeff), kFixedPointAttributeShift);
+            else
+              transformPredBuf[k][idx] =
+                divExp2RoundHalfUp(q.scale(coeff), kFixedPointAttributeShift);
           }
         }
       });
@@ -974,12 +1012,12 @@ uraht_process(
     }
 
     // duplicates
-    FixedPoint attrSum[3];
-    FixedPoint attrRecDc[3];
+    FixedPoint attrSum[27];
+    FixedPoint attrRecDc[27];
     FixedPoint sqrtWeight;
     sqrtWeight.val =fastIsqrt(uint64_t(weight));
 
-    int64_t sumCoeff = 0;
+    int64_t sumCoeff[9] = {};
     for (int k = 0; k < numAttrs; k++) {
       if (isEncoder)
         attrSum[k] = attrsLf[i * numAttrs + k];
@@ -994,9 +1032,10 @@ uraht_process(
       if (isEncoder)
         rsqrtWeight.val =fastIrsqrt(w) >> (40 - shift - FixedPoint::kFracBits);
 
-      auto quantizers = qpset.quantizers(qpLayer, nodeQp);
+      
       for (int k = 0; k < numAttrs; k++) {
-        auto& q = quantizers[std::min(k, int(quantizers.size()) - 1)];
+        auto quantizers = qpsets[div3_lookup[k]].quantizers(qpLayer[div3_lookup[k]], nodeQp);
+        auto& q = quantizers[std::min(k % 3, int(quantizers.size()) - 1)];
 
         FixedPoint transformBuf[2];
         if (isEncoder) {
@@ -1021,7 +1060,8 @@ uraht_process(
           transformBuf[1] =
             divExp2RoundHalfUp(q.scale(coeff), kFixedPointAttributeShift);
 
-          sumCoeff += std::abs(q.quantize(coeff << kFixedPointAttributeShift));
+          sumCoeff[div3_lookup[k]] +=
+            std::abs(q.quantize(coeff << kFixedPointAttributeShift));
         } else {
           int64_t coeff = *coeffBufItK[k]++;
           transformBuf[1] =
@@ -1043,12 +1083,13 @@ uraht_process(
 
       // Track RL for RDOQ
       if (isEncoder) {
-        if (sumCoeff == 0)
-          trainZeros++;
-        else
-          trainZeros = 0;
+        for (int attr_id = 0; attr_id < qpsets.size(); attr_id++) {
+          if (sumCoeff[attr_id] == 0)
+            trainZeros[attr_id]++;
+          else
+            trainZeros[attr_id] = 0;
+        }
       }
-
     }
 
     attrsHfIt += (weight - 1) * numAttrs;
@@ -1091,8 +1132,11 @@ regionAdaptiveHierarchicalTransform(
   const int voxelCount,
   int* coefficients)
 {
+  std::vector<QpSet> qpsets;
+  qpsets.push_back(qpset);
+
   uraht_process<true>(
-    raht_prediction_enabled_flag, predictionThreshold, qpset, pointQpOffsets,
+    raht_prediction_enabled_flag, predictionThreshold, qpsets, pointQpOffsets,
     voxelCount, attribCount, mortonCode, attributes, coefficients);
 }
 
@@ -1117,7 +1161,7 @@ void
 regionAdaptiveHierarchicalInverseTransform(
   bool raht_prediction_enabled_flag,
   const int predictionThreshold[2],
-  const QpSet& qpset,
+  const QpSet& qpSet,
   const Qps* pointQpOffsets,
   int64_t* mortonCode,
   int* attributes,
@@ -1125,11 +1169,48 @@ regionAdaptiveHierarchicalInverseTransform(
   const int voxelCount,
   int* coefficients)
 {
+  std::vector<QpSet> qpSets;
+  qpSets.push_back(qpSet);
+  
   uraht_process<false>(
-    raht_prediction_enabled_flag, predictionThreshold, qpset, pointQpOffsets,
+    raht_prediction_enabled_flag, predictionThreshold, qpSets, pointQpOffsets,
     voxelCount, attribCount, mortonCode, attributes, coefficients);
 }
 
+void
+regionAdaptiveHierarchicalTransformforMultiAttr(
+  bool raht_prediction_enabled_flag,
+  const int predictionThreshold[2],
+  const Qps* pointQpOffsets,
+  const std::vector<QpSet> &qpSets,
+  int64_t* mortonCode,
+  int* attributes,
+  const int attribCount,
+  const int voxelCount,
+  int* coefficients)
+{
+  uraht_process<true>(
+    raht_prediction_enabled_flag, predictionThreshold, qpSets, pointQpOffsets,
+    voxelCount, attribCount, mortonCode, attributes, coefficients);
+}
+
+//============================================================================
+void
+regionAdaptiveHierarchicalInverseTransformforMultiAttr(
+  bool raht_prediction_enabled_flag,
+  const int predictionThreshold[2],
+  const Qps* pointQpOffsets,
+  std::vector<QpSet> &qpSets,
+  int64_t* mortonCode,
+  int* attributes,
+  const int attribCount,
+  const int voxelCount,
+  int* coefficients)
+{
+  uraht_process<false>(
+    raht_prediction_enabled_flag, predictionThreshold, qpSets, pointQpOffsets,
+    voxelCount, attribCount, mortonCode, attributes, coefficients);
+}
 //============================================================================
 
 }  // namespace pcc

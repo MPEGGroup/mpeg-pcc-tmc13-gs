@@ -36,7 +36,7 @@
 #pragma once
 
 #include <memory>
-
+#include <map>
 #include "hls.h"
 #include "PayloadBuffer.h"
 #include "PCCPointSet.h"
@@ -64,7 +64,19 @@ public:
     const char* payload,
     size_t payloadLen,
     AttributeContexts& ctxtMem,
-    PCCPointSet3& pointCloud) = 0;
+    PCCPointSet3& pointCloud,
+    int rahtMaxAttributeGroupNum,
+    std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients) = 0;
+
+    virtual void decodeMultiAttributeRAHT(
+    const SequenceParameterSet& sps,
+    std::map<int, AttributeParameterSet> _apss,
+    std::vector<AttributeBrickHeader>& _allAttrAbh,
+    int geom_num_points_minus1,
+    int minGeomNodeSizeLog2,
+    std::unordered_map<int, std::vector<int>>& bufferRahtCoefficients,
+    PCCPointSet3& pointCloud,
+    int maxAttributeNumberPerGroup) = 0;
 
   // Indicates if the attribute decoder can decode the given aps
   virtual bool isReusable(
@@ -89,7 +101,16 @@ public:
     AttributeBrickHeader& abh,
     AttributeContexts& ctxtMem,
     PCCPointSet3& pointCloud,
-    PayloadBuffer* payload) = 0;
+    PayloadBuffer* payload,
+    std::unordered_map<int, std::vector<int>> *bufferRahtCoefficients) = 0;
+
+   virtual void encodeMultiAttributeRAHT(
+    const SequenceParameterSet& sps,
+    std::vector<AttributeParameterSet*> attr_aps,
+    PCCPointSet3& pointCloud,
+    std::map<std::string, int> attributeIdxMap,
+    int maxAttributeNumberPerGroup,
+    std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients) = 0;
 
   // Indicates if the attribute decoder can decode the given aps
   virtual bool isReusable(

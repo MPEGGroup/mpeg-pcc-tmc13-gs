@@ -114,6 +114,9 @@ struct Parameters {
 
   // resort the input points by azimuth angle
   bool sortInputByAzimuth;
+
+  // Maximum number of attribute groups that can be processed in one RAHT encoding or decoding pass.
+  int maxAttributeNumberPerGroup;
 };
 
 //----------------------------------------------------------------------------
@@ -528,7 +531,7 @@ bool
 ParseParameters(int argc, char* argv[], Parameters& params)
 {
   namespace po = df::program_options_lite;
-
+  
   struct {
     AttributeDescription desc;
     AttributeParameterSet aps;
@@ -638,6 +641,11 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.outputFpBits, -1,
     "Fractional bits in conformance output (prior to external scaling)\n"
     " 0: integer,  -1: automatic (full)")
+
+   ("maxAttributeNumberPerGroup",
+    params.maxAttributeNumberPerGroup, 3,
+    "Maximum number of attribute groups merged into one RAHT encoding or decoding pass\n"
+    " value <= 1: RAHT transform merging disabled")
 
   // This section controls all general geometry scaling parameters
   (po::Section("Coordinate system scaling"))
@@ -1291,6 +1299,8 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   if (params.compressedStreamPath.empty())
     err.error() << "compressedStreamPath not set\n";
 
+  params.encoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
+  params.decoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
   // report the current configuration (only in the absence of errors so
   // that errors/warnings are more obvious and in the same place).
   if (err.is_errored)
