@@ -130,8 +130,7 @@ categories:
        - transformType: 0
        - rahtPredictionEnabled: 0
        - outputBinaryPly: 1
-       - inputScale: 8388608
-       - codingScale: 0.0001220703125
+       - inputScale: 2097152 # 2^21
        - sequenceScale: 1
        - externalScale: 0
        - attrFracBits: 12
