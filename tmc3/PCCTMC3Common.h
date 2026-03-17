@@ -877,13 +877,14 @@ computeNearestNeighbors(
       if (curAtlasId != pointAtlasId) {
         atlas.clearUpdates();
         curAtlasId = pointAtlasId;
-        while (
-          cubeIndex < retainedSize
-          && (packedVoxel[retained[cubeIndex]].mortonCode >> atlasBoundaryBit)
-            == curAtlasId) {
-          atlas.set(
-            packedVoxel[retained[cubeIndex]].mortonCode >> shiftBits3,
-            cubeIndex);
+        while (cubeIndex < retainedSize){
+          auto retMorton = packedVoxel[retained[cubeIndex]].mortonCode;
+          auto retAtlasId = retMorton >> atlasBoundaryBit;
+          if (retAtlasId == curAtlasId) {
+            atlas.set(retMorton >> shiftBits3, cubeIndex);
+          } else if (retAtlasId > curAtlasId) {
+            break;
+          }
           ++cubeIndex;
         }
       }
