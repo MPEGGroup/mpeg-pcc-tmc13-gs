@@ -77,3 +77,6 @@ The specific procedure to evaluate results is provided in Common test conditions
 ## Backward Compatibility
 
 Backward compatibility for mpeg-pcc-tmc13 v12.10 can be tested by running the `../scripts/backward_compatibility/run_verification.py` after setting the appropriate paths within the python script.
+Software for TMC13v12.10 can be found in https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13/-/tree/release-v12.10.
+Conformance bitstreams can be found in https://content.mpeg.expert/data/MPEG-I/Part-22/FDIS/.
+For more details regarding backward compatibility check, please refer to m76032([G-PCC][Amd1] Proposal for backward compatibility verification procedure).
