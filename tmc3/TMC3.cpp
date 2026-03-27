@@ -87,6 +87,9 @@ struct Parameters {
   // Output coordinate system to use
   OutputSystem outputSystem;
 
+  // Output header type to use
+  bool outputHeaderType;
+
   // when true, configure the encoder as if no attributes are specified
   bool disableAttributeCoding;
 
@@ -638,6 +641,12 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.outputFpBits, -1,
     "Fractional bits in conformance output (prior to external scaling)\n"
     " 0: integer,  -1: automatic (full)")
+    
+  ("outputHeaderType",
+    params.outputHeaderType, true,
+    "Output header type regarding position data type, element face, element list\n"
+    " 0: Conformance\n"
+    " 1: Other")
 
   // This section controls all general geometry scaling parameters
   (po::Section("Coordinate system scaling"))
@@ -2069,10 +2078,13 @@ SequenceCodec::writeOutputFrame(
   // offset frame number
   int frameNum = frame.frameNum + params->firstFrameNum;
 
+  // set output header type according to output systems (conformant / not conformant)
+  params->outputHeaderType = params->outputSystem == OutputSystem::kExternal;
+
   // Dump the decoded colour using the pre inverse scaled geometry
   if (!preInvScalePath.empty()) {
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc);
+    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
@@ -2080,7 +2092,7 @@ SequenceCodec::writeOutputFrame(
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
         cloud, attrNames, plyScale, plyOrigin, decName,
-        !params->outputBinaryPly, frame.attrDesc)) {
+        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType)) {
     cout << "Error: can't open output file!" << endl;
   }
 }

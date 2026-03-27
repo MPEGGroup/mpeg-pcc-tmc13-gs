@@ -74,7 +74,8 @@ namespace ply {
     Vec3<double> positionOffset,
     const std::string& fileName,
     bool asAscii,
-    const std::vector<AttributeDescription>& attrDescs);
+    const std::vector<AttributeDescription>& attrDescs,
+    bool asConformance);
 
   ///
   // Read @a pointCloud to a PLY file called @a fileName.

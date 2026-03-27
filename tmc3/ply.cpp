@@ -231,7 +231,8 @@ ply::write(
   Vec3<double> positionOffset,
   const std::string& fileName,
   bool asAscii,
-  const std::vector<AttributeDescription>& attrDescs)
+  const std::vector<AttributeDescription>& attrDescs,
+  bool asConformance)
 {
   std::ofstream fout(fileName, std::ofstream::out);
   if (!fout.is_open()) {
@@ -257,9 +258,16 @@ ply::write(
     fout << "property float " << attributeNames.position[1] << std::endl;
     fout << "property float " << attributeNames.position[2] << std::endl;
   } else {
-    fout << "property float " << attributeNames.position[0] << std::endl;
-    fout << "property float " << attributeNames.position[1] << std::endl;
-    fout << "property float " << attributeNames.position[2] << std::endl;
+    if (!asConformance) {
+      fout << "property float " << attributeNames.position[0] << std::endl;
+      fout << "property float " << attributeNames.position[1] << std::endl;
+      fout << "property float " << attributeNames.position[2] << std::endl;
+    }
+    else {
+      fout << "property float64 " << attributeNames.position[0] << std::endl;
+      fout << "property float64 " << attributeNames.position[1] << std::endl;
+      fout << "property float64 " << attributeNames.position[2] << std::endl;
+    }
   }
 
   if (cloud.hasColors()) {
@@ -298,8 +306,10 @@ ply::write(
 	  fout << "property float rot_2" << std::endl;
 	  fout << "property float rot_3" << std::endl;
   }
-  //fout << "element face 0" << std::endl;
-  //fout << "property list uint8 int32 vertex_index" << std::endl;
+  if (asConformance) {
+    fout << "element face 0" << std::endl;
+    fout << "property list uint8 int32 vertex_index" << std::endl;
+  }
   fout << "end_header" << std::endl;
   if (asAscii) {
     //      fout << std::setprecision(std::numeric_limits<double>::max_digits10);
@@ -356,12 +366,18 @@ ply::write(
     fout.open(fileName, std::ofstream::binary | std::ofstream::app);
     for (size_t i = 0; i < pointCount; ++i) {
       Vec3<double> position = cloud[i] * positionScale + positionOffset;
-      Vec3<float> positionFloat;
-      positionFloat[0] = static_cast<float>(position[0]);
-      positionFloat[1] = static_cast<float>(position[1]);
-      positionFloat[2] = static_cast<float>(position[2]);
-      fout.write(
-        reinterpret_cast<const char* const>(&positionFloat), sizeof(float) * 3);
+      if (!asConformance) {
+        Vec3<float> positionFloat;
+        positionFloat[0] = static_cast<float>(position[0]);
+        positionFloat[1] = static_cast<float>(position[1]);
+        positionFloat[2] = static_cast<float>(position[2]);
+        fout.write(
+          reinterpret_cast<const char* const>(&positionFloat), sizeof(float) * 3);
+      }
+      else 
+        fout.write(
+          reinterpret_cast<const char* const>(&position), sizeof(double) * 3);
+      
       if (cloud.hasColors()) {
         const Vec3<attr_t>& c = cloud.getColor(i);
         Vec3<uint8_t> val8b{uint8_t(c[0]), uint8_t(c[1]), uint8_t(c[2])};
