@@ -1,0 +1,447 @@
+# The copyright in this software is being made available under the BSD
+# Licence, included below.  This software may be subject to other third
+# party and contributor rights, including patent rights, and no such
+# rights are granted under this licence.
+#
+# Copyright (c) 2025, ISO/IEC
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright
+#   notice, this list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright
+#   notice, this list of conditions and the following disclaimer in the
+#   documentation and/or other materials provided with the distribution.
+#
+# * Neither the name of the ISO/IEC nor the names of its contributors
+#   may be used to endorse or promote products derived from this
+#   software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+#!/bin/bash
+set -euo pipefail
+
+
+## Helper functions for checks
+ENSURE_EXEC() { [ -x "$1" ] || { echo "ERROR: Executable not found or not executable: $1"; exit 1; }; }
+ENSURE_FILE() { [ -f "$1" ] || { echo "ERROR: File not found: $1"; exit 1; }; }
+ENSURE_DIR() { [ -d "$1" ] || { echo "ERROR: Directory not found: $1"; exit 1; }; }
+WRITE() { echo "$2" >> "$1"; }
+MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
+
+## Experiment name
+JOBNAME="TM13-GS-v1"
+if [[ -n "${JOBNAME_SUFFIX:-}" ]]; then
+    JOBNAME="$JOBNAME-$JOBNAME_SUFFIX"
+fi
+
+## Experiment settings
+CFG_DIR=cfg
+AUTO_RUN=0              # 0:off, 1:run_local, 2:run_slurm 
+FLAG_1F=1               # 0:NF, 1:1F
+RUN_MODE=0              # 0 = anchor(octree-hybrid), 1 = alternative
+
+# Whether to sample viewpoints for library sequence.
+# 0:off, 1:on (set VIEW_PERIOD=40 for library sequence)
+# If you use the latest version of the library sequence, set to 0 because the cameras are already sampled with a period of 40.
+# If you use the older version of the library sequence, set to 1 to sample viewpoints with a period of 40.
+SAMPLE_VIEWS_FOR_LIBRARY=0
+
+# Script directory.
+SCRIPT_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
+# Project root directory.
+PROJECT_DIR=$(realpath "$SCRIPT_DIR/../..")
+
+## Dataset path
+DATASET_PATH="${PROJECT_DIR}/data/CTC.processed"
+PLYS_SUBFOLDER="plys"
+
+## Output path
+BASE_OUTPUT="${PROJECT_DIR}/output/gen-script-output"
+
+## Binary and Configuration Paths
+TMC13_DIR="${PROJECT_DIR}/third_party/mpeg-pcc-tmc13-gs"
+TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3"
+GEN_SCRIPT_DIR="${TMC13_DIR}/scripts/gen-script"
+INPUT_SEQUENCES_CFG="${GEN_SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
+CFG_PATH="$TMC13_DIR/$CFG_DIR" 
+METRIC="${PROJECT_DIR}/third_party/mpeg-gsc-metrics/build/Release/bin/mpeg-gsc-metrics"
+GSCTOOL="${PROJECT_DIR}/third_party/mpeg-gsc-tools"
+FINETUNE="${PROJECT_DIR}/scripts/preprocess_rdo.py"
+PYTHON="uv run"
+
+# Initial checks
+ENSURE_DIR "$DATASET_PATH"
+ENSURE_DIR "$TMC13_DIR"
+ENSURE_DIR "$GSCTOOL"
+ENSURE_DIR "$CFG_PATH"
+ENSURE_EXEC "$TMC13_BIN"
+ENSURE_EXEC "$METRIC"
+ENSURE_FILE "$INPUT_SEQUENCES_CFG"
+
+if [[ $RUN_MODE -eq 0 ]]; then
+    MODEs=("lossless-geom-lossy-attrs")
+    TOOLs=("octree-hybrid")
+else
+    MODEs=("lossless-geom-lossy-attrs" "lossless-geom-lossless-attrs")
+    TOOLs=("predgeom-hybrid" "octree-predlift" "octree-raht" "predgeom-predlift" "predgeom-raht")
+fi
+
+###########################################################################################
+# Prepare dataset sequences
+###########################################################################################
+declare -A PATHs       # PLY folder paths
+declare -A REND_RESs   # Render resolution: "width height"
+
+# Function that external files will use to register sequences
+ADD_SEQ() {
+    local seq="$1"
+    local width="$2"
+    local height="$3"
+    
+    PATHs["$seq"]="$DATASET_PATH/$seq/$PLYS_SUBFOLDER/"
+    REND_RESs["$seq"]="$width $height"
+}
+
+# Load sequences from external file
+source "$INPUT_SEQUENCES_CFG"
+
+# Validate dataset paths
+for SEQ in "${!PATHs[@]}"; do
+    PLY_PATH="${PATHs[$SEQ]}"
+    if [[ ! -d "$PLY_PATH" ]]; then
+        echo "❌ $PLY_PATH does not exist"
+        exit 1
+    fi
+    shopt -s nullglob
+    files=("$PLY_PATH"/*.camerapos.ply)
+    if (( ${#files[@]} < 1 )); then
+        echo "❌ No *.camerapos.ply in $PLY_PATH"
+        exit 1
+    fi
+done
+
+# SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0")"
+# GEN_SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+
+CURTIME="$(date "+%y-%m-%d-%H%M%S")"
+OUT="$BASE_OUTPUT/$JOBNAME-$CURTIME"
+BATCH_FINETUNE="$OUT/jobs/batch_finetune"
+BATCH_GPCC="$OUT/jobs/batch_gpcc"
+BATCH_METRIC="$OUT/jobs/batch_metric"
+
+MKDIRCK "$OUT/metrics"
+MKDIRCK "$BATCH_FINETUNE"
+MKDIRCK "$BATCH_GPCC"
+MKDIRCK "$BATCH_METRIC"
+MKDIRCK "$OUT/bin"
+MKDIRCK "$OUT/jobs/logs"
+MKDIRCK "$OUT/jobs/done/finetune"
+MKDIRCK "$OUT/jobs/done/gpcc"
+MKDIRCK "$OUT/jobs/done/metric"
+
+# Validate build path
+if [[ ! -d "$TMC13_DIR/build" ]]; then
+    echo "❌ $TMC13_DIR/build does not exist"
+    exit 1
+fi
+
+# Build binaries
+cd "$TMC13_DIR/build"
+make -j"$(nproc)"
+cp "$TMC13_BIN" "$OUT/bin/tmc3"
+TMC13_BIN="$OUT/bin/tmc3"
+
+cd "$OUT/jobs"
+RUN_FINETUNE="$OUT/jobs/step0_run_finetune.sh"
+RUN_GPCC="$OUT/jobs/step1_run_gpcc.sh"
+RUN_METRIC="$OUT/jobs/step2_run_metric.sh"
+RUN_SUMMARY="$OUT/jobs/step3_run_summary.sh"
+
+# Initialize run scripts
+: > "$RUN_FINETUNE"
+: > "$RUN_GPCC"
+: > "$RUN_METRIC"
+: > "$RUN_SUMMARY"
+
+cnt=0
+for MODE in "${MODEs[@]}"; do
+    for TOOL in "${TOOLs[@]}"; do
+        
+        [[ ! -d "$CFG_PATH/$TOOL/$MODE" ]] && continue
+
+        if [ $FLAG_1F == 1 ]; then
+            csv_file="$OUT/metrics/1F_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+        else
+            csv_file="$OUT/metrics/NF_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+        fi
+        echo "seq, rate, total_Byte, pos_Byte, sh0_Byte, sh1_Byte, sh2_Byte, sh3_Byte, rot_Byte, scale_Byte, opacity_Byte, RGB-PSNR, YUV-PSNR, YUV-SSIM, YUV-IVSSIM, GT-RGB-PSNR, min_RGB-PSNR, min_YUV-PSNR, min_YUV-SSIM, max_RGB-PSNR, max_YUV-PSNR, max_YUV-SSIM, total_encT, pos_encT, att_encT, total_decT, pos_decT, att_decT, enc_MaxRSS, dec_MaxRSS" > "$csv_file"
+
+        for SEQ in "${!PATHs[@]}"; do
+            PLY_PATH="${PATHs[$SEQ]}"
+            files=("$PLY_PATH"/*.camerapos.ply)
+            read -r REN_W REN_H <<< "${REND_RESs[$SEQ]}"
+            
+            # set the start frame, the number of frames, viewpoints sampling period
+            if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
+            # For only the old version of library sequence (SAMPLE_VIEWS_FOR_LIBRARY=1), we sample viewpoints with a period of 40. 
+            if [ $SAMPLE_VIEWS_FOR_LIBRARY == 1 ] && [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi
+            # if [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi  
+
+            SelFILEs=("${files[@]:0:$NUM_FRAMES}")
+            if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+                CFG_DIRs=("$CFG_PATH/$TOOL/$MODE/$SEQ")
+            else
+                CFG_DIRs=($CFG_PATH/$TOOL/$MODE/$SEQ/*)
+            fi
+            for CFG in "${CFG_DIRs[@]}"; do
+                if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+                    RATE="r01"   # dummy rate name for CSV and Excel
+                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ"
+                    MKDIRCK "$RESULT_DIR"
+                else
+                    RATE="$(basename "$CFG")"
+                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/$RATE"
+                    MKDIRCK "$RESULT_DIR"
+                fi
+                # Fine-tuning result directory (common for all rates since we only fine-tune once per sequence)
+                FINETUNE_RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/finetune"
+                MKDIRCK "$FINETUNE_RESULT_DIR"
+
+                echo "$TOOL/$MODE/$SEQ/$RATE"
+
+                for FILE in "${SelFILEs[@]}"; do
+                    ((cnt+=1))
+                    N=$(( (cnt - 1) % 4 + 1 ))
+                    NODE=$(printf "pcc-worker%02d" "$N")
+                    FRAME="$(basename "$FILE" .camerapos.ply)"
+
+                    # Run fine-tuning (Only r1).
+                    if [[ "$CFG" == "${CFG_DIRs[0]}" ]]; then
+                        JOBFILE_FINETUNE="$BATCH_FINETUNE/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$FRAME.sh"
+                        # COLMAP_DIR_SUFFIX=$( [ "$DATASET_TYPE" == "mst" ] && echo ".mst" || echo "" )
+                        {
+                            echo "#!/bin/bash"
+                            echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+                            echo "#SBATCH --ntasks-per-node=1"
+                            echo "#SBATCH --nodes=1"
+                            echo "#SBATCH --mem-per-cpu=8G"
+                            echo "set -euo pipefail"
+                            echo "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+                            echo "${PYTHON} ${FINETUNE} \
+                                    --input-ply-path \"$FILE\" \
+                                    --output-dir \"$FINETUNE_RESULT_DIR/$FRAME.finetune\" \
+                                    --output-ply-path \"$FINETUNE_RESULT_DIR/$FRAME.ply\" \
+                                    --use-rdo \"${USE_RDO}\" \
+                                    --dataset-dir \"${DATASET_PATH}/${SEQ}/colmap_data/${FRAME}\" \
+                                    --dataset.subsample-every \"${VIEW_PERIOD}\" \
+                                    --quantizer.position-bitdepth 18 \
+                                    --trainer.max-steps 10_000 \
+                                    --trainer.neighbor-loss-weight 5e-10 --trainer.lr-scale 0.1 \
+                                    "
+                            echo "touch $OUT/jobs/done/finetune/\${SLURM_JOB_ID:-UNDEFINED}"
+                        } > "$JOBFILE_FINETUNE"
+                        chmod +x "$JOBFILE_FINETUNE"
+                        echo "$JOBFILE_FINETUNE" >> "$RUN_FINETUNE"
+                    fi
+
+                    JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
+
+                    {
+                        echo "#!/bin/bash"
+                        echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+                        echo "#SBATCH --ntasks-per-node=1"
+                        echo "#SBATCH --nodes=1"
+                        echo "#SBATCH --mem-per-cpu=8G"
+                        echo "set -euo pipefail"
+                        # SRC_PLY="${FILE/.camerapos/}"
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$FINETUNE_RESULT_DIR/$FRAME.ply\""
+                        echo "touch $OUT/jobs/done/gpcc/\${SLURM_JOB_ID:-UNDEFINED}"
+                    } > "$JOBFILE"
+                    chmod +x "$JOBFILE"
+                    echo "$JOBFILE" >> "$RUN_GPCC"
+
+                    numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
+                    for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
+                        ((cnt+=1))
+                        N=$(( (cnt - 1) % 4 + 1 ))
+                        NODE=$(printf "pcc-worker%02d" "$N")
+                        JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
+                        {
+                            echo "#!/bin/bash"
+                            echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+                            echo "#SBATCH --ntasks-per-node=1"
+                            echo "#SBATCH --nodes=1"
+                            echo "#SBATCH --mem-per-cpu=8G"
+                            echo "set -euo pipefail"
+                            echo "OMP_NUM_THREADS=1 $METRIC -v 1 --threads=1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
+                            echo "touch $OUT/jobs/done/metric/\${SLURM_JOB_ID:-UNDEFINED}"
+                        } > "$JOBFILE_MET"
+                        chmod +x "$JOBFILE_MET"
+                        echo "$JOBFILE_MET" >> "$RUN_METRIC"
+                    done
+                done
+                echo "$PYTHON $GEN_SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
+            
+            done
+        done
+
+        if [ $FLAG_1F == 1 ]; then
+        echo "$PYTHON $GEN_SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$GEN_SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$GEN_SCRIPT_DIR/anchor_results/1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" -p \"$csv_file\" -x \"$OUT/metrics/1F_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
+        else
+        echo "$PYTHON $GEN_SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$GEN_SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$GEN_SCRIPT_DIR/anchor_results/NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
+        fi
+    done
+done
+
+# Function to run jobs in parallel with progress display
+run_with_progress() {
+    local jobfile="$1"
+    local nproc="${2:-$(nproc)}"
+    local total
+    total=$(wc -l < "$jobfile")
+    local count=0
+
+    echo "Total jobs: $total"
+
+    # Run jobs in parallel, emit "DONE" after each job finishes
+    cat "$jobfile" | xargs -P "${nproc}" -I {} bash -c '{} >/dev/null 2>&1; echo DONE' |
+    while read -r signal; do
+        count=$((count+1))
+        percent=$((count*100/total))
+        echo -ne "Progress: $count/$total (${percent}%)\r"
+    done
+    echo
+}
+
+run_with_progress_sbatch_wait() {
+    local jobfile="$1"
+    local done_dir="$2"
+    mkdir -p "$done_dir"
+
+    local total
+    total=$(wc -l < "$jobfile")
+    local submitted=0
+    local done_count=0
+    echo "Submitting $total jobs to SLURM..."
+    while read -r job; do
+        while (( submitted - done_count > 10000 )); do
+            sleep 4
+            submit_percent=$((submitted * 100 / total))
+            done_count=$(find "$done_dir" -type f -printf '.' | wc -c)
+            done_percent=$((done_count * 100 / total))
+            echo -ne "Submitted: $submitted/$total (${submit_percent}%). Progress: $done_count/$total (${done_percent}%)\r"
+        done
+
+        sbatch "$job" >/dev/null
+        submitted=$((submitted + 1))
+        submit_percent=$((submitted * 100 / total))
+
+        if (( submitted % 100 == 0 )); then
+            done_count=$(find "$done_dir" -type f -printf '.' | wc -c)
+        fi
+
+        done_percent=$((done_count * 100 / total))
+        echo -ne "Submitted: $submitted/$total (${submit_percent}%). Progress: $done_count/$total (${done_percent}%)\r"
+    done < "$jobfile"
+
+    echo "All jobs submitted. Waiting for completion...                              "
+    sleep 2
+
+    while (( done_count < total )); do
+        done_count=$(find "$done_dir" -type f -printf '.' | wc -c)
+        percent=$((done_count*100/total))
+        echo -ne "Progress: $done_count/$total (${percent}%)\r"
+        sleep 1
+    done
+    echo
+}
+
+## Master run script
+MASTER_RUN_SLURM="$OUT/jobs/run_all_slurm.sh"
+MASTER_RUN="$OUT/jobs/run_all.sh"
+
+# Export function for master script
+declare -f run_with_progress_sbatch_wait > "$MASTER_RUN_SLURM"
+{
+    echo "#!/bin/bash"
+    echo "set -euo pipefail"
+    echo
+    # echo "SCRIPT_PATH=\"$(readlink -f "$0" 2>/dev/null || realpath \"$0\")\""
+    # echo "GEN_SCRIPT_DIR=\"$(dirname "$SCRIPT_PATH")\""
+    echo "cd $GEN_SCRIPT_DIR"
+    echo
+    echo "echo '▶ Step 0: Fine-tuning in parallel'"
+    echo "run_with_progress_sbatch_wait \"$RUN_FINETUNE\" \"$OUT/jobs/done/finetune/\" "
+    echo
+    echo "echo '▶ Step 1: GPCC encode/decode in parallel'"
+    echo "run_with_progress_sbatch_wait \"$RUN_GPCC\" \"$OUT/jobs/done/gpcc/\" "
+    echo
+    echo "echo '▶ Step 2: Metric calculation in parallel'"
+    echo "run_with_progress_sbatch_wait \"$RUN_METRIC\" \"$OUT/jobs/done/metric/\""
+    echo
+    echo "echo '▶ Step 3: Summary generation'"
+    echo "bash \"$RUN_SUMMARY\""
+    echo "echo '✅ All tasks completed'"
+} >> "$MASTER_RUN_SLURM"
+chmod +x "$MASTER_RUN_SLURM"
+
+# Export function for master script
+declare -f run_with_progress > "$MASTER_RUN"
+{
+    echo "#!/bin/bash"
+    echo "set -euo pipefail"
+    echo
+    # echo "SCRIPT_PATH=\"$(readlink -f "$0" 2>/dev/null || realpath \"$0\")\""
+    # echo "GEN_SCRIPT_DIR=\"$(dirname "$SCRIPT_PATH")\"
+    echo "cd $GEN_SCRIPT_DIR"
+    echo
+    echo "echo '▶ Step 0: Fine-tuning in parallel'"
+    echo "${PYTHON} ${SCRIPT_DIR}/run_jobs_in_parallel.py --exit-on-fail --skip-completed --job-file \"$RUN_FINETUNE\" --log-dir \"$OUT/jobs/logs/finetune\"  --n-workers 1"
+    # echo "run_with_progress \"$RUN_FINETUNE\" \"$FINETUNE_NUM_THREADS\""
+    echo
+    echo "echo '▶ Step 1: GPCC encode/decode in parallel'"
+    echo "${PYTHON} ${SCRIPT_DIR}/run_jobs_in_parallel.py --exit-on-fail --skip-completed --job-file \"$RUN_GPCC\" --log-dir \"$OUT/jobs/logs/gpcc\"  --n-workers \"$(nproc)\""
+    # echo "run_with_progress \"$RUN_GPCC\""
+    echo
+    echo "echo '▶ Step 2: Metric calculation in parallel'"
+    echo "${PYTHON} ${SCRIPT_DIR}/run_jobs_in_parallel.py --exit-on-fail --skip-completed --job-file \"$RUN_METRIC\" --log-dir \"$OUT/jobs/logs/metric\"  --n-workers \"$(nproc)\""
+    # echo "run_with_progress \"$RUN_METRIC\""
+    echo
+    echo "echo '▶ Step 3: Summary generation'"
+    echo "bash \"$RUN_SUMMARY\""
+    echo "echo '✅ All tasks completed'"
+} >> "$MASTER_RUN"
+chmod +x "$MASTER_RUN"
+
+echo
+echo "[Generated scripts]"
+echo "$RUN_FINETUNE"
+echo "$RUN_GPCC"
+echo "$RUN_METRIC"
+echo "$RUN_SUMMARY"
+echo "$MASTER_RUN"
+echo "$MASTER_RUN_SLURM"
+echo
+echo "💡 Run (Local): bash \"$MASTER_RUN\""
+echo "💡 Run (Slurm): bash \"$MASTER_RUN_SLURM\""
+
+if [ $AUTO_RUN == 1 ]; then
+bash "$MASTER_RUN"
+elif [ $AUTO_RUN == 2 ]; then
+bash "$MASTER_RUN_SLURM"
+fi

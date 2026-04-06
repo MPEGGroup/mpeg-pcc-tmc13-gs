@@ -1,0 +1,1 @@
+# Files are copied from https://github.com/nerfstudio-project/gsplat/tree/v1.4.0/examples/datasets
