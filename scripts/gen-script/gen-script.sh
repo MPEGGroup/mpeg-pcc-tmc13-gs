@@ -70,11 +70,15 @@ METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
 GSCTOOL="/path/to/mpeg-gsc-tools/"
 PYTHON="python3"
 
+## External Pre-Post processing
+FLAG_EXT_PP=1  # 0 = No external pre/post, 1 = External pre-/post-processing
+PRE_SCRIPT="/path/to/gs_pre_process.py"
+POST_SCRIPT="/path/to/gs_post_process.py"
+
 # Initial checks
 ENSURE_DIR "$DATASET_PATH"
 ENSURE_DIR "$TMC13_DIR"
 ENSURE_DIR "$GSCTOOL"
-ENSURE_DIR "$CFG_PATH"
 ENSURE_EXEC "$TMC13_BIN"
 ENSURE_EXEC "$METRIC"
 ENSURE_FILE "$INPUT_SEQUENCES_CFG"
@@ -142,6 +146,24 @@ if [[ ! -d "$TMC13_DIR/build" ]]; then
     echo "❌ $TMC13_DIR/build does not exist"
     exit 1
 fi
+
+## automatic cfg generation
+mkdir -p "$TMC13_DIR/$CFG_DIR" 
+cd "$TMC13_DIR/$CFG_DIR"
+if [ $FLAG_1F == 1 ]; then
+    if [ $RUN_MODE == 0 ]; then
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
+    else 
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --all --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
+    fi
+else
+    if [ $RUN_MODE == 0 ]; then
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
+    else 
+    bash "$TMC13_DIR/script/gen-cfg.sh" --all --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
+    fi
+fi
+ENSURE_DIR "$CFG_PATH"
 
 # Build binaries
 cd "$TMC13_DIR/build"
@@ -214,7 +236,13 @@ for MODE in "${MODEs[@]}"; do
                         echo "#SBATCH --nodes=1"
                         echo "#SBATCH --mem-per-cpu=8G"
                         SRC_PLY="${FILE/.camerapos/}"
-                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\""
+                        if [ $FLAG_EXT_PP == 1 ]; then
+                            echo "$PYTHON ${PRE_SCRIPT} -i \"$SRC_PLY\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.pre.ply\" -g 18 -a 10"
+                            echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$RESULT_DIR/$FRAME.pre.ply\""
+                            echo "$PYTHON \"$POST_SCRIPT\" -i \"$RESULT_DIR/$FRAME.pre.ply.bin.decoded.ply\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\""
+                        else
+                            echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\""
+                        fi
                         echo "touch $OUT/jobs/done/gpcc/\$SLURM_JOB_ID"
                     } > "$JOBFILE"
                     chmod +x "$JOBFILE"

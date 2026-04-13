@@ -132,7 +132,8 @@ public:
     const std::string& postInvScalePath,
     const std::string& preInvScalePath,
     const CloudFrame& reconFrame,
-    PCCPointSet3& cloud);
+    PCCPointSet3& cloud,
+    bool externalPrePost);
 
   // determine the output ply scale factor
   double outputScale(const CloudFrame& cloud) const;
@@ -647,6 +648,11 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Output header type regarding position data type, element face, element list\n"
     " 0: Conformance\n"
     " 1: Other")
+
+  ("externalPrePost",
+    params.encoder.externalPrePost, true,
+    "Perform pre-processing in encoder \n"
+    " 0: pre-processing,  1: bypass")
 
   // This section controls all general geometry scaling parameters
   (po::Section("Coordinate system scaling"))
@@ -1863,7 +1869,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   pointCloud.setNumSHCoeffsWithNumBandsMinus1(numBandsMinus1);
 
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->encoder.externalPrePost)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
@@ -1934,7 +1940,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   clock->stop();
 
   if (reconPtr)
-    writeOutputFrame(params->reconstructedDataPath, {}, recon, recon.cloud);
+    writeOutputFrame(params->reconstructedDataPath, {}, recon, recon.cloud, params->encoder.externalPrePost);
 
   return 0;
 }
@@ -1963,7 +1969,7 @@ SequenceEncoder::onPostRecolour(const PCCPointSet3& cloud)
   frame.cloud = cloud;
   frame.frameNum = frameNum - params->firstFrameNum;
 
-  writeOutputFrame(params->postRecolorPath, {}, frame, tmpCloud);
+  writeOutputFrame(params->postRecolorPath, {}, frame, tmpCloud, params->encoder.externalPrePost);
 }
 
 //============================================================================
@@ -2022,7 +2028,7 @@ SequenceDecoder::onOutputCloud(const CloudFrame& frame)
   // copy the point cloud in order to modify it according to the output options
   PCCPointSet3 pointCloud(frame.cloud);
   writeOutputFrame(
-    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud);
+    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud, params->encoder.externalPrePost);
 
   clock->start();
 }
@@ -2061,7 +2067,9 @@ SequenceCodec::writeOutputFrame(
   const std::string& postInvScalePath,
   const std::string& preInvScalePath,
   const CloudFrame& frame,
-  PCCPointSet3& cloud)
+  PCCPointSet3& cloud,
+  bool externalPrePost=true
+  )
 {
   if (postInvScalePath.empty() && preInvScalePath.empty())
     return;
@@ -2084,7 +2092,7 @@ SequenceCodec::writeOutputFrame(
   // Dump the decoded colour using the pre inverse scaled geometry
   if (!preInvScalePath.empty()) {
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType);
+    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->encoder.externalPrePost);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
@@ -2092,7 +2100,7 @@ SequenceCodec::writeOutputFrame(
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
         cloud, attrNames, plyScale, plyOrigin, decName,
-        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType)) {
+        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, externalPrePost)) {
     cout << "Error: can't open output file!" << endl;
   }
 }

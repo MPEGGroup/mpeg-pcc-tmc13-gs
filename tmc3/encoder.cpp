@@ -124,7 +124,7 @@ PCCTMC3Encoder3::compress(
     if (!bboxSizeDefined)
       params->sps.seqBoundingBoxSize = (1 << 21) - 1;
 
-    if (params->sps.profile.gs_profile_compliant) {
+    if (!params->externalPrePost) {
       double inputscale = static_cast<double>(params->sps.seqGeomScale);
       double minX = std::floor(bbox.min[0] / inputscale);
       double minY = std::floor(bbox.min[1] / inputscale);

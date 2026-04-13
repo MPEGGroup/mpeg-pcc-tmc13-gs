@@ -138,6 +138,8 @@ struct EncoderParams {
 
   // 0: None, 1: ADU, 2:DADU
   std::vector<int> attr_DU_modes;
+  
+  bool externalPrePost;
 };
 
 //============================================================================

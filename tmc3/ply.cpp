@@ -232,7 +232,8 @@ ply::write(
   const std::string& fileName,
   bool asAscii,
   const std::vector<AttributeDescription>& attrDescs,
-  bool asConformance)
+  bool asConformance,
+  bool externalPrePost=true)
 {
   std::ofstream fout(fileName, std::ofstream::out);
   if (!fout.is_open()) {
@@ -411,7 +412,10 @@ ply::write(
           double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
           shdc[k]= buf;
         }
-        YUV2RGB(shdc);
+
+        if (!externalPrePost)
+          YUV2RGB(shdc);
+
 				Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
 				fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
 
@@ -428,8 +432,10 @@ ply::write(
             shac[m-1][k] = buf;
 					}
 				}
-        for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
-          YUV2RGB(shac[m]);
+        if (!externalPrePost)
+          for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
+            YUV2RGB(shac[m]);
+
         for (int k = 0; k < 3; k++) {
 					for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
 						float val32b_ac = float(shac[m-1][k])/GS_PROPERTY_SCALE;
@@ -467,6 +473,10 @@ ply::write(
         auto offset = desc.params.attr_offset;
         auto attr_frac_bits = desc.params.attr_frac_bits;
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
+        
+        if (externalPrePost)
+        rot[0] = double(int32_t(cloud.getRotationScalar(i))) * attr_scale / (1<<attr_frac_bits) + offset;
+        
         for (int k = 0; k < 3; k++) {
           int32_t attr = int32_t(cloud.getRotationVec(i)[k]);
           double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
@@ -474,6 +484,7 @@ ply::write(
         }
 
         // Estimate the real part of the quaternion
+        if (!externalPrePost)
         rot[0] = std::sqrt(std::min(std::max(
           1.0 - rot[1] * rot[1] - rot[2] * rot[2] - rot[3] * rot[3],
           0.0), 1.0));
@@ -500,7 +511,9 @@ ply::read(
 
   double positionScale,
   PCCPointSet3& cloud,
-  std::vector<AttributeDescription>& attrDescs)
+  std::vector<AttributeDescription>& attrDescs
+  , bool externalPrePost=false
+  )
 {
   std::ifstream ifs(fileName, std::ifstream::in | std::ifstream::binary);
   if (!ifs.is_open()) {
@@ -536,7 +549,7 @@ ply::read(
 
   std::vector<AttributeInfo> attributesInfo;
   attributesInfo.reserve(16);
-  const size_t MAX_BUFFER_SIZE = 4096;
+  const size_t MAX_BUFFER_SIZE = 65536;
   char tmp[MAX_BUFFER_SIZE];
   const char* sep = " \t\r";
   std::vector<std::string> tokens;
@@ -1077,69 +1090,104 @@ ply::read(
       // GS Preprocessing
       if (witSHCoefficients || withOpacity || withScale || withRotation)
       {
-        RGB2YUV(shdc);
-        for (size_t m =0 ; m < 15 ; m++)
-          RGB2YUV(shac[m]);
+        if (externalPrePost) {
+          for (auto& desc: attrDescs){
+            desc.params.attr_frac_bits = 0;
+            desc.params.attr_offset = 0;
+            desc.params.attr_scale_minus1 = 0;
+            if (desc.attr_num_dimensions_minus1 == 0) {
+              if (desc.attributeLabel == KnownAttributeLabel::kOpacity) {
+                auto& attr = cloud.getOpacity(pointCounter);
+                attr = attr_t(PCCClip(opacity, 0.0f, (1 << desc.bitdepth) - 1));
+              } else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+                assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
+                auto& attr = cloud.getRotationScalar(pointCounter);
+                attr = attr_t(PCCClip(rot[0], 0.0f, (1 << desc.bitdepth) - 1));
+              }
+            } else {
+              if (desc.attributeLabel == KnownAttributeLabel::kScale) {
+                auto& attr = cloud.getScale(pointCounter);
+                for (int c = 0; c < 3; ++c)
+                  attr[c] = attr_t(PCCClip(scale[c], 0.0f, (1 << desc.bitdepth) - 1));
+              } else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+                assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
+                auto& attr = cloud.getRotationVec(pointCounter);
+                for (int c = 0; c < 3; ++c) 
+                  attr[c] = attr_t(PCCClip(rot[c+1], 0.0f, (1 << desc.bitdepth) - 1));
+              }
+              else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+                int SHindex = (int)desc.params.sh_coefficient_label;
+                auto& attr = cloud.getSHCoefficient(SHindex, pointCounter);
+                auto& attr_buf = SHindex ? shac[SHindex-1] : shdc;
+                for (int c = 0; c < 3; ++c) 
+                  attr[c] = attr_t(PCCClip(attr_buf[c], 0.0f, (1 << desc.bitdepth) - 1));
+              }
+            }
+          }
+        } else {
+          RGB2YUV(shdc);
+          for (size_t m =0 ; m < 15 ; m++)
+            RGB2YUV(shac[m]);
 
-        canonicalize(rot, scale);
+          canonicalize(rot, scale);
 
-        
-        // ---- Cache postprocessed GS values for this point ----
-        GSPoint& g = gsBuf[pointCounter];
+              
+          // ---- Cache postprocessed GS values for this point ----
+          GSPoint& g = gsBuf[pointCounter];
 
-        // shdc (3)
-        for (int c = 0; c < 3; ++c)
-            g.shdc[c] = shdc[c];
+          // shdc (3)
+          for (int c = 0; c < 3; ++c)
+              g.shdc[c] = shdc[c];
 
-        // shac (15x3)
-        for (int m = 0; m < 15; ++m)
-            for (int c = 0; c < 3; ++c)
-              g.shac[m][c] = shac[m][c];
+          // shac (15x3)
+          for (int m = 0; m < 15; ++m)
+              for (int c = 0; c < 3; ++c)
+                g.shac[m][c] = shac[m][c];
 
-        // opacity
-        g.opacity = opacity;
+          // opacity
+          g.opacity = opacity;
 
-        // rot and scale (4 each)
-        for (int c = 0; c < 4; ++c) {
-            g.rot[c] = rot[c];
-        }
+          // rot and scale (4 each)
+          for (int c = 0; c < 4; ++c) {
+              g.rot[c] = rot[c];
+          }
 
-        for (int c = 0; c < 3; ++c) {
-            g.scale[c] = scale[c];
-        }
+          for (int c = 0; c < 3; ++c) {
+              g.scale[c] = scale[c];
+          }
 
-        // ---- Update global min/max (single min/max per group) ----
-        auto& st_dc = globalStats["f_dc"];
-        auto& st_rest = globalStats["f_rest"];
-        auto& st_op = globalStats["opacity"];
-        auto& st_rot = globalStats["rot"];
-        auto& st_scale = globalStats["scale"];
+          // ---- Update global min/max (single min/max per group) ----
+          auto& st_dc = globalStats["f_dc"];
+          auto& st_rest = globalStats["f_rest"];
+          auto& st_op = globalStats["opacity"];
+          auto& st_rot = globalStats["rot"];
+          auto& st_scale = globalStats["scale"];
 
-        // f_dc: 3 components share one min/max
-        for (int c = 0; c < 3; ++c)
-            st_dc.update(g.shdc[c]);
+          // f_dc: 3 components share one min/max
+          for (int c = 0; c < 3; ++c)
+              st_dc.update(g.shdc[c]);
 
-        // f_rest: 15x3 coefficients share one min/max
-        for (int m = 0; m < 15; ++m)
-            for (int c = 0; c < 3; ++c)
-              st_rest.update(g.shac[m][c]);
+          // f_rest: 15x3 coefficients share one min/max
+          for (int m = 0; m < 15; ++m)
+              for (int c = 0; c < 3; ++c)
+                st_rest.update(g.shac[m][c]);
 
-        // opacity: scalar
-        st_op.update(static_cast<double>(g.opacity));
+          // opacity: scalar
+          st_op.update(static_cast<double>(g.opacity));
 
-        // rot: 4 components share one min/max
-        for (int c = 0; c < 4; ++c)
-            st_rot.update(g.rot[c]);
+          // rot: 4 components share one min/max
+          for (int c = 0; c < 4; ++c)
+              st_rot.update(g.rot[c]);
 
-        // scale: 3 components share one min/max
-        for (int c = 0; c < 3; ++c)
-            st_scale.update(g.scale[c]);      
-
-
-    }
-  } 
+          // scale: 3 components share one min/max
+          for (int c = 0; c < 3; ++c)
+              st_scale.update(g.scale[c]);  
+        }        
+      }
+    } 
 
     // second pass
+    if (!externalPrePost)
     for (size_t pointCounter = 0; pointCounter < pointCount; ++pointCounter) {
         const GSPoint& g = gsBuf[pointCounter];
 

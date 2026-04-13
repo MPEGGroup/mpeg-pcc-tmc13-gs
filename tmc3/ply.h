@@ -75,7 +75,9 @@ namespace ply {
     const std::string& fileName,
     bool asAscii,
     const std::vector<AttributeDescription>& attrDescs,
-    bool asConformance);
+    bool asConformance,
+    bool externalPrePost
+  );
 
   ///
   // Read @a pointCloud to a PLY file called @a fileName.
@@ -86,7 +88,9 @@ namespace ply {
     const PropertyNameMap& propertyNames,
     double positionScale,
     PCCPointSet3& cloud,
-    std::vector<AttributeDescription>& attrDescs);
+    std::vector<AttributeDescription>& attrDescs,
+    bool externalPrePost
+  );
 
   //============================================================================
 
