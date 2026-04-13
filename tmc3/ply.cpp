@@ -43,49 +43,17 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <sstream>
+#include <cstring>
+#include <cmath>
+#include <algorithm>
+#include <limits>
 
 namespace pcc {
 
 //============================================================================
 
-static bool
-compareSeparators(char aChar, const char* const sep)
-{
-  int i = 0;
-  while (sep[i] != '\0') {
-    if (aChar == sep[i])
-      return false;
-    i++;
-  }
-  return true;
-}
-
-//============================================================================
-
-static bool
-getTokens(
-  const char* str, const char* const sep, std::vector<std::string>& tokens)
-{
-  if (!tokens.empty())
-    tokens.clear();
-  std::string buf = "";
-  size_t i = 0;
-  size_t length = ::strlen(str);
-  while (i < length) {
-    if (compareSeparators(str[i], sep)) {
-      buf += str[i];
-    } else if (buf.length() > 0) {
-      tokens.push_back(buf);
-      buf = "";
-    }
-    i++;
-  }
-  if (!buf.empty())
-    tokens.push_back(buf);
-  return !tokens.empty();
-}
-
-void RGB2YUV(double (&src)[3])
+void RGB2YUV(float (&src)[3])
 {
   double R = src[0];
   double G = src[1];
@@ -504,846 +472,383 @@ ply::write(
 
 //============================================================================
 
+void ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx) 
+{
+  if (propName == "x")
+    channelIdx = 0;
+  else if (propName == "y")
+    channelIdx = 1;
+  else if (propName == "z")
+    channelIdx = 2;
+  else if (propName == "red") {
+    kAttrLabel = KnownAttributeLabel::kColour;
+    channelIdx = 0;
+  } 
+  else if (propName == "green") {
+    kAttrLabel = KnownAttributeLabel::kColour;
+    channelIdx = 1;
+  } 
+  else if (propName == "blue") {
+    kAttrLabel = KnownAttributeLabel::kColour;
+    channelIdx = 2;
+  } 
+  else if (propName == "reflectance") {
+    kAttrLabel = KnownAttributeLabel::kReflectance;
+    channelIdx = 0;
+  } 
+  else if (propName == "opacity") {
+    kAttrLabel = KnownAttributeLabel::kOpacity;
+    channelIdx = 0;
+  } 
+  else if (propName == "frame_index") {
+    kAttrLabel = KnownAttributeLabel::kFrameIndex;
+    channelIdx = 0;
+  } 
+  else if (propName == "frame_number") {
+    kAttrLabel = KnownAttributeLabel::kFrameNumber;
+    channelIdx = 0;
+  } 
+  else if (propName == "material_id") {
+    kAttrLabel = KnownAttributeLabel::kMaterialId;
+    channelIdx = 0;
+  } 
+  else if (propName == "nx") {
+    kAttrLabel = KnownAttributeLabel::kNormal;
+    channelIdx = 0;
+  } 
+  else if (propName == "ny") {
+    kAttrLabel = KnownAttributeLabel::kNormal;
+    channelIdx = 1;
+  } 
+  else if (propName == "nz") {
+    kAttrLabel = KnownAttributeLabel::kNormal;
+    channelIdx = 2;
+  } 
+  else if (propName.find("scale_") == 0) {
+    kAttrLabel = KnownAttributeLabel::kScale;
+    channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
+  }
+  else if (propName.find("rot_") == 0) {
+    kAttrLabel = KnownAttributeLabel::kRotation;
+    channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
+  }
+  else if (propName.find("f_dc_") == 0) {
+    kAttrLabel = KnownAttributeLabel::kSH_coefficients;
+    channelIdx = 16 * std::stoi(propName.substr(propName.find_last_of('_') + 1));
+  } else if (propName.find("f_rest_") == 0) {
+    kAttrLabel = KnownAttributeLabel::kSH_coefficients;
+    channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
+    channelIdx = 16 * (channelIdx / 15)  + (channelIdx % 15) + 1;
+  } 
+  else {
+    kAttrLabel = KnownAttributeLabel::kOid;
+    channelIdx = 0;
+  }
+}
+
+bool ply::parseHeader(
+  std::ifstream& ifs, PCCPointSet3& cloud, 
+  Format& format, std::vector<PropertyInfo>& properties)
+{
+  std::string line, token;
+  properties.clear();
+  bool inVertexElement = false;
+  int vertexCount = 0;
+  while (std::getline(ifs, line)) {
+    std::istringstream iss(line);
+    iss >> token;
+
+    if (token == "format") {
+      std::string formatType;
+      iss >> formatType;
+      format = (formatType == "ascii") ? Format::ASCII : Format::BINARY;
+    } 
+    else if (token == "element") {
+      std::string type;
+      iss >> type;
+      inVertexElement = (type == "vertex");
+      if (inVertexElement) {
+        iss >> vertexCount;
+      }
+    }
+    else if (token == "property" && inVertexElement) {
+      std::string typeStr, nameStr;
+      iss >> typeStr >> nameStr;
+      
+      KnownAttributeLabel attrLabel;
+      int channel;
+      stringToAttributeLabelAndChannel(nameStr, attrLabel, channel);
+      properties.push_back({nameStr, attrLabel, channel, stringToPlyType(typeStr)});
+      if (nameStr != "x" && nameStr != "y" && nameStr != "z")
+        cloud.setAttribute(attrLabel);
+    }
+    else if (token == "end_header") {
+      cloud.resize(vertexCount);
+      return vertexCount > 0 && !properties.empty();
+    }
+  }
+  return false;
+}
+
+bool ply::isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDescription>& attrDescs) {
+  if (prop.name == "x" || prop.name == "y" || prop.name == "z")
+    return true;
+  
+  for (auto &desc: attrDescs) {
+    if (desc.attributeLabel.known_attribute_label == prop.attrLabel)
+    {
+      if (desc.attributeLabel.known_attribute_label == KnownAttributeLabel::kSH_coefficients)
+      {
+        if (int(desc.params.sh_coefficient_label) == (prop.channel % 16))
+          return true;
+      } else {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool ply::readVertices(
+  std::ifstream& ifs, 
+  PCCPointSet3& cloud, const std::vector<AttributeDescription>& attrDescs, double positionScale,
+  Format& format, std::vector<PropertyInfo>& properties)
+{
+  std::vector<bool> keepProp(properties.size(), false);
+  for (int i = 0; i < properties.size(); ++i) {
+    PropertyInfo& prop = properties[i];
+    if (isRequestedAttribute(prop, attrDescs)) {
+      keepProp[i] = true;
+    }
+  }
+
+  for (size_t i = 0; i < cloud.getPointCount(); ++i) {
+    for (size_t j = 0; j < properties.size(); ++j) {
+      PropertyInfo& prop = properties[j];
+      float value;
+      if (format == Format::ASCII) {
+        value = readTypedDataAscii(ifs, prop.type);
+      } else {
+        value = readTypedDataBinary(ifs, prop.type);
+      }
+      if (keepProp[j]) {
+        if (prop.name == "x" || prop.name == "y" || prop.name == "z") {
+          cloud[i][prop.channel] = value * positionScale;
+        } else {
+          attr_t& attr = cloud.getAttributes(i, prop.attrLabel, prop.channel);
+          reinterpret_cast<float*>(&attr)[0] = value;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+
+bool
+ply::convertColor (
+  PCCPointSet3& cloud,
+  std::vector<AttributeDescription>& attrDescs) 
+{
+  int pointCount = cloud.getPointCount();
+
+  for (auto& desc : attrDescs)
+  {
+    if (desc.attr_num_dimensions_minus1 == 2 
+        && (desc.attributeLabel == KnownAttributeLabel::kColour 
+        || desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)) {
+
+      auto& attrs = cloud.getAttrVec(desc);
+      for (int i = 0; i < pointCount; i++)
+      {
+        float attr_flt[3];
+        std::memcpy(attr_flt, &attrs[i][0], sizeof(float) * 3); 
+        
+        RGB2YUV(attr_flt);
+
+        std::memcpy(&attrs[i][0], attr_flt, sizeof(float) * 3); 
+      }
+    }
+  }
+
+  return true;
+}
+
+bool
+ply::canonicalizeRotationAndScale (
+  PCCPointSet3& cloud) 
+{
+  if(!cloud.hasRotations() || !cloud.hasScales())
+    return true;
+
+  int pointCount = cloud.getPointCount();
+  std::vector<Vec3<attr_t>>& scale_xyz = cloud.getScale();
+  std::vector<Vec3<attr_t>>& rot_xyz = cloud.getRotationVec();
+  std::vector<attr_t>& rot_w = cloud.getRotationScalar();
+
+  double quat[4];
+  float scale[3];
+  for (int i = 0; i < pointCount; i++)
+  {
+    float rot[4];
+    
+    std::memcpy(&rot[0], &rot_w[i], sizeof(float));
+    std::memcpy(&rot[1], &rot_xyz[i][0], sizeof(float) * 3);
+
+    quat[0] = rot[0];
+    quat[1] = rot[1];
+    quat[2] = rot[2];
+    quat[3] = rot[3];
+    std::memcpy(&scale[0], &scale_xyz[i][0], sizeof(float) * 3);
+
+    canonicalize(quat, scale);
+
+    rot[0] = quat[0];
+    rot[1] = quat[1];
+    rot[2] = quat[2];
+    rot[3] = quat[3];
+
+    std::memcpy(&rot_w[i], &rot[0], sizeof(float));
+    std::memcpy(&rot_xyz[i][0], &rot[1], sizeof(float) * 3);
+    std::memcpy(&scale_xyz[i][0], &scale[0], sizeof(float) * 3);
+  }
+
+  return true;
+}
+
+
+bool
+ply::analyzeMinMax (
+  PCCPointSet3& cloud,
+  std::vector<AttributeDescription>& attrDescs) 
+{
+  int pointCount = cloud.getPointCount();  
+  std::vector<Stats> stats(attrDescs.size());
+
+  for (int d = 0; d < attrDescs.size(); d++)
+  {
+    AttributeDescription& desc = attrDescs[d];
+    Stats& stat = stats[d]; 
+    
+    if (desc.attr_num_dimensions_minus1 == 0) {
+      auto& attrs = cloud.getAttrScalar(desc);
+      for (int i = 0; i < pointCount; i++)
+      {
+        float attr_flt;
+        std::memcpy(&attr_flt, &attrs[i], sizeof(float));
+        stat.update(attr_flt);
+      }
+    } else {
+      auto& attrs = cloud.getAttrVec(desc);
+      for (int i = 0; i < pointCount; i++)
+      {
+        float attr_flt[3];
+        std::memcpy(attr_flt, &attrs[i][0], sizeof(float) * 3); 
+        for (int c = 0; c < 3; c++)
+        {
+          stat.update(attr_flt[c]);
+        }
+      }
+    }
+    
+    int rounded_min = static_cast<int>(std::lround(stat.min));
+    int rounded_max = static_cast<int>(std::lround(stat.max));
+
+    if (rounded_min == 0) rounded_min = -1;
+    if (rounded_max == 0) rounded_max = 1;
+
+    int offset = rounded_min;
+    int attr_scale = rounded_max - rounded_min;
+    if (attr_scale <= 0)
+    {
+      attr_scale = 1;
+      offset = 0;
+    }
+
+    desc.params.attr_offset = offset;
+    desc.params.attr_scale_minus1 = attr_scale - 1;
+  }
+  return true;
+}
+
+bool
+ply::quantizationLinear (
+  PCCPointSet3& cloud,
+  std::vector<AttributeDescription>& attrDescs) 
+{
+  int pointCount = cloud.getPointCount();  
+  for (auto& desc : attrDescs)
+  {
+    int offset = desc.params.attr_offset;
+    int attr_scale = desc.params.attr_scale_minus1 + 1;
+    auto attr_frac_bits_scale = 1ULL << desc.params.attr_frac_bits;
+    int clip_max = (1 << desc.bitdepth) - 1;
+
+    if (desc.attr_num_dimensions_minus1 == 0) {
+      auto& attrs = cloud.getAttrScalar(desc);
+      for (int i = 0; i < pointCount; i++)
+      {
+        float attr_flt;
+        std::memcpy(&attr_flt, &attrs[i], sizeof(float));
+
+        attrs[i] = attr_t(PCCClip<int>(
+          static_cast<int>(std::round((attr_flt - offset) * attr_frac_bits_scale / attr_scale)),
+          0, clip_max));
+      }
+    } else {
+      auto& attrs = cloud.getAttrVec(desc);
+      for (int i = 0; i < pointCount; i++)
+      {
+        float attr_flt[3];
+        std::memcpy(attr_flt, &attrs[i][0], sizeof(float) * 3); 
+
+        for (int c = 0; c < 3; c++)
+        {
+          attrs[i][c] = attr_t(PCCClip<int>(
+            static_cast<int>(std::round((attr_flt[c] - offset) * attr_frac_bits_scale / attr_scale)),
+            0, clip_max));
+        }
+      }
+    }
+  }
+  return true;
+}
+
 bool
 ply::read(
   const std::string& fileName,
   const PropertyNameMap& attributeNames,
-
   double positionScale,
   PCCPointSet3& cloud,
-  std::vector<AttributeDescription>& attrDescs
-  , bool externalPrePost=false
-  )
+  std::vector<AttributeDescription>& attrDescs, bool externalPrePost)
 {
-  std::ifstream ifs(fileName, std::ifstream::in | std::ifstream::binary);
+  std::ifstream ifs(fileName,std::ifstream::in | std::ios::binary);
   if (!ifs.is_open()) {
-    return false;
-  }
-  enum AttributeType
-  {
-    ATTRIBUTE_TYPE_FLOAT64 = 0,
-    ATTRIBUTE_TYPE_FLOAT32 = 1,
-    ATTRIBUTE_TYPE_UINT64 = 2,
-    ATTRIBUTE_TYPE_UINT32 = 3,
-    ATTRIBUTE_TYPE_UINT16 = 4,
-    ATTRIBUTE_TYPE_UINT8 = 5,
-    ATTRIBUTE_TYPE_INT64 = 6,
-    ATTRIBUTE_TYPE_INT32 = 7,
-    ATTRIBUTE_TYPE_INT16 = 8,
-    ATTRIBUTE_TYPE_INT8 = 9,
-  };
-  struct AttributeInfo {
-    std::string name;
-    AttributeType type;
-    size_t byteCount;
-    size_t index;
-  };
-
-  struct GSPoint {
-    double shdc[3] = {0.0, 0.0, 0.0};
-    double shac[15][3] = {};  // zero-initialized
-    float opacity = 0.0f;
-    double rot[4] = {1.0, 0.0, 0.0, 0.0};
-    double scale[3] = {1.0, 1.0, 1.0 };
-  };
-
-  std::vector<AttributeInfo> attributesInfo;
-  attributesInfo.reserve(16);
-  const size_t MAX_BUFFER_SIZE = 65536;
-  char tmp[MAX_BUFFER_SIZE];
-  const char* sep = " \t\r";
-  std::vector<std::string> tokens;
-
-  ifs.getline(tmp, MAX_BUFFER_SIZE);
-  getTokens(tmp, sep, tokens);
-  if (tokens.empty() || tokens[0] != "ply") {
-    std::cout << "Error: corrupted file!" << std::endl;
-    return false;
-  }
-  bool isAscii = false;
-  double version = 1.0;
-  size_t pointCount = 0;
-  bool isVertexProperty = true;
-  while (1) {
-    if (ifs.eof()) {
-      std::cout << "Error: corrupted header!" << std::endl;
+      std::cerr << "Error: can not open file (" << fileName << ")" << std::endl;
       return false;
-    }
-    ifs.getline(tmp, MAX_BUFFER_SIZE);
-    getTokens(tmp, sep, tokens);
-    if (tokens.empty() || tokens[0] == "comment") {
-      continue;
-    }
-    if (tokens[0] == "format") {
-      if (tokens.size() != 3) {
-        std::cout << "Error: corrupted format info!" << std::endl;
-        return false;
-      }
-      isAscii = tokens[1] == "ascii";
-      version = atof(tokens[2].c_str());
-    } else if (tokens[0] == "element") {
-      if (tokens.size() != 3) {
-        std::cout << "Error: corrupted element info!" << std::endl;
-        return false;
-      }
-      if (tokens[1] == "vertex") {
-        pointCount = atoi(tokens[2].c_str());
-      } else {
-        isVertexProperty = false;
-      }
-    } else if (tokens[0] == "property" && isVertexProperty) {
-      if (tokens.size() != 3) {
-        std::cout << "Error: corrupted property info!" << std::endl;
-        return false;
-      }
-      const std::string& propertyType = tokens[1];
-      const std::string& propertyName = tokens[2];
-      const size_t attributeIndex = attributesInfo.size();
-      attributesInfo.resize(attributeIndex + 1);
-      AttributeInfo& attributeInfo = attributesInfo[attributeIndex];
-      attributeInfo.name = propertyName;
-      if (propertyType == "float64") {
-        attributeInfo.type = ATTRIBUTE_TYPE_FLOAT64;
-        attributeInfo.byteCount = 8;
-      } else if (propertyType == "float" || propertyType == "float32") {
-        attributeInfo.type = ATTRIBUTE_TYPE_FLOAT32;
-        attributeInfo.byteCount = 4;
-      } else if (propertyType == "uint64") {
-        attributeInfo.type = ATTRIBUTE_TYPE_UINT64;
-        attributeInfo.byteCount = 8;
-      } else if (propertyType == "uint32") {
-        attributeInfo.type = ATTRIBUTE_TYPE_UINT32;
-        attributeInfo.byteCount = 4;
-      } else if (propertyType == "uint16") {
-        attributeInfo.type = ATTRIBUTE_TYPE_UINT16;
-        attributeInfo.byteCount = 2;
-      } else if (propertyType == "uchar" || propertyType == "uint8") {
-        attributeInfo.type = ATTRIBUTE_TYPE_UINT8;
-        attributeInfo.byteCount = 1;
-      } else if (propertyType == "int64") {
-        attributeInfo.type = ATTRIBUTE_TYPE_INT64;
-        attributeInfo.byteCount = 8;
-      } else if (propertyType == "int32") {
-        attributeInfo.type = ATTRIBUTE_TYPE_INT32;
-        attributeInfo.byteCount = 4;
-      } else if (propertyType == "int16") {
-        attributeInfo.type = ATTRIBUTE_TYPE_INT16;
-        attributeInfo.byteCount = 2;
-      } else if (propertyType == "char" || propertyType == "int8") {
-        attributeInfo.type = ATTRIBUTE_TYPE_INT8;
-        attributeInfo.byteCount = 1;
-      }
-    } else if (tokens[0] == "end_header") {
-      break;
-    }
   }
-  if (version != 1.0) {
-    std::cout << "Error: non-supported version!" << std::endl;
+
+  Format format;
+  std::vector<PropertyInfo> properties;
+
+  if (!parseHeader(ifs, cloud, format, properties)) {
     return false;
   }
 
-  size_t indexX = PCC_UNDEFINED_INDEX;
-  size_t indexY = PCC_UNDEFINED_INDEX;
-  size_t indexZ = PCC_UNDEFINED_INDEX;
-  size_t indexR = PCC_UNDEFINED_INDEX;
-  size_t indexG = PCC_UNDEFINED_INDEX;
-  size_t indexB = PCC_UNDEFINED_INDEX;
-  size_t indexReflectance = PCC_UNDEFINED_INDEX;
-  size_t indexFrame = PCC_UNDEFINED_INDEX;
-  size_t indexNX = PCC_UNDEFINED_INDEX;
-  size_t indexNY = PCC_UNDEFINED_INDEX;
-  size_t indexNZ = PCC_UNDEFINED_INDEX;
-  // Gaussian Splat Compression
-  size_t indexOpacity = PCC_UNDEFINED_INDEX;
-  size_t indexScaleX = PCC_UNDEFINED_INDEX;
-  size_t indexScaleY = PCC_UNDEFINED_INDEX;
-  size_t indexScaleZ = PCC_UNDEFINED_INDEX;
-  size_t indexRotationW = PCC_UNDEFINED_INDEX;
-  size_t indexRotationX = PCC_UNDEFINED_INDEX;
-  size_t indexRotationY = PCC_UNDEFINED_INDEX;
-  size_t indexRotationZ = PCC_UNDEFINED_INDEX;
-  std::vector<std::vector<size_t>> indexSHCoefficients;
-  int numSHCoeffs = cloud.getNumSHCoeffs();
-  indexSHCoefficients.resize(numSHCoeffs);
-  for (int i = 0; i < numSHCoeffs; i++)
-	  indexSHCoefficients[i].resize(3, PCC_UNDEFINED_INDEX);
+  readVertices(ifs, cloud, attrDescs, positionScale, format, properties);
 
-  const size_t attributeCount = attributesInfo.size();
-  for (size_t a = 0; a < attributeCount; ++a) {
-    auto& attributeInfo = attributesInfo[a];
-    if (
-      attributeInfo.name == attributeNames.position[0]
-      && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
-      indexX = a;
-    } else if (
-      attributeInfo.name == attributeNames.position[1]
-      && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
-      indexY = a;
-    } else if (
-      attributeInfo.name == attributeNames.position[2]
-      && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
-      indexZ = a;
-    } else if (attributeInfo.name == "red" && attributeInfo.byteCount == 1) {
-      indexR = a;
-    } else if (attributeInfo.name == "green" && attributeInfo.byteCount == 1) {
-      indexG = a;
-    } else if (attributeInfo.name == "blue" && attributeInfo.byteCount == 1) {
-      indexB = a;
-    } else if (
-      (attributeInfo.name == "reflectance" || attributeInfo.name == "refc")
-      && attributeInfo.byteCount <= 2) {
-      indexReflectance = a;
-    } else if (
-      attributeInfo.name == "frameindex" && attributeInfo.byteCount <= 2) {
-      indexFrame = a;
-    } else if (
-      attributeInfo.name == "nx"
-      && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
-      indexNX = a;
-    } else if (
-      attributeInfo.name == "ny"
-      && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
-      indexNY = a;
-    } else if (
-      attributeInfo.name == "nz"
-      && (attributeInfo.byteCount == 8 || attributeInfo.byteCount == 4)) {
-      indexNZ = a;
-    }	
-		// Gaussian Splat Compression : Opacity
-		else if (attributeInfo.name == "opacity" && attributeInfo.byteCount <= 4) {	
-			indexOpacity = a;
-		}
-		// Gaussian Splat Compression : Scale
-		else if (attributeInfo.name == "scale_0" && attributeInfo.byteCount <= 4) {
-			indexScaleX = a;
-		}
-		else if (attributeInfo.name == "scale_1" && attributeInfo.byteCount <= 4) {
-			indexScaleY = a;
-		}
-		else if (attributeInfo.name == "scale_2" && attributeInfo.byteCount <= 4) {
-			indexScaleZ = a;
-		}
-		// Gaussian Splat Compression : Rotation
-		else if (attributeInfo.name == "rot_0" && attributeInfo.byteCount <= 4) {
-			indexRotationW = a;
-		}
-		else if (attributeInfo.name == "rot_1" && attributeInfo.byteCount <= 4) {
-			indexRotationX = a;
-		}
-		else if (attributeInfo.name == "rot_2" && attributeInfo.byteCount <= 4) {
-			indexRotationY = a;
-		}
-		else if (attributeInfo.name == "rot_3" && attributeInfo.byteCount <= 4) {
-			indexRotationZ = a;
-		}
-		// Gaussian Splat Compression : SH DC coefficients
-		else if (attributeInfo.name == "f_dc_0" && attributeInfo.byteCount <= 4) {
-			indexSHCoefficients[0][0] = a;
-		}
-		else if (attributeInfo.name == "f_dc_1" && attributeInfo.byteCount <= 4) {
-			indexSHCoefficients[0][1] = a;
-		}
-		else if (attributeInfo.name == "f_dc_2" && attributeInfo.byteCount <= 4) {
-			indexSHCoefficients[0][2] = a;
-		}
-		// Gaussian Splat Compression : SH AC coefficients
-		else if (!attributeInfo.name.compare(0, 7, "f_rest_") && attributeInfo.byteCount <= 4 
-			&& numSHCoeffs > 1) {
-			std::string suffix = attributeInfo.name.substr(7);
-			int f_rest_index = std::stoi(suffix);
+  // Color conversion
+  convertColor(cloud, attrDescs);
 
-			int SHCoeff_index = f_rest_index % (numSHCoeffs - 1) + 1;
-      int yuv_index = f_rest_index / (numSHCoeffs - 1);
+  // Rotation and Scale Canonicalization  
+  canonicalizeRotationAndScale(cloud);
 
-			indexSHCoefficients[SHCoeff_index][yuv_index] = a;
-    }
-  }
-  if (
-    indexX == PCC_UNDEFINED_INDEX || indexY == PCC_UNDEFINED_INDEX
-    || indexZ == PCC_UNDEFINED_INDEX) {
-    std::cout << "Error: missing coordinates!" << std::endl;
-    return false;
-  }
-  bool withColors = indexR != PCC_UNDEFINED_INDEX
-    && indexG != PCC_UNDEFINED_INDEX && indexB != PCC_UNDEFINED_INDEX;
-  bool withReflectances = indexReflectance != PCC_UNDEFINED_INDEX;
-  bool withFrameIndex = indexFrame != PCC_UNDEFINED_INDEX;
-  bool withOpacity = indexOpacity != PCC_UNDEFINED_INDEX;
-  bool withScale = indexScaleX != PCC_UNDEFINED_INDEX
-	  && indexScaleY != PCC_UNDEFINED_INDEX
-	  && indexScaleZ != PCC_UNDEFINED_INDEX;
-  bool withRotation = indexRotationW != PCC_UNDEFINED_INDEX
-	  && indexRotationX != PCC_UNDEFINED_INDEX
-	  && indexRotationY != PCC_UNDEFINED_INDEX
-	  && indexRotationZ != PCC_UNDEFINED_INDEX;
-  bool witSHCoefficients = indexSHCoefficients[0][0] != PCC_UNDEFINED_INDEX
-	  && indexSHCoefficients[0][1] != PCC_UNDEFINED_INDEX
-	  && indexSHCoefficients[0][2] != PCC_UNDEFINED_INDEX;
+  // Analyze Min-Max
+  analyzeMinMax(cloud, attrDescs);
 
-  cloud.addRemoveAttributes(withColors, withReflectances, withOpacity, withScale, withRotation, witSHCoefficients);
-
-  if (withFrameIndex)
-    cloud.addFrameIndex();
-  else
-    cloud.removeFrameIndex();
-
-  cloud.resize(pointCount);
-  if (isAscii) {
-    size_t pointCounter = 0;
-    while (!ifs.eof() && pointCounter < pointCount) {
-      ifs.getline(tmp, MAX_BUFFER_SIZE);
-      getTokens(tmp, sep, tokens);
-      if (tokens.empty()) {
-        continue;
-      }
-      if (tokens.size() < attributeCount) {
-        return false;
-      }
-      auto& position = cloud[pointCounter];
-      position[0] = atof(tokens[indexX].c_str()) * positionScale;
-      position[1] = atof(tokens[indexY].c_str()) * positionScale;
-      position[2] = atof(tokens[indexZ].c_str()) * positionScale;
-      if (cloud.hasColors()) {
-        auto& color = cloud.getColor(pointCounter);
-        color[0] = atoi(tokens[indexG].c_str());
-        color[1] = atoi(tokens[indexB].c_str());
-        color[2] = atoi(tokens[indexR].c_str());
-      }
-      if (cloud.hasReflectances()) {
-        cloud.getReflectance(pointCounter) =
-          uint16_t(atoi(tokens[indexReflectance].c_str()));
-      }
-      if (cloud.hasFrameIndex()) {
-        cloud.getFrameIndex(pointCounter) =
-          uint8_t(atoi(tokens[indexFrame].c_str()));
-      }
-	  // Input format with Ascii is not supported in the current version of Gaussian Splat compression. 
-      ++pointCounter;
-    }
-  } else {
-    double shdc[3];
-    double shac[15][3];
-    double rot[4];
-    float opacity;
-    float scale[3];
-
-    struct Stats {
-      // Min/Max (same behavior as MinMax)
-      double min = std::numeric_limits<double>::infinity();
-      double max = -std::numeric_limits<double>::infinity();
-
-      // Accumulators for mean/stddev
-      uint64_t count = 0;
-      double sum = 0.0;
-      double sumsq = 0.0;  // sum of v^2
-
-      void update(double v)
-      {
-        if (!std::isfinite(v)) return; 
-        if (v < min)
-          min = v;
-        if (v > max)
-          max = v;
-        ++count;
-        sum += v;
-        sumsq += v * v;
-      }
-
-      bool empty() const { return count == 0; }
-      double mean() const
-      {
-        return empty() ? 0.0 : (sum / static_cast<double>(count));
-      }
-
-      // Population stddev (use this if you�re describing all data)
-      double stddev_population() const
-      {
-        if (count == 0)
-          return 0.0;
-        double m = mean();
-        double variance = (sumsq / static_cast<double>(count)) - m * m;
-        return variance > 0.0 ? std::sqrt(variance) : 0.0;
-      }
-
-      // Sample stddev (use this if your data is a sample of a larger population)
-      double stddev_sample() const
-      {
-        if (count <= 1)
-          return 0.0;
-        double n = static_cast<double>(count);
-        double variance = (sumsq - (sum * sum) / n) / (n - 1.0);
-        return variance > 0.0 ? std::sqrt(variance) : 0.0;
-      }
-    };   
-
-    
-    std::unordered_map<std::string, Stats> globalStats;  // keys: "f_dc","f_rest","opacity
-    globalStats.reserve(5);
-    std::vector<GSPoint> gsBuf;
-    
-    globalStats["f_dc"] = Stats{};
-    globalStats["f_rest"] = Stats{};
-    globalStats["opacity"] = Stats{};
-    globalStats["rot"] = Stats{};
-    globalStats["scale"] = Stats{};
-
-    gsBuf.resize(pointCount);
-
-    for (size_t pointCounter = 0; pointCounter < pointCount && !ifs.eof();
-         ++pointCounter) {
-      auto& position = cloud[pointCounter];
-      for (size_t a = 0; a < attributeCount && !ifs.eof(); ++a) {
-        const auto& attributeInfo = attributesInfo[a];
-        if (a == indexX) {
-          if (attributeInfo.byteCount == 4) {
-            float x;
-            ifs.read(reinterpret_cast<char*>(&x), sizeof(float));
-            position[0] = x * positionScale;
-          } else {
-            double x;
-            ifs.read(reinterpret_cast<char*>(&x), sizeof(double));
-            position[0] = x * positionScale;
-          }
-        } else if (a == indexY) {
-          if (attributeInfo.byteCount == 4) {
-            float y;
-            ifs.read(reinterpret_cast<char*>(&y), sizeof(float));
-            position[1] = y * positionScale;
-          } else {
-            double y;
-            ifs.read(reinterpret_cast<char*>(&y), sizeof(double));
-            position[1] = y * positionScale;
-          }
-        } else if (a == indexZ) {
-          if (attributeInfo.byteCount == 4) {
-            float z;
-            ifs.read(reinterpret_cast<char*>(&z), sizeof(float));
-            position[2] = z * positionScale;
-          } else {
-            double z;
-            ifs.read(reinterpret_cast<char*>(&z), sizeof(double));
-            position[2] = z * positionScale;
-          }
-        } else if (a == indexR && attributeInfo.byteCount == 1) {
-          uint8_t val8b;
-          ifs.read(reinterpret_cast<char*>(&val8b), sizeof(uint8_t));
-          cloud.getColor(pointCounter)[2] = val8b;
-        } else if (a == indexG && attributeInfo.byteCount == 1) {
-          uint8_t val8b;
-          ifs.read(reinterpret_cast<char*>(&val8b), sizeof(uint8_t));
-          cloud.getColor(pointCounter)[0] = val8b;
-        } else if (a == indexB && attributeInfo.byteCount == 1) {
-          uint8_t val8b;
-          ifs.read(reinterpret_cast<char*>(&val8b), sizeof(uint8_t));
-          cloud.getColor(pointCounter)[1] = val8b;
-        } else if (a == indexReflectance && attributeInfo.byteCount <= 2) {
-          if (attributeInfo.byteCount == 1) {
-            uint8_t reflectance;
-            ifs.read(reinterpret_cast<char*>(&reflectance), sizeof(uint8_t));
-            cloud.getReflectance(pointCounter) = reflectance;
-          } else {
-            auto& reflectance = cloud.getReflectance(pointCounter);
-            ifs.read(reinterpret_cast<char*>(&reflectance), sizeof(uint16_t));
-          }
-        } else if (a == indexFrame && attributeInfo.byteCount <= 2) {
-          if (attributeInfo.byteCount == 1) {
-            auto& findex = cloud.getFrameIndex(pointCounter);
-            ifs.read(reinterpret_cast<char*>(&findex), sizeof(uint8_t));
-          } else {
-            uint16_t findex;
-            ifs.read(reinterpret_cast<char*>(&findex), sizeof(uint16_t));
-            cloud.getFrameIndex(pointCounter) = uint8_t(findex);
-          }
-        }
-
-				// Gaussian Splat Compression
-				else if (a == indexOpacity && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float _opacity;
-						ifs.read(reinterpret_cast<char*>(&_opacity), sizeof(float));
-            opacity = _opacity*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t _opacity;
-						ifs.read(reinterpret_cast<char*>(&_opacity), sizeof(uint16_t));
-            opacity = _opacity*GS_PROPERTY_SCALE;
-					}
-				}
-				else if (a == indexScaleX && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float scaleX;
-						ifs.read(reinterpret_cast<char*>(&scaleX), sizeof(float));
-            scale[0] = scaleX*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t scaleX;
-						ifs.read(reinterpret_cast<char*>(&scaleX), sizeof(uint16_t));
-            scale[0] = scaleX*GS_PROPERTY_SCALE;
-					}
-				}
-				else if (a == indexScaleY && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float scaleY;
-						ifs.read(reinterpret_cast<char*>(&scaleY), sizeof(float));
-            scale[1] = scaleY*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t scaleY;
-						ifs.read(reinterpret_cast<char*>(&scaleY), sizeof(uint16_t));
-            scale[1] = scaleY*GS_PROPERTY_SCALE;
-					}
-				}
-				else if (a == indexScaleZ && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float scaleZ;
-						ifs.read(reinterpret_cast<char*>(&scaleZ), sizeof(float));
-            scale[2] = scaleZ*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t scaleZ;
-						ifs.read(reinterpret_cast<char*>(&scaleZ), sizeof(uint16_t));
-            scale[2] = scaleZ*GS_PROPERTY_SCALE;
-					}
-				}
-				else if (a == indexRotationW && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float rotationW;
-						ifs.read(reinterpret_cast<char*>(&rotationW), sizeof(float));
-            rot[0] = rotationW*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t rotationW;
-						ifs.read(reinterpret_cast<char*>(&rotationW), sizeof(uint16_t));
-            rot[0] = rotationW*GS_PROPERTY_SCALE;
-					}
-				}
-				else if (a == indexRotationX && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float rotationX;
-						ifs.read(reinterpret_cast<char*>(&rotationX), sizeof(float));
-            rot[1] = rotationX*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t rotationX;
-						ifs.read(reinterpret_cast<char*>(&rotationX), sizeof(uint16_t));
-            rot[1] = rotationX*GS_PROPERTY_SCALE;
-					}
-				}
-				else if (a == indexRotationY && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float rotationY;
-						ifs.read(reinterpret_cast<char*>(&rotationY), sizeof(float));
-            rot[2] = rotationY*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t rotationY;
-						ifs.read(reinterpret_cast<char*>(&rotationY), sizeof(uint16_t));
-            rot[2] = rotationY*GS_PROPERTY_SCALE;
-					}
-				}
-				else if (a == indexRotationZ && attributeInfo.byteCount <= 4) {
-					if (attributeInfo.byteCount == 4) {
-						float rotationZ;
-						ifs.read(reinterpret_cast<char*>(&rotationZ), sizeof(float));
-            rot[3] = rotationZ*GS_PROPERTY_SCALE;
-					}
-					else if (attributeInfo.byteCount == 2) {
-						uint16_t rotationZ;
-						ifs.read(reinterpret_cast<char*>(&rotationZ), sizeof(uint16_t));
-            rot[3] = rotationZ*GS_PROPERTY_SCALE;
-					}
-				}
-				else {
-					bool isSHCoefficient = false;
-					for (int i = 0; i < cloud.getNumSHCoeffs(); i++) {
-						for (int j = 0; j < 3; j++) {
-							if (a == indexSHCoefficients[i][j] && attributeInfo.byteCount <= 4) {
-								if (attributeInfo.byteCount == 4) {
-									float sh_coefficient;
-									ifs.read(reinterpret_cast<char*>(&sh_coefficient), sizeof(float));
-                  if (i==0)
-                    shdc[j] = sh_coefficient*GS_PROPERTY_SCALE;
-                  else
-                    shac[i-1][j] = sh_coefficient*GS_PROPERTY_SCALE;
-
-								}
-								else if (attributeInfo.byteCount == 2) {
-									uint16_t sh_coefficient;
-									ifs.read(reinterpret_cast<char*>(&sh_coefficient), sizeof(uint16_t));          
-                  if (i==0)
-                    shdc[j] = sh_coefficient*GS_PROPERTY_SCALE;
-                  else
-                    shac[i-1][j] = sh_coefficient*GS_PROPERTY_SCALE;
-								}
-								isSHCoefficient = true;
-								break;
-							}
-						}
-					}
-
-					if (!isSHCoefficient) {
-						char buffer[128];
-						ifs.read(buffer, attributeInfo.byteCount);
-					}
-        }
-      }
-      // GS Preprocessing
-      if (witSHCoefficients || withOpacity || withScale || withRotation)
-      {
-        if (externalPrePost) {
-          for (auto& desc: attrDescs){
-            desc.params.attr_frac_bits = 0;
-            desc.params.attr_offset = 0;
-            desc.params.attr_scale_minus1 = 0;
-            if (desc.attr_num_dimensions_minus1 == 0) {
-              if (desc.attributeLabel == KnownAttributeLabel::kOpacity) {
-                auto& attr = cloud.getOpacity(pointCounter);
-                attr = attr_t(PCCClip(opacity, 0.0f, (1 << desc.bitdepth) - 1));
-              } else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-                assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-                auto& attr = cloud.getRotationScalar(pointCounter);
-                attr = attr_t(PCCClip(rot[0], 0.0f, (1 << desc.bitdepth) - 1));
-              }
-            } else {
-              if (desc.attributeLabel == KnownAttributeLabel::kScale) {
-                auto& attr = cloud.getScale(pointCounter);
-                for (int c = 0; c < 3; ++c)
-                  attr[c] = attr_t(PCCClip(scale[c], 0.0f, (1 << desc.bitdepth) - 1));
-              } else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-                assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-                auto& attr = cloud.getRotationVec(pointCounter);
-                for (int c = 0; c < 3; ++c) 
-                  attr[c] = attr_t(PCCClip(rot[c+1], 0.0f, (1 << desc.bitdepth) - 1));
-              }
-              else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-                int SHindex = (int)desc.params.sh_coefficient_label;
-                auto& attr = cloud.getSHCoefficient(SHindex, pointCounter);
-                auto& attr_buf = SHindex ? shac[SHindex-1] : shdc;
-                for (int c = 0; c < 3; ++c) 
-                  attr[c] = attr_t(PCCClip(attr_buf[c], 0.0f, (1 << desc.bitdepth) - 1));
-              }
-            }
-          }
-        } else {
-          RGB2YUV(shdc);
-          for (size_t m =0 ; m < 15 ; m++)
-            RGB2YUV(shac[m]);
-
-          canonicalize(rot, scale);
-
-              
-          // ---- Cache postprocessed GS values for this point ----
-          GSPoint& g = gsBuf[pointCounter];
-
-          // shdc (3)
-          for (int c = 0; c < 3; ++c)
-              g.shdc[c] = shdc[c];
-
-          // shac (15x3)
-          for (int m = 0; m < 15; ++m)
-              for (int c = 0; c < 3; ++c)
-                g.shac[m][c] = shac[m][c];
-
-          // opacity
-          g.opacity = opacity;
-
-          // rot and scale (4 each)
-          for (int c = 0; c < 4; ++c) {
-              g.rot[c] = rot[c];
-          }
-
-          for (int c = 0; c < 3; ++c) {
-              g.scale[c] = scale[c];
-          }
-
-          // ---- Update global min/max (single min/max per group) ----
-          auto& st_dc = globalStats["f_dc"];
-          auto& st_rest = globalStats["f_rest"];
-          auto& st_op = globalStats["opacity"];
-          auto& st_rot = globalStats["rot"];
-          auto& st_scale = globalStats["scale"];
-
-          // f_dc: 3 components share one min/max
-          for (int c = 0; c < 3; ++c)
-              st_dc.update(g.shdc[c]);
-
-          // f_rest: 15x3 coefficients share one min/max
-          for (int m = 0; m < 15; ++m)
-              for (int c = 0; c < 3; ++c)
-                st_rest.update(g.shac[m][c]);
-
-          // opacity: scalar
-          st_op.update(static_cast<double>(g.opacity));
-
-          // rot: 4 components share one min/max
-          for (int c = 0; c < 4; ++c)
-              st_rot.update(g.rot[c]);
-
-          // scale: 3 components share one min/max
-          for (int c = 0; c < 3; ++c)
-              st_scale.update(g.scale[c]);  
-        }        
-      }
-    } 
-
-    // second pass
-    if (!externalPrePost)
-    for (size_t pointCounter = 0; pointCounter < pointCount; ++pointCounter) {
-        const GSPoint& g = gsBuf[pointCounter];
-
-        //for descs
-        int shcoeffidx = (int)cloud.hasSHCoefficients(); 
-        int opacityidx = cloud.getNumSHCoeffs() - 1 + (int)cloud.hasOpacities();
-        int scaleidx = opacityidx + (int)cloud.hasScales();
-        int rotationidx = scaleidx + (int)cloud.hasRotations();
-
-        // --- DC coefficients ---
-        {
-          auto& desc = attrDescs[0];
-          auto attr_frac_bits_scale = 1 << desc.params.attr_frac_bits;
-          const auto& st = globalStats["f_dc"];
-          double min_val = st.min, max_val = st.max;
-          int rounded_min = static_cast<int>(std::lround(min_val));
-          int rounded_max = static_cast<int>(std::lround(max_val));
-
-          // If both are zero, override to [-1, 1]
-          if (rounded_min == 0.0) rounded_min = -1.0;
-          if (rounded_max == 0.0) rounded_max = 1.0;
-
-          int offset = rounded_min;
-          int attr_scale = rounded_max - rounded_min;
-          if (attr_scale <= 0)
-              attr_scale = 1;
-
-          desc.params.attr_offset = offset;
-          desc.params.attr_scale_minus1 = attr_scale - 1;
-
-          for (int c = 0; c < 3; ++c) {
-              double attr = g.shdc[c];
-              cloud.getSHCoefficient(0, pointCounter)[c] = attr_t(PCCClip(
-                round((attr - offset) * attr_frac_bits_scale / attr_scale),
-                0.0f, (1 << desc.bitdepth) - 1));
-          }          
-        }
-
-        // --- AC coefficients ---
-        {
-          auto& desc = attrDescs[shcoeffidx];
-          auto attr_frac_bits_scale = 1 << desc.params.attr_frac_bits;   
-          const auto& st = globalStats["f_rest"];
-          double min_val = st.min, max_val = st.max;
-          int rounded_min = static_cast<int>(std::lround(min_val));
-          int rounded_max = static_cast<int>(std::lround(max_val));
-
-          // If both are zero, override to [-1, 1]
-          if (rounded_min == 0.0) rounded_min = -1.0;
-          if (rounded_max == 0.0) rounded_max = 1.0;
-
-          int offset = rounded_min;
-          int attr_scale = rounded_max - rounded_min;
-          if (attr_scale <= 0)
-              attr_scale = 1;
-
-          desc.params.attr_offset = offset;
-          desc.params.attr_scale_minus1 = attr_scale - 1;    
-
-          for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++) {
-						for (int j = 0; j < 3; j++) {
-									double attr = g.shac[i][j];
-									cloud.getSHCoefficient(i+1, pointCounter)[j] = attr_t(PCCClip(
-                    round((attr - offset) * attr_frac_bits_scale / attr_scale),
-                    0.0f, (1 << desc.bitdepth) - 1));
-								}
-          }
-        }
-
-        // --- Opacity ---
-        {
-          auto& desc = attrDescs[opacityidx];
-          auto attr_frac_bits_scale = 1 << desc.params.attr_frac_bits;
-          const auto& st = globalStats["opacity"];
-          double min_val = st.min, max_val = st.max;
-          int rounded_min = static_cast<int>(std::lround(min_val));
-          int rounded_max = static_cast<int>(std::lround(max_val));
-
-          if (rounded_min == 0.0) rounded_min = -1.0;
-          if (rounded_max == 0.0) rounded_max = 1.0;
-
-          int offset = rounded_min;
-          int attr_scale = rounded_max - rounded_min;
-          if (attr_scale <= 0)
-              attr_scale = 1;
-
-          desc.params.attr_offset = offset;
-          desc.params.attr_scale_minus1 = attr_scale - 1;
-
-          double attr = g.opacity;
-          cloud.getOpacity(pointCounter) = attr_t(PCCClip(
-              round((attr - offset) * attr_frac_bits_scale / attr_scale),
-              0.0f, (1 << desc.bitdepth) - 1));
-        }
-
-        // --- Scale ---
-        {
-          auto& desc = attrDescs[scaleidx];
-          auto attr_frac_bits_scale = 1 << desc.params.attr_frac_bits;
-          const auto& st = globalStats["scale"];
-          double min_val = st.min, max_val = st.max;
-          int rounded_min = static_cast<int>(std::lround(min_val));
-          int rounded_max = static_cast<int>(std::lround(max_val));
-
-          if (rounded_min == 0.0) rounded_min = -1.0;
-          if (rounded_max == 0.0) rounded_max = 1.0;
-
-          int offset = rounded_min;
-          int attr_scale = rounded_max - rounded_min;
-          if (attr_scale <= 0)
-              attr_scale = 1;
-
-          desc.params.attr_offset = offset;
-          desc.params.attr_scale_minus1 = attr_scale - 1;
-
-          for (int c = 0; c < 3; ++c) {
-            double attr = g.scale[c];
-            cloud.getScale(pointCounter)[c] = attr_t(PCCClip(
-                round((attr - offset) * attr_frac_bits_scale / attr_scale),
-                0.0f, (1 << desc.bitdepth) - 1));
-          }
-        }
-
-        // --- Rotation ---
-        {
-          auto& desc = attrDescs[rotationidx];
-          auto attr_frac_bits_scale = 1 << desc.params.attr_frac_bits;
-          const auto& st = globalStats["rot"];
-          double min_val = st.min, max_val = st.max;
-          int rounded_min = static_cast<int>(std::lround(min_val));
-          int rounded_max = static_cast<int>(std::lround(max_val));
-
-          if (rounded_min == 0.0) rounded_min = -1.0;
-          if (rounded_max == 0.0) rounded_max = 1.0;
-
-          int offset = rounded_min;
-          int attr_scale = rounded_max - rounded_min;
-          if (attr_scale <= 0)
-              attr_scale = 1;
-
-          desc.params.attr_offset = offset;
-          desc.params.attr_scale_minus1 = attr_scale - 1;
-
-          cloud.getRotationScalar(pointCounter) = attr_t(PCCClip(
-              round((g.rot[0] - offset) * attr_frac_bits_scale / attr_scale),
-              0.0f, (1 << desc.bitdepth) - 1));
-
-          for (int c = 0; c < 3; ++c) {
-            double attr = g.rot[c + 1];
-            cloud.getRotationVec(pointCounter)[c] = attr_t(PCCClip(
-                round((attr - offset) * attr_frac_bits_scale / attr_scale),
-                0.0f, (1 << desc.bitdepth) - 1));
-          }
-        }
-    }
-  }
+  // Attributes Linear Quantization   
+  quantizationLinear(cloud, attrDescs);
 
   return true;
 }

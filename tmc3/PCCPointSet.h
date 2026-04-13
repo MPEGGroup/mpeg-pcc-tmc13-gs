@@ -50,6 +50,7 @@
 
 #include "PCCMath.h"
 #include "PCCMisc.h"
+#include "hls.h"
 
 #include "gstable.h"
 
@@ -57,7 +58,7 @@ namespace pcc {
 
 //============================================================================
 // The type used for internally representing attribute data
-typedef uint16_t attr_t;
+typedef int32_t attr_t;
 
 // The type used for internally representing positions
 typedef Vec3<int32_t> point_t;
@@ -799,7 +800,67 @@ public:
     }
     return bbox;
   }
+  void setAttribute(KnownAttributeLabel attrLabel)
+  {
+    if (KnownAttributeLabel::kColour == attrLabel)
+      withColors = true;
+    else if (KnownAttributeLabel::kReflectance == attrLabel)
+      withReflectances = true;
+    else if (KnownAttributeLabel::kOpacity == attrLabel)
+      withOpacities = true;
+    else if (KnownAttributeLabel::kScale == attrLabel)
+      withScales = true;
+    else if (KnownAttributeLabel::kRotation == attrLabel) {
+      withRotations = true;
+    }
+    else if (KnownAttributeLabel::kSH_coefficients == attrLabel)
+      withSHCoefficients = true;
+  }
 
+  attr_t& getAttributes(int pointIndex, KnownAttributeLabel& attrLabel, int& channelIdx) {
+    if (KnownAttributeLabel::kColour == attrLabel)
+      return getColor(pointIndex)[channelIdx];
+    else if (KnownAttributeLabel::kReflectance == attrLabel)
+      return getReflectance(pointIndex);
+    else if (KnownAttributeLabel::kOpacity == attrLabel)
+      return getOpacity(pointIndex);
+    // else if (KnownAttributeLabel::kFrameIndex == attrLabel)
+    //  return getFrameIndex(pointIndex);
+    // else if (KnownAttributeLabel::kFrameNumber == attrLabel)
+    //  return getFrameNumber(pointIndex);
+    // else if (KnownAttributeLabel::kMaterialId == attrLabel)
+    //  return getMaterialId(pointIndex);
+    // else if (KnownAttributeLabel::kNormal == attrLabel)
+    //   return getNormal(pointIndex)[channelIdx];
+    else if (KnownAttributeLabel::kScale == attrLabel)
+      return getScale(pointIndex)[channelIdx];
+    else if (KnownAttributeLabel::kRotation == attrLabel) {
+      if (channelIdx == 0) return getRotationScalar(pointIndex);
+      else return getRotationVec(pointIndex)[channelIdx-1];
+    }
+    else if (KnownAttributeLabel::kSH_coefficients == attrLabel)
+      return getSHCoefficient(channelIdx % 16, pointIndex)[channelIdx / 16];
+  }
+
+  std::vector<Vec3<attr_t>>& getAttrVec(AttributeDescription& desc) {
+    if (desc.attributeLabel == KnownAttributeLabel::kColour)
+      return getColor();
+    else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+      return getScale();
+    else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
+      return getRotationVec();
+    else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
+      return getSHCoefficient(int(desc.params.sh_coefficient_label));
+  }
+  std::vector<attr_t>& getAttrScalar(AttributeDescription& desc) {
+    if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+      return getReflectance();
+    else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+      return getOpacity();
+    else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+      return getRotationScalar();
+    }
+  }
   //--------------------------------------------------------------------------
 
 private:

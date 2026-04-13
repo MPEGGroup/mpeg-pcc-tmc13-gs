@@ -650,7 +650,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     " 1: Other")
 
   ("externalPrePost",
-    params.encoder.externalPrePost, true,
+    params.encoder.externalPrePost, false,
     "Perform pre-processing in encoder \n"
     " 0: pre-processing,  1: bypass")
 
