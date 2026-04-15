@@ -724,8 +724,7 @@ PCCTMC3Encoder3::compressPartition(
   auto attrEncoder = makeAttributeEncoder();
 
   // for each attribute
-  for (const auto& it : params->attributeIdxMap) {
-    int attrIdx = it.second;
+  for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
     const auto& attr_aps = *_aps[attrIdx];
     const auto& attr_enc = params->attr[attrIdx];
