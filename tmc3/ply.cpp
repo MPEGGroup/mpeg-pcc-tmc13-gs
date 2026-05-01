@@ -53,7 +53,7 @@ namespace pcc {
 
 //============================================================================
 
-void RGB2YUV(float (&src)[3])
+void RGB2YUV(double (&src)[3])
 {
   double R = src[0];
   double G = src[1];
@@ -189,6 +189,26 @@ canonicalize(double quat[4], float scale[3])
   quat[1] *= inorm;
   quat[2] *= inorm;
   quat[3] *= inorm;
+}
+
+const AttributeDescription& getAttributeDescription(
+  const std::vector<AttributeDescription>& attrDescs, 
+  KnownAttributeLabel attributeLabel, int index)
+{
+  for(auto& desc: attrDescs) {
+    if (desc.attributeLabel == attributeLabel)
+    {
+      if(desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+        if (int(desc.params.sh_coefficient_label) == index) return desc;
+      }
+      else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+        if (int(desc.params.rotation_component_label) == index) return desc;
+      }
+      else {
+        return desc;
+      }
+    }
+  }
 }
 
 bool
@@ -371,7 +391,7 @@ ply::write(
 			if (cloud.hasSHCoefficients()) {
 				// SH DC
         double shdc[3];
-        auto desc = attrDescs[0];
+        auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
         auto offset = desc.params.attr_offset;
         auto attr_frac_bits = desc.params.attr_frac_bits;
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
@@ -389,12 +409,12 @@ ply::write(
 
 				// SH AC
         double shac[15][3];
-        desc = attrDescs[shcoeffidx];
-        offset = desc.params.attr_offset;
-        attr_frac_bits = desc.params.attr_frac_bits;
-        attr_scale     = desc.params.attr_scale_minus1 + 1;
 				for (int k = 0; k < 3; k++) {
 					for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
+            desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
+            offset = desc.params.attr_offset;
+            attr_frac_bits = desc.params.attr_frac_bits;
+            attr_scale     = desc.params.attr_scale_minus1 + 1;
             int32_t attr = int32_t(cloud.getSHCoefficient(m, i)[k]);
             double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
             shac[m-1][k] = buf;
@@ -412,7 +432,7 @@ ply::write(
 				}
 			}
 			if (cloud.hasOpacities()) {
-        auto desc = attrDescs[opacityidx];
+        auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kOpacity, 0);
         auto offset = desc.params.attr_offset;
         auto attr_frac_bits = desc.params.attr_frac_bits;
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
@@ -423,7 +443,7 @@ ply::write(
 			}
 			if (cloud.hasScales()) {
         float scale[3];
-        auto desc = attrDescs[scaleidx];
+        auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kScale, 0);
         auto offset = desc.params.attr_offset;
         auto attr_frac_bits = desc.params.attr_frac_bits;
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
@@ -437,18 +457,25 @@ ply::write(
 			}
 			if (cloud.hasRotations()) {
         double rot[4] = {1.0, 0.0, 0.0, 0.0};
-        auto desc = attrDescs[rotationidx];
-        auto offset = desc.params.attr_offset;
-        auto attr_frac_bits = desc.params.attr_frac_bits;
-        auto attr_scale     = desc.params.attr_scale_minus1 + 1;
-        
+        {
+          auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kRotation, 0);
+          auto offset = desc.params.attr_offset;
+          auto attr_frac_bits = desc.params.attr_frac_bits;
+          auto attr_scale     = desc.params.attr_scale_minus1 + 1;
+          for (int k = 0; k < 3; k++) {
+            int32_t attr = int32_t(cloud.getRotationVec(i)[k]);
+            double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
+            rot[k+1]= buf;
+          }
+        }
+
         if (externalPrePost)
-        rot[0] = double(int32_t(cloud.getRotationScalar(i))) * attr_scale / (1<<attr_frac_bits) + offset;
-        
-        for (int k = 0; k < 3; k++) {
-          int32_t attr = int32_t(cloud.getRotationVec(i)[k]);
-          double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
-          rot[k+1]= buf;
+        {
+          auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kRotation, 1);
+          auto offset = desc.params.attr_offset;
+          auto attr_frac_bits = desc.params.attr_frac_bits;
+          auto attr_scale     = desc.params.attr_scale_minus1 + 1;
+          rot[0] = double(int32_t(cloud.getRotationScalar(i))) * attr_scale / (1<<attr_frac_bits) + offset;
         }
 
         // Estimate the real part of the quaternion
@@ -591,9 +618,6 @@ bool ply::parseHeader(
 }
 
 bool ply::isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDescription>& attrDescs) {
-  if (prop.name == "x" || prop.name == "y" || prop.name == "z")
-    return true;
-  
   for (auto &desc: attrDescs) {
     if (desc.attributeLabel.known_attribute_label == prop.attrLabel)
     {
@@ -612,16 +636,20 @@ bool ply::isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDe
 bool ply::readVertices(
   std::ifstream& ifs, 
   PCCPointSet3& cloud, const std::vector<AttributeDescription>& attrDescs, double positionScale,
-  Format& format, std::vector<PropertyInfo>& properties)
+  Format& format, std::vector<PropertyInfo>& properties, std::vector<double>& inputAttrBuf)
 {
-  std::vector<bool> keepProp(properties.size(), false);
+  int pointCount = cloud.getPointCount();
+  int attrIdx = 0;
   for (int i = 0; i < properties.size(); ++i) {
     PropertyInfo& prop = properties[i];
     if (isRequestedAttribute(prop, attrDescs)) {
-      keepProp[i] = true;
+      prop.attr_idx = attrIdx++;
+    } else {
+      prop.attr_idx = -1;
     }
   }
-
+  
+  inputAttrBuf.resize(attrIdx * pointCount);
   for (size_t i = 0; i < cloud.getPointCount(); ++i) {
     for (size_t j = 0; j < properties.size(); ++j) {
       PropertyInfo& prop = properties[j];
@@ -631,13 +659,10 @@ bool ply::readVertices(
       } else {
         value = readTypedDataBinary(ifs, prop.type);
       }
-      if (keepProp[j]) {
-        if (prop.name == "x" || prop.name == "y" || prop.name == "z") {
-          cloud[i][prop.channel] = value * positionScale;
-        } else {
-          attr_t& attr = cloud.getAttributes(i, prop.attrLabel, prop.channel);
-          reinterpret_cast<float*>(&attr)[0] = value;
-        }
+      if (prop.name == "x" || prop.name == "y" || prop.name == "z") {
+        cloud[i][prop.channel] = value * positionScale;
+      } else if (prop.attr_idx > -1) {
+        inputAttrBuf[prop.attr_idx * pointCount + i] = value;
       }
     }
   }
@@ -645,119 +670,181 @@ bool ply::readVertices(
   return true;
 }
 
+std::vector<int> getAttrIndices(const AttributeDescription& desc, const std::vector<ply::PropertyInfo>& properties)
+{
+  std::vector<int> indices;
+  for (const auto& prop : properties)
+  {
+    if (desc.attributeLabel != prop.attrLabel) {
+      continue;
+    }
+
+    int target_idx = -1;
+
+    if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
+    {
+      if (int(desc.params.sh_coefficient_label) == (prop.channel % 16)) {
+        target_idx = prop.channel / 16;
+      }
+    } 
+    else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
+    {
+      if (int(desc.params.rotation_component_label) == 0) {
+        if (prop.channel > 0) target_idx = prop.channel - 1;
+      } else {
+        if (prop.channel == 0) target_idx = prop.channel;
+      }
+    } 
+    else 
+    {
+        target_idx = prop.channel;
+    }
+
+    if (target_idx >= 0) {
+      if (target_idx >= indices.size()) {
+        indices.resize(target_idx + 1, -1);
+      }
+      indices[target_idx] = prop.attr_idx;
+    }
+  }
+  return indices;
+}
+
+std::vector<int> getAttrIndices(
+  AttributeLabel attributeLabel, 
+  const std::vector<ply::PropertyInfo>& properties)
+{
+    std::vector<int> indices;
+    for (const auto& prop : properties)
+    {
+        if (attributeLabel != prop.attrLabel) {
+          continue;
+        }
+
+        if (prop.channel >= indices.size()) {
+            indices.resize(prop.channel + 1, -1); 
+        }
+        
+        indices[prop.channel] = prop.attr_idx;
+    }
+    return indices;
+}
 
 bool
 ply::convertColor (
-  PCCPointSet3& cloud,
-  std::vector<AttributeDescription>& attrDescs) 
+  int pointCount,
+  std::vector<double>& inputAttrBuf,
+  std::vector<AttributeDescription>& attrDescs, 
+  std::vector<PropertyInfo>& properties) 
 {
-  int pointCount = cloud.getPointCount();
-
   for (auto& desc : attrDescs)
   {
     if (desc.attr_num_dimensions_minus1 == 2 
-        && (desc.attributeLabel == KnownAttributeLabel::kColour 
-        || desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)) {
+        && desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 
-      auto& attrs = cloud.getAttrVec(desc);
+      double* buf[3];
+      std::vector<int> indices = getAttrIndices(desc, properties);
+
+      buf[0] = &inputAttrBuf[indices[0] * pointCount];
+      buf[1] = &inputAttrBuf[indices[1] * pointCount];
+      buf[2] = &inputAttrBuf[indices[2] * pointCount];
+
       for (int i = 0; i < pointCount; i++)
       {
-        float attr_flt[3];
-        std::memcpy(attr_flt, &attrs[i][0], sizeof(float) * 3); 
-        
-        RGB2YUV(attr_flt);
+        double buf_tmp[3];
 
-        std::memcpy(&attrs[i][0], attr_flt, sizeof(float) * 3); 
+        buf_tmp[0] = buf[0][i];
+        buf_tmp[1] = buf[1][i];
+        buf_tmp[2] = buf[2][i];
+
+        RGB2YUV(buf_tmp);
+
+        buf[0][i] = buf_tmp[0];
+        buf[1][i] = buf_tmp[1];
+        buf[2][i] = buf_tmp[2];
       }
     }
   }
-
   return true;
 }
 
 bool
 ply::canonicalizeRotationAndScale (
-  PCCPointSet3& cloud) 
+  int pointCount,
+  std::vector<double>& inputAttrBuf,
+  std::vector<AttributeDescription>& attrDescs, 
+  std::vector<PropertyInfo>& properties) 
 {
-  if(!cloud.hasRotations() || !cloud.hasScales())
-    return true;
+  double* bufRot[4];
+  std::vector<int> indicesRot = getAttrIndices(KnownAttributeLabel::kRotation, properties);
+  if (indicesRot.empty()) return false;
 
-  int pointCount = cloud.getPointCount();
-  std::vector<Vec3<attr_t>>& scale_xyz = cloud.getScale();
-  std::vector<Vec3<attr_t>>& rot_xyz = cloud.getRotationVec();
-  std::vector<attr_t>& rot_w = cloud.getRotationScalar();
+  bufRot[0] = &inputAttrBuf[indicesRot[0] * pointCount];
+  bufRot[1] = &inputAttrBuf[indicesRot[1] * pointCount];
+  bufRot[2] = &inputAttrBuf[indicesRot[2] * pointCount];
+  bufRot[3] = &inputAttrBuf[indicesRot[3] * pointCount];
+
+  double* bufScale[3];
+  std::vector<int> indicesScale = getAttrIndices(KnownAttributeLabel::kScale, properties);
+  if (indicesScale.empty()) return false;
+
+  bufScale[0] = &inputAttrBuf[indicesScale[0] * pointCount];
+  bufScale[1] = &inputAttrBuf[indicesScale[1] * pointCount];
+  bufScale[2] = &inputAttrBuf[indicesScale[2] * pointCount];
 
   double quat[4];
   float scale[3];
   for (int i = 0; i < pointCount; i++)
   {
-    float rot[4];
+    // input
+    quat[0] = bufRot[0][i];
+    quat[1] = bufRot[1][i];
+    quat[2] = bufRot[2][i];
+    quat[3] = bufRot[3][i];
     
-    std::memcpy(&rot[0], &rot_w[i], sizeof(float));
-    std::memcpy(&rot[1], &rot_xyz[i][0], sizeof(float) * 3);
+    scale[0] = bufScale[0][i];
+    scale[1] = bufScale[1][i];
+    scale[2] = bufScale[2][i];
 
-    quat[0] = rot[0];
-    quat[1] = rot[1];
-    quat[2] = rot[2];
-    quat[3] = rot[3];
-    std::memcpy(&scale[0], &scale_xyz[i][0], sizeof(float) * 3);
-
+    // processing
     canonicalize(quat, scale);
 
-    rot[0] = quat[0];
-    rot[1] = quat[1];
-    rot[2] = quat[2];
-    rot[3] = quat[3];
-
-    std::memcpy(&rot_w[i], &rot[0], sizeof(float));
-    std::memcpy(&rot_xyz[i][0], &rot[1], sizeof(float) * 3);
-    std::memcpy(&scale_xyz[i][0], &scale[0], sizeof(float) * 3);
+    // output
+    bufRot[0][i] = quat[0];
+    bufRot[1][i] = quat[1];
+    bufRot[2][i] = quat[2];
+    bufRot[3][i] = quat[3];
+    
+    bufScale[0][i] = scale[0];
+    bufScale[1][i] = scale[1];
+    bufScale[2][i] = scale[2];
   }
 
   return true;
 }
 
-
 bool
 ply::analyzeMinMax (
-  PCCPointSet3& cloud,
-  std::vector<AttributeDescription>& attrDescs) 
+  int pointCount,
+  std::vector<double>& inputAttrBuf,
+  std::vector<AttributeDescription>& attrDescs, 
+  std::vector<PropertyInfo>& properties) 
 {
-  int pointCount = cloud.getPointCount();  
-  std::vector<Stats> stats(attrDescs.size());
-
   for (int d = 0; d < attrDescs.size(); d++)
   {
     AttributeDescription& desc = attrDescs[d];
-    Stats& stat = stats[d]; 
+    Stats stat;
     
-    if (desc.attr_num_dimensions_minus1 == 0) {
-      auto& attrs = cloud.getAttrScalar(desc);
-      for (int i = 0; i < pointCount; i++)
-      {
-        float attr_flt;
-        std::memcpy(&attr_flt, &attrs[i], sizeof(float));
-        stat.update(attr_flt);
-      }
-    } else {
-      auto& attrs = cloud.getAttrVec(desc);
-      for (int i = 0; i < pointCount; i++)
-      {
-        float attr_flt[3];
-        std::memcpy(attr_flt, &attrs[i][0], sizeof(float) * 3); 
-        for (int c = 0; c < 3; c++)
-        {
-          stat.update(attr_flt[c]);
-        }
+    std::vector<int> indices = getAttrIndices(desc, properties);
+    for (int c = 0; c < indices.size(); c++) {
+      double* buf = &inputAttrBuf[indices[c] * pointCount];
+      for (int i = 0; i < pointCount; i++) {
+        stat.update(buf[i]);
       }
     }
-    
-    int rounded_min = static_cast<int>(std::lround(stat.min));
-    int rounded_max = static_cast<int>(std::lround(stat.max));
 
-    if (rounded_min == 0) rounded_min = -1;
-    if (rounded_max == 0) rounded_max = 1;
-
+    int rounded_min = static_cast<int>(std::floor(stat.min));
+    int rounded_max = static_cast<int>(std::ceil(stat.max));
     int offset = rounded_min;
     int attr_scale = rounded_max - rounded_min;
     if (attr_scale <= 0)
@@ -775,7 +862,9 @@ ply::analyzeMinMax (
 bool
 ply::quantizationLinear (
   PCCPointSet3& cloud,
-  std::vector<AttributeDescription>& attrDescs) 
+  std::vector<double>& inputAttrBuf,
+  std::vector<AttributeDescription>& attrDescs, 
+  std::vector<PropertyInfo>& properties) 
 {
   int pointCount = cloud.getPointCount();  
   for (auto& desc : attrDescs)
@@ -783,31 +872,35 @@ ply::quantizationLinear (
     int offset = desc.params.attr_offset;
     int attr_scale = desc.params.attr_scale_minus1 + 1;
     auto attr_frac_bits_scale = 1ULL << desc.params.attr_frac_bits;
-    int clip_max = (1 << desc.bitdepth) - 1;
+    float clip_max = (1 << desc.bitdepth) - 1;
+    
+    if (desc.attr_num_dimensions_minus1 == 0)
+    {
+      double* src;
+      std::vector<int> indices = getAttrIndices(desc, properties);
+      src = &inputAttrBuf[indices[0]*pointCount];
 
-    if (desc.attr_num_dimensions_minus1 == 0) {
-      auto& attrs = cloud.getAttrScalar(desc);
+      auto& dst = cloud.getAttrScalar(desc);
       for (int i = 0; i < pointCount; i++)
       {
-        float attr_flt;
-        std::memcpy(&attr_flt, &attrs[i], sizeof(float));
-
-        attrs[i] = attr_t(PCCClip<int>(
-          static_cast<int>(std::round((attr_flt - offset) * attr_frac_bits_scale / attr_scale)),
-          0, clip_max));
+        dst[i] = attr_t(PCCClip(
+                round((src[i] - offset) * attr_frac_bits_scale / attr_scale),
+                0.0f, clip_max));
       }
     } else {
-      auto& attrs = cloud.getAttrVec(desc);
-      for (int i = 0; i < pointCount; i++)
-      {
-        float attr_flt[3];
-        std::memcpy(attr_flt, &attrs[i][0], sizeof(float) * 3); 
+      double* src[3];
+      std::vector<int> indices = getAttrIndices(desc, properties);
+      src[0] = &inputAttrBuf[indices[0]*pointCount];
+      src[1] = &inputAttrBuf[indices[1]*pointCount];
+      src[2] = &inputAttrBuf[indices[2]*pointCount];
 
-        for (int c = 0; c < 3; c++)
-        {
-          attrs[i][c] = attr_t(PCCClip<int>(
-            static_cast<int>(std::round((attr_flt[c] - offset) * attr_frac_bits_scale / attr_scale)),
-            0, clip_max));
+      auto& dst = cloud.getAttrVec(desc);
+
+      for (int c = 0; c < 3; c++) {
+        for (int i = 0; i < pointCount; i++) {
+          dst[i][c] = attr_t(PCCClip(
+                round((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
+                0.0f, clip_max));
         }
       }
     }
@@ -836,19 +929,23 @@ ply::read(
     return false;
   }
 
-  readVertices(ifs, cloud, attrDescs, positionScale, format, properties);
+  std::vector<double> inputAttrBuf;
+  readVertices(ifs, cloud, attrDescs, positionScale, format, properties, inputAttrBuf);
+  
+  if (!externalPrePost)
+  {
+    // Color conversion
+    convertColor(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
 
-  // Color conversion
-  convertColor(cloud, attrDescs);
+    // Rotation and Scale Canonicalization
+    canonicalizeRotationAndScale(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
 
-  // Rotation and Scale Canonicalization  
-  canonicalizeRotationAndScale(cloud);
-
-  // Analyze Min-Max
-  analyzeMinMax(cloud, attrDescs);
+    // Analyze Min-Max
+    analyzeMinMax(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
+  }
 
   // Attributes Linear Quantization   
-  quantizationLinear(cloud, attrDescs);
+  quantizationLinear(cloud, inputAttrBuf, attrDescs, properties);
 
   return true;
 }

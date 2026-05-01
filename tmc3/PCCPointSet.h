@@ -58,7 +58,7 @@ namespace pcc {
 
 //============================================================================
 // The type used for internally representing attribute data
-typedef int32_t attr_t;
+typedef uint16_t attr_t;
 
 // The type used for internally representing positions
 typedef Vec3<int32_t> point_t;
@@ -815,31 +815,6 @@ public:
     }
     else if (KnownAttributeLabel::kSH_coefficients == attrLabel)
       withSHCoefficients = true;
-  }
-
-  attr_t& getAttributes(int pointIndex, KnownAttributeLabel& attrLabel, int& channelIdx) {
-    if (KnownAttributeLabel::kColour == attrLabel)
-      return getColor(pointIndex)[channelIdx];
-    else if (KnownAttributeLabel::kReflectance == attrLabel)
-      return getReflectance(pointIndex);
-    else if (KnownAttributeLabel::kOpacity == attrLabel)
-      return getOpacity(pointIndex);
-    // else if (KnownAttributeLabel::kFrameIndex == attrLabel)
-    //  return getFrameIndex(pointIndex);
-    // else if (KnownAttributeLabel::kFrameNumber == attrLabel)
-    //  return getFrameNumber(pointIndex);
-    // else if (KnownAttributeLabel::kMaterialId == attrLabel)
-    //  return getMaterialId(pointIndex);
-    // else if (KnownAttributeLabel::kNormal == attrLabel)
-    //   return getNormal(pointIndex)[channelIdx];
-    else if (KnownAttributeLabel::kScale == attrLabel)
-      return getScale(pointIndex)[channelIdx];
-    else if (KnownAttributeLabel::kRotation == attrLabel) {
-      if (channelIdx == 0) return getRotationScalar(pointIndex);
-      else return getRotationVec(pointIndex)[channelIdx-1];
-    }
-    else if (KnownAttributeLabel::kSH_coefficients == attrLabel)
-      return getSHCoefficient(channelIdx % 16, pointIndex)[channelIdx / 16];
   }
 
   std::vector<Vec3<attr_t>>& getAttrVec(AttributeDescription& desc) {

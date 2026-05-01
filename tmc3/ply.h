@@ -152,6 +152,7 @@ namespace ply {
     KnownAttributeLabel attrLabel;
     int channel;
     PlyType type;
+    int attr_idx;
   };
 
   void stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx);
@@ -160,15 +161,37 @@ namespace ply {
 
   bool isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDescription>& attrDescs);
 
-  bool readVertices(std::ifstream& ifs, PCCPointSet3& cloud, const std::vector<AttributeDescription>& attrDescs, double positionScale, Format& format, std::vector<PropertyInfo>& properties);
+  bool readVertices(
+    std::ifstream& ifs, 
+    PCCPointSet3& cloud, const std::vector<AttributeDescription>& attrDescs, double positionScale,
+    Format& format, std::vector<PropertyInfo>& properties, std::vector<double>& inputAttrBuf);
 
-  bool convertColor (PCCPointSet3& cloud, std::vector<AttributeDescription>& attrDescs);
+  bool
+  convertColor (
+    int pointCount,
+    std::vector<double>& inputAttrBuf,
+    std::vector<AttributeDescription>& attrDescs, std::vector<PropertyInfo>& properties);
 
-  bool canonicalizeRotationAndScale (PCCPointSet3& cloud);
+  bool
+  canonicalizeRotationAndScale (
+    int pointCount,
+    std::vector<double>& inputAttrBuf,
+    std::vector<AttributeDescription>& attrDescs, 
+    std::vector<PropertyInfo>& properties);
 
-  bool analyzeMinMax (PCCPointSet3& cloud, std::vector<AttributeDescription>& attrDescs);
+  bool
+  analyzeMinMax (
+    int pointCount,
+    std::vector<double>& inputAttrBuf,
+    std::vector<AttributeDescription>& attrDescs, 
+    std::vector<PropertyInfo>& properties);
 
-  bool quantizationLinear (PCCPointSet3& cloud, std::vector<AttributeDescription>& attrDescs);
+  bool
+  quantizationLinear (
+    PCCPointSet3& cloud,
+    std::vector<double>& inputAttrBuf,
+    std::vector<AttributeDescription>& attrDescs, 
+    std::vector<PropertyInfo>& properties);
 
   inline PlyType stringToPlyType(const std::string& typeStr) {
       if (typeStr == "char" || typeStr == "int8") return PlyType::INT8;
