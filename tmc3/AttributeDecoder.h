@@ -73,7 +73,7 @@ public:
 protected:
   // todo(df): consider alternative encapsulation
 
-  void decodeReflectancesLift(
+  void decodeAttributeLift(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const AttributeBrickHeader& abh,
@@ -83,17 +83,7 @@ protected:
     PCCResidualsDecoder& decoder,
     PCCPointSet3& pointCloud);
 
-  void decodeColorsLift(
-    const AttributeDescription& desc,
-    const AttributeParameterSet& aps,
-    const AttributeBrickHeader& abh,
-    const QpSet& qpSet,
-    int geom_num_points_minus1,
-    int minGeomNodeSizeLog2,
-    PCCResidualsDecoder& decoder,
-    PCCPointSet3& pointCloud);
-
-  void decodeReflectancesPred(
+  void decodeAttributePred(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const AttributeBrickHeader& abh,
@@ -101,34 +91,20 @@ protected:
     PCCResidualsDecoder& decoder,
     PCCPointSet3& pointCloud);
 
-  void decodeColorsPred(
-    const AttributeDescription& desc,
-    const AttributeParameterSet& aps,
-    const AttributeBrickHeader& abh,
-    const QpSet& qpSet,
-    PCCResidualsDecoder& decoder,
-    PCCPointSet3& pointCloud);
-
-  void decodeReflectancesRaht(
+  void decodeAttributeRaht(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const QpSet& qpSet,
     PCCResidualsDecoder& decoder,
     PCCPointSet3& pointCloud);
 
-  void decodeColorsRaht(
-    const AttributeDescription& desc,
-    const AttributeParameterSet& aps,
-    const QpSet& qpSet,
-    PCCResidualsDecoder& decoder,
-    PCCPointSet3& pointCloud);
-
-  static void decodePredModeColor(
+  static void decodePredModeAttrMultiComp(
     const AttributeParameterSet& aps,
     Vec3<int32_t>& coeff,
-    PCCPredictor& predictor);
+    PCCPredictor& predictor,
+    int attribCount);
 
-  static void decodePredModeRefl(
+  static void decodePredModeAttrSingleComp(
     const AttributeParameterSet& aps, int32_t& coeff, PCCPredictor& predictor);
 
 private:
