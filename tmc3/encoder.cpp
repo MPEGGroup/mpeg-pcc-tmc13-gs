@@ -564,7 +564,7 @@ PCCTMC3Encoder3::fixupParameterSets(EncoderParams* params)
     params->gps.geom_planar_mode_enabled_flag = false;
 
   // fixup attribute parameters
-  for (auto it : params->attributeIdxMap) {
+  for (auto it : params->attributeTable) {
     auto& attr_sps = params->sps.attributeSets[it.second];
     auto& attr_aps = params->aps[it.second];
     auto& attr_enc = params->attr[it.second];

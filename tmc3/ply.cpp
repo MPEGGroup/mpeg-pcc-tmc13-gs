@@ -209,6 +209,8 @@ const AttributeDescription& getAttributeDescription(
       }
     }
   }
+  assert(0);
+  return attrDescs[0];
 }
 
 bool
@@ -902,6 +904,15 @@ ply::quantizationLinear (
                 round((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
                 0.0f, clip_max));
         }
+      }
+    }
+    
+    if (!desc.params.input_attr_default_value.empty()) {
+      for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
+        desc.params.attr_default_value[c] = 
+          attr_t(PCCClip(
+            round((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
+            0.0f, (1 << desc.bitdepth) - 1));
       }
     }
   }

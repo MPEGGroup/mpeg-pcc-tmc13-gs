@@ -79,7 +79,7 @@ struct EncoderParams {
   std::vector<EncoderAttributeParams> attr;
 
   // todo(df): this should go away
-  std::map<std::string, int> attributeIdxMap;
+  std::vector<std::pair<std::string, int>> attributeTable;
 
   // Determine the sequence bonuding box using the first input frame
   bool autoSeqBbox;

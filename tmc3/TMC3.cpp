@@ -554,20 +554,13 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       //
 
       // NB: insert returns any existing element
-      const auto& it = params.encoder.attributeIdxMap.insert(
-        {name, int(params.encoder.attributeIdxMap.size())});
+      params.encoder.attributeTable.push_back(
+        {name, int(params.encoder.attributeTable.size())});
 
-      if (it.second) {
-        params.encoder.sps.attributeSets.push_back(params_attr.desc);
-        params.encoder.aps.push_back(params_attr.aps);
-        params.encoder.attr.push_back(params_attr.encoder);
-        return;
-      }
+      params.encoder.sps.attributeSets.push_back(params_attr.desc);
+      params.encoder.aps.push_back(params_attr.aps);
+      params.encoder.attr.push_back(params_attr.encoder);
 
-      // update existing entry
-      params.encoder.sps.attributeSets[it.first->second] = params_attr.desc;
-      params.encoder.aps[it.first->second] = params_attr.aps;
-      params.encoder.attr[it.first->second] = params_attr.encoder;
     };
 
   /* clang-format off */
@@ -1028,7 +1021,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Attribute bitdepth")
 
   ("defaultValue",
-    params_attr.desc.params.attr_default_value, {},
+    params_attr.desc.params.input_attr_default_value, {},
     "Default attribute component value(s) in case of data omission")
 
   // todo(df): this should be per-attribute
@@ -1323,7 +1316,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     po::dumpCfg(cout, opts, "Geometry", 4);
     po::dumpCfg(cout, opts, "Recolouring", 4);
 
-    for (const auto& it : params.encoder.attributeIdxMap) {
+    for (const auto& it : params.encoder.attributeTable) {
       // NB: when dumping the config, opts references params_attr
       params_attr.desc = params.encoder.sps.attributeSets[it.second];
       params_attr.aps = params.encoder.aps[it.second];
@@ -1435,16 +1428,16 @@ sanitizeEncoderOpts(
 
   // support disabling attribute coding (simplifies configuration)
   if (params.disableAttributeCoding) {
-    params.encoder.attributeIdxMap.clear();
+    params.encoder.attributeTable.clear();
     params.encoder.sps.attributeSets.clear();
     params.encoder.aps.clear();
   }
 
   // allocate list of attr DU mode
-  params.encoder.attr_DU_modes.resize(params.encoder.attributeIdxMap.size());
+  params.encoder.attr_DU_modes.resize(params.encoder.attributeTable.size());
 
   // fixup any per-attribute settings
-  for (const auto& it : params.encoder.attributeIdxMap) {
+  for (const auto& it : params.encoder.attributeTable) {
     auto& attr_sps = params.encoder.sps.attributeSets[it.second];
     auto& attr_aps = params.encoder.aps[it.second];
     auto& attr_enc = params.encoder.attr[it.second];
@@ -1531,19 +1524,26 @@ sanitizeEncoderOpts(
     if (attrMeta.cicp_matrix_coefficients_idx == ColourMatrix::kYCgCo)
       attr_sps.bitdepth++;
 
-    attr_sps.attr_instance_id = it.second; //todo: fix temporary implementation
-
     // Extend the default attribute value to the correct width if present
-    int& attr_DU_mode = params.encoder.attr_DU_modes[attr_sps.attr_instance_id];
+    int& attr_DU_mode = params.encoder.attr_DU_modes[it.second];
     attr_DU_mode = 1; // ADU
-    if (!attrMeta.attr_default_value.empty()) {
-      attrMeta.attr_default_value.resize(
+    if (!attrMeta.input_attr_default_value.empty()) {
+      // double input default values
+      attrMeta.input_attr_default_value.resize(
         attr_sps.attr_num_dimensions_minus1 + 1,
-        attrMeta.attr_default_value.back());
+        attrMeta.input_attr_default_value.back());
+      
+      // integer default values
+      attrMeta.attr_default_value.resize(
+        attr_sps.attr_num_dimensions_minus1 + 1);
 
-      if (attrMeta.attr_default_value[0] == -1)
+      for (int i = 0; i < attr_sps.attr_num_dimensions_minus1 + 1; i++)
+        attrMeta.attr_default_value[i] = std::round(attrMeta.input_attr_default_value[i]);
+
+      if (attrMeta.attr_default_value[0] == -1) {
         attrMeta.attr_default_value.clear();
-      else {
+        attrMeta.input_attr_default_value.clear();
+      } else {
         // check default values are same as maximum value
         attr_DU_mode = 0; // None, infered at decoder
         int InferedDefaultValue = 1<<(attr_sps.bitdepth-1);
@@ -1554,8 +1554,10 @@ sanitizeEncoderOpts(
             break;
           }
         }
-        if (!attr_DU_mode)
+        if (!attr_DU_mode) {
           attrMeta.attr_default_value.clear(); 
+          attrMeta.input_attr_default_value.clear();
+        }
       }
     }
     // In order to simplify specification of dist2 values, which are
@@ -1688,8 +1690,8 @@ sanitizeEncoderOpts(
     < params.encoder.partition.sliceMinPoints)
     err.error()
       << "sliceMaxPoints must be greater than or equal to sliceMinPoints\n";
-
-  for (const auto& it : params.encoder.attributeIdxMap) {
+  
+  for (const auto& it : params.encoder.attributeTable) {
     const auto& attr_sps = params.encoder.sps.attributeSets[it.second];
     const auto& attr_aps = params.encoder.aps[it.second];
     auto& attr_enc = params.encoder.attr[it.second];
@@ -1882,35 +1884,43 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     sortByAzimuth(
       pointCloud, 0, pointCloud.getPointCount(), 0., _angularOrigin);
 
+  auto hasAttr = [&](const std::string& name) {
+      return std::find_if(params->encoder.attributeTable.begin(), 
+                          params->encoder.attributeTable.end(),
+                          [&](const std::pair<std::string, int>& element) {
+                              return element.first == name; 
+                          }) != params->encoder.attributeTable.end();
+  };
+
   // Sanitise the input point cloud
   // todo(df): remove the following with generic handling of properties
-  bool codeColour = params->encoder.attributeIdxMap.count("color");
+  bool codeColour = hasAttr("color");
   if (!codeColour)
     pointCloud.removeColors();
   assert(codeColour == pointCloud.hasColors());
 
-  bool codeReflectance = params->encoder.attributeIdxMap.count("reflectance");
+  bool codeReflectance = hasAttr("reflectance");
   if (!codeReflectance)
     pointCloud.removeReflectances();
   assert(codeReflectance == pointCloud.hasReflectances());
 
-  bool codeOpacity = params->encoder.attributeIdxMap.count("opacity");
+  bool codeOpacity = hasAttr("opacity");
   if (!codeOpacity)
 	  pointCloud.removeOpacities();
   assert(codeOpacity == pointCloud.hasOpacities());
 
-  bool codeRotation = params->encoder.attributeIdxMap.count("rotationXYZ");
+  bool codeRotation = hasAttr("rotationXYZ");
   if (!codeRotation) {
 	  pointCloud.removeRotations();
   }
   assert(codeRotation == pointCloud.hasRotations());
 
-  bool codeScale = params->encoder.attributeIdxMap.count("scale");
+  bool codeScale = hasAttr("scale");
   if (!codeScale)
 	  pointCloud.removeScales();
   assert(codeScale == pointCloud.hasScales());
 
-  bool codeSHCoefficient = params->encoder.attributeIdxMap.count("SHCoefficient0");
+  bool codeSHCoefficient = hasAttr("SHCoefficient0");
   if (!codeSHCoefficient)
 	  pointCloud.removeSHCoefficients();
   assert(codeSHCoefficient == pointCloud.hasSHCoefficients());

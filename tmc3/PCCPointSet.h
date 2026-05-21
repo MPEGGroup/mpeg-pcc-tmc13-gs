@@ -826,14 +826,21 @@ public:
       return getRotationVec();
     else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
       return getSHCoefficient(int(desc.params.sh_coefficient_label));
+    else {
+      assert(0);
+      return getColor();
+    }
   }
   std::vector<attr_t>& getAttrScalar(AttributeDescription& desc) {
     if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
       return getReflectance();
     else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
       return getOpacity();
-    else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+    else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
       return getRotationScalar();
+    else {
+      assert(0);
+      return getReflectance();
     }
   }
   //--------------------------------------------------------------------------
