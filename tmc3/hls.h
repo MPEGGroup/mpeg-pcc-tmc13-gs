@@ -119,6 +119,12 @@ struct AttributeLabel {
     return lhs.known_attribute_label == rhs;
   }
 
+  friend bool
+  operator!=(const AttributeLabel& lhs, const KnownAttributeLabel& rhs)
+  {
+    return lhs.known_attribute_label != rhs;
+  }
+
   //--------------------------------------------------------------------------
 
   bool known_attribute_label_flag() const

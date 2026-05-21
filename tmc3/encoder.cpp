@@ -124,7 +124,7 @@ PCCTMC3Encoder3::compress(
     if (!bboxSizeDefined)
       params->sps.seqBoundingBoxSize = (1 << 21) - 1;
 
-    if (params->sps.profile.gs_profile_compliant) {
+    if (!params->externalPrePost) {
       double inputscale = static_cast<double>(params->sps.seqGeomScale);
       double minX = std::floor(bbox.min[0] / inputscale);
       double minY = std::floor(bbox.min[1] / inputscale);
@@ -724,8 +724,7 @@ PCCTMC3Encoder3::compressPartition(
   auto attrEncoder = makeAttributeEncoder();
 
   // for each attribute
-  for (const auto& it : params->attributeIdxMap) {
-    int attrIdx = it.second;
+  for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
     const auto& attr_aps = *_aps[attrIdx];
     const auto& attr_enc = params->attr[attrIdx];
