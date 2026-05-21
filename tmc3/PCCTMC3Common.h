@@ -809,25 +809,32 @@ computeNearestNeighbors(
 
   // The point positions biased by lodNieghBias
   // todo(df): preserve this
+  auto total_size = indexesSize + retainedSize;
   std::vector<point_t> biasedPos;
-  biasedPos.reserve(packedVoxel.size());
-  for (const auto& src : packedVoxel) {
+  biasedPos.reserve(total_size);
+  for (auto i = startIndex; i < endIndex; i++){
+    auto& src = packedVoxel[indexes[i]];
     auto point = clacIntermediatePosition(
       aps.scalable_lifting_enabled_flag, lodIndex, src.position);
     biasedPos.push_back(times(point, aps.lodNeighBias));
   }
-
+  for (const auto& i : retained) {
+    auto& src = packedVoxel[i];
+    auto point = clacIntermediatePosition(
+      aps.scalable_lifting_enabled_flag, lodIndex, src.position);
+    biasedPos.push_back(times(point, aps.lodNeighBias));
+  }
   atlas.reserve(retainedSize);
   std::vector<int32_t> neighborIndexes;
   neighborIndexes.reserve(64);
 
   BoxHierarchy<bucketSizeLog2, levelCount> hBBoxes;
   hBBoxes.resize(retainedSize);
-  for (int32_t i = 0, b = 0; i < retainedSize; ++b) {
-    hBBoxes.insert(biasedPos[retained[i]], i);
+  for (int32_t i = indexesSize, b = 0; i < total_size; ++b) {
+    hBBoxes.insert(biasedPos[i], i-indexesSize);
     ++i;
     for (int32_t k = 1; k < bucketSize && i < retainedSize; ++k, ++i) {
-      hBBoxes.insert(biasedPos[retained[i]], i);
+      hBBoxes.insert(biasedPos[i], i-indexesSize);
     }
   }
   hBBoxes.update();
@@ -835,11 +842,11 @@ computeNearestNeighbors(
   BoxHierarchy<bucketSizeLog2, levelCount> hIntraBBoxes;
   if (lodIndex >= aps.intra_lod_prediction_skip_layers) {
     hIntraBBoxes.resize(indexesSize);
-    for (int32_t i = startIndex, b = 0; i < endIndex; ++b) {
-      hIntraBBoxes.insert(biasedPos[indexes[i]], i - startIndex);
+    for (int32_t i = 0, b = 0; i < indexesSize; ++b) {
+      hIntraBBoxes.insert(biasedPos[i], i);
       ++i;
-      for (int32_t k = 1; k < bucketSize && i < endIndex; ++k, ++i) {
-        hIntraBBoxes.insert(biasedPos[indexes[i]], i - startIndex);
+      for (int32_t k = 1; k < bucketSize && i < indexesSize; ++k, ++i) {
+        hIntraBBoxes.insert(biasedPos[i], i);
       }
     }
     hIntraBBoxes.update();
@@ -864,7 +871,7 @@ computeNearestNeighbors(
     const int64_t pointAtlasId = mortonCode >> atlasBoundaryBit;
     const int64_t mortonCodeShiftBits3 = mortonCode >> shiftBits3;
     const int32_t pointIndex = pv.index;
-    const auto bpoint = biasedPos[index];
+    const auto bpoint = biasedPos[i - startIndex];
     auto& predictor = predictors[i];
     pointIndexToPredictorIndex[pointIndex] = i;
 
@@ -877,13 +884,14 @@ computeNearestNeighbors(
       if (curAtlasId != pointAtlasId) {
         atlas.clearUpdates();
         curAtlasId = pointAtlasId;
-        while (
-          cubeIndex < retainedSize
-          && (packedVoxel[retained[cubeIndex]].mortonCode >> atlasBoundaryBit)
-            == curAtlasId) {
-          atlas.set(
-            packedVoxel[retained[cubeIndex]].mortonCode >> shiftBits3,
-            cubeIndex);
+        while (cubeIndex < retainedSize){
+          auto retMorton = packedVoxel[retained[cubeIndex]].mortonCode;
+          auto retAtlasId = retMorton >> atlasBoundaryBit;
+          if (retAtlasId == curAtlasId) {
+            atlas.set(retMorton >> shiftBits3, cubeIndex);
+          } else if (retAtlasId > curAtlasId) {
+            break;
+          }
           ++cubeIndex;
         }
       }
@@ -907,26 +915,26 @@ computeNearestNeighbors(
 
       for (const auto k : neighborIndexes) {
         updateNearestNeigh(
-          bpoint, biasedPos[retained[k]], k, localIndexes, minDistances);
+          bpoint, biasedPos[k+indexesSize], k+indexesSize, localIndexes, minDistances);
       }
 
       if (localIndexes[2] == -1) {
-        const auto center = localIndexes[0] == -1 ? j : localIndexes[0];
+        const auto center = localIndexes[0] == -1 ? j : localIndexes[0]-indexesSize;
         const auto k0 = std::max(0, center - rangeInterLod);
         const auto k1 = std::min(retainedSize - 1, center + rangeInterLod);
         updateNearestNeighWithCheck(
-          bpoint, biasedPos[retained[center]], center, localIndexes,
+          bpoint, biasedPos[center+indexesSize], center+indexesSize, localIndexes,
           minDistances);
         for (int32_t n = 1; n <= searchRangeNear; ++n) {
           const int32_t kp = center + n;
           if (kp <= k1) {
             updateNearestNeighWithCheck(
-              bpoint, biasedPos[retained[kp]], kp, localIndexes, minDistances);
+              bpoint, biasedPos[kp+indexesSize], kp+indexesSize, localIndexes, minDistances);
           }
           const int32_t kn = center - n;
           if (kn >= k0) {
             updateNearestNeighWithCheck(
-              bpoint, biasedPos[retained[kn]], kn, localIndexes, minDistances);
+              bpoint, biasedPos[kn+indexesSize], kn+indexesSize, localIndexes, minDistances);
           }
         }
 
@@ -970,7 +978,7 @@ computeNearestNeighbors(
               const int32_t h1 = std::min(k1, alignedIndex + bucketSizeMinus1);
               for (int32_t k = h0; k <= h1; ++k) {
                 updateNearestNeighWithCheck(
-                  bpoint, biasedPos[retained[k]], k, localIndexes,
+                  bpoint, biasedPos[k+indexesSize], k+indexesSize, localIndexes,
                   minDistances);
               }
             }
@@ -1013,7 +1021,7 @@ computeNearestNeighbors(
               const int32_t h1 = std::min(p0, alignedIndex + bucketSizeMinus1);
               for (int32_t k = h1; k >= h0; --k) {
                 updateNearestNeighWithCheck(
-                  bpoint, biasedPos[retained[k]], k, localIndexes,
+                  bpoint, biasedPos[k+indexesSize], k+indexesSize, localIndexes,
                   minDistances);
               }
             }
@@ -1023,9 +1031,6 @@ computeNearestNeighbors(
 
       predictor.neighborCount = (localIndexes[0] != -1)
         + (localIndexes[1] != -1) + (localIndexes[2] != -1);
-
-      for (int32_t h = 0; h < predictor.neighborCount; ++h)
-        localIndexes[h] = retained[localIndexes[h]];
     }
 
     if (lodIndex >= aps.intra_lod_prediction_skip_layers) {
@@ -1033,7 +1038,7 @@ computeNearestNeighbors(
       const int32_t lstNear = std::max(startIndex, fstNear - searchRangeNear);
       for (int32_t k = fstNear; k >= lstNear; --k) {
         updateNearestNeigh(
-          bpoint, biasedPos[indexes[k]], indexes[k], localIndexes,
+          bpoint, biasedPos[k-startIndex], k-startIndex, localIndexes,
           minDistances);
       }
 
@@ -1079,7 +1084,7 @@ computeNearestNeighbors(
             for (int32_t h = first; h >= last; --h) {
               const int32_t k = startIndex + h;
               updateNearestNeigh(
-                bpoint, biasedPos[indexes[k]], indexes[k], localIndexes,
+                bpoint, biasedPos[k-startIndex], k-startIndex, localIndexes,
                 minDistances);
             }
           }
@@ -1093,7 +1098,9 @@ computeNearestNeighbors(
         + (localIndexes[2] != -1));
     for (int32_t h = 0; h < predictor.neighborCount; ++h) {
       auto& neigh = predictor.neighbors[h];
-      neigh.predictorIndex = packedVoxel[localIndexes[h]].index;
+      neigh.predictorIndex = localIndexes[h] >= indexesSize ? 
+                             packedVoxel[retained[localIndexes[h]-indexesSize]].index:
+                             packedVoxel[indexes [localIndexes[h]+startIndex ]].index;
       neigh.weight = (biasedPos[localIndexes[h]] - bpoint).getNorm2<int64_t>();
     }
 
@@ -1107,8 +1114,9 @@ computeNearestNeighbors(
         auto curPt = clacIntermediatePosition(true, lodIndex, pv.position);
 
         for (int h = 1; h < predictor.neighborCount; h++) {
+          int32_t neighPtIndex = predictor.neighbors[h].predictorIndex;
           auto neighPt = clacIntermediatePosition(
-            true, lodIndex, packedVoxel[localIndexes[h]].position);
+            true, lodIndex, packedVoxel[neighPtIndex].position);
 
           // Discard this and subsequent points if distance limit exceeded
           auto norm2 = (curPt - neighPt).getNorm2<int64_t>();
