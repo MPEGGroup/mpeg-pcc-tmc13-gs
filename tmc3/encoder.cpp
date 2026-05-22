@@ -564,7 +564,7 @@ PCCTMC3Encoder3::fixupParameterSets(EncoderParams* params)
     params->gps.geom_planar_mode_enabled_flag = false;
 
   // fixup attribute parameters
-  for (auto it : params->attributeTable) {
+  for (auto it : params->attributeIdxMap) {
     auto& attr_sps = params->sps.attributeSets[it.second];
     auto& attr_aps = params->aps[it.second];
     auto& attr_enc = params->attr[it.second];
@@ -723,6 +723,9 @@ PCCTMC3Encoder3::compressPartition(
   // attributeCoding
   auto attrEncoder = makeAttributeEncoder();
 
+  // Buffer for RAHT coefficients, key is aps_attr_parameter_set_id 
+  std::unordered_map<int, std::vector<int>> bufferRahtCoefficients;
+
   // for each attribute
   for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
@@ -805,13 +808,18 @@ PCCTMC3Encoder3::compressPartition(
       abh.attr_dist2_delta = dist2 - attr_aps.dist2;
     }
 
+    if (params->maxAttributeNumberPerGroup > 1 && bufferRahtCoefficients.empty())
+      attrEncoder->encodeMultiAttributeRAHT(
+        *_sps, _aps, pointCloud, params->attributeIdxMap,
+        params->maxAttributeNumberPerGroup, &bufferRahtCoefficients);
+
     // replace the attribute encoder if not compatible
     if (!attrEncoder->isReusable(attr_aps, abh))
       attrEncoder = makeAttributeEncoder();
 
     auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
     attrEncoder->encode(
-      *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, payload);
+      *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, payload, &bufferRahtCoefficients);
 
     if (attr_aps.spherical_coord_flag)
       pointCloud.swapPoints(altPositions);

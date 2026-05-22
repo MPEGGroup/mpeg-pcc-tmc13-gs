@@ -79,7 +79,7 @@ struct EncoderParams {
   std::vector<EncoderAttributeParams> attr;
 
   // todo(df): this should go away
-  std::vector<std::pair<std::string, int>> attributeTable;
+  std::vector<std::pair<std::string, int>> attributeIdxMap;
 
   // Determine the sequence bonuding box using the first input frame
   bool autoSeqBbox;
@@ -102,6 +102,9 @@ struct EncoderParams {
 
   // Number of fractional bits used in output position representation.
   int outputFpBits;
+
+  // Maximum number of attribute groups merged into one RAHT encoding pass.
+  int maxAttributeNumberPerGroup;
 
   // Encoder specific parameters for geometry
   OctreeEncOpts geom;

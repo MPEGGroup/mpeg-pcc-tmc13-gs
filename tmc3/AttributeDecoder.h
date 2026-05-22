@@ -64,7 +64,19 @@ public:
     const char* payload,
     size_t payloadLen,
     AttributeContexts& ctxtMem,
-    PCCPointSet3& pointCloud) override;
+    PCCPointSet3& pointCloud,
+    int rahtMaxAttributeGroupNum,
+    std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients) override;
+
+  void decodeMultiAttributeRAHT(
+    const SequenceParameterSet& sps,
+    std::map<int, AttributeParameterSet> _apss,
+    std::vector<AttributeBrickHeader>& _allAttrAbh,
+    int geom_num_points_minus1,
+    int minGeomNodeSizeLog2,
+    std::unordered_map<int, std::vector<int>>& bufferRahtCoefficients,
+    PCCPointSet3& pointCloud,
+    int maxAttributeNumberPerGroup) override;
 
   bool isReusable(
     const AttributeParameterSet& aps,
@@ -121,7 +133,9 @@ protected:
     const AttributeParameterSet& aps,
     const QpSet& qpSet,
     PCCResidualsDecoder& decoder,
-    PCCPointSet3& pointCloud);
+    PCCPointSet3& pointCloud,
+    int rahtMaxAttributeGroupNum,
+    std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients);
 
   static void decodePredModeColor(
     const AttributeParameterSet& aps,

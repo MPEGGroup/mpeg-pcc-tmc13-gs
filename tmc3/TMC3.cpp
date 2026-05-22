@@ -117,6 +117,9 @@ struct Parameters {
 
   // resort the input points by azimuth angle
   bool sortInputByAzimuth;
+
+  // Maximum number of attribute groups that can be processed in one RAHT encoding or decoding pass.
+  int maxAttributeNumberPerGroup;
 };
 
 //----------------------------------------------------------------------------
@@ -554,8 +557,8 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       //
 
       // NB: insert returns any existing element
-      params.encoder.attributeTable.push_back(
-        {name, int(params.encoder.attributeTable.size())});
+      params.encoder.attributeIdxMap.push_back(
+        {name, int(params.encoder.attributeIdxMap.size())});
 
       params.encoder.sps.attributeSets.push_back(params_attr.desc);
       params.encoder.aps.push_back(params_attr.aps);
@@ -646,6 +649,11 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.externalPrePost, false,
     "Perform pre-processing in encoder \n"
     " 0: pre/post-processing,  1: bypass")
+
+   ("maxAttributeNumberPerGroup",
+    params.maxAttributeNumberPerGroup, 3,
+    "Maximum number of attribute groups merged into one RAHT encoding or decoding pass\n"
+    " value <= 1: RAHT transform merging disabled")
 
   // This section controls all general geometry scaling parameters
   (po::Section("Coordinate system scaling"))
@@ -1299,6 +1307,8 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   if (params.compressedStreamPath.empty())
     err.error() << "compressedStreamPath not set\n";
 
+  params.encoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
+  params.decoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
   // report the current configuration (only in the absence of errors so
   // that errors/warnings are more obvious and in the same place).
   if (err.is_errored)
@@ -1316,7 +1326,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     po::dumpCfg(cout, opts, "Geometry", 4);
     po::dumpCfg(cout, opts, "Recolouring", 4);
 
-    for (const auto& it : params.encoder.attributeTable) {
+    for (const auto& it : params.encoder.attributeIdxMap) {
       // NB: when dumping the config, opts references params_attr
       params_attr.desc = params.encoder.sps.attributeSets[it.second];
       params_attr.aps = params.encoder.aps[it.second];
@@ -1428,16 +1438,16 @@ sanitizeEncoderOpts(
 
   // support disabling attribute coding (simplifies configuration)
   if (params.disableAttributeCoding) {
-    params.encoder.attributeTable.clear();
+    params.encoder.attributeIdxMap.clear();
     params.encoder.sps.attributeSets.clear();
     params.encoder.aps.clear();
   }
 
   // allocate list of attr DU mode
-  params.encoder.attr_DU_modes.resize(params.encoder.attributeTable.size());
+  params.encoder.attr_DU_modes.resize(params.encoder.attributeIdxMap.size());
 
   // fixup any per-attribute settings
-  for (const auto& it : params.encoder.attributeTable) {
+  for (const auto& it : params.encoder.attributeIdxMap) {
     auto& attr_sps = params.encoder.sps.attributeSets[it.second];
     auto& attr_aps = params.encoder.aps[it.second];
     auto& attr_enc = params.encoder.attr[it.second];
@@ -1691,7 +1701,7 @@ sanitizeEncoderOpts(
     err.error()
       << "sliceMaxPoints must be greater than or equal to sliceMinPoints\n";
   
-  for (const auto& it : params.encoder.attributeTable) {
+  for (const auto& it : params.encoder.attributeIdxMap) {
     const auto& attr_sps = params.encoder.sps.attributeSets[it.second];
     const auto& attr_aps = params.encoder.aps[it.second];
     auto& attr_enc = params.encoder.attr[it.second];
@@ -1885,11 +1895,11 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
       pointCloud, 0, pointCloud.getPointCount(), 0., _angularOrigin);
 
   auto hasAttr = [&](const std::string& name) {
-      return std::find_if(params->encoder.attributeTable.begin(), 
-                          params->encoder.attributeTable.end(),
+      return std::find_if(params->encoder.attributeIdxMap.begin(), 
+                          params->encoder.attributeIdxMap.end(),
                           [&](const std::pair<std::string, int>& element) {
                               return element.first == name; 
-                          }) != params->encoder.attributeTable.end();
+                          }) != params->encoder.attributeIdxMap.end();
   };
 
   // Sanitise the input point cloud

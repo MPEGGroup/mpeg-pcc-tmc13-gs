@@ -66,4 +66,27 @@ void regionAdaptiveHierarchicalInverseTransform(
   const int voxelCount,
   int* coefficients);
 
+
+void regionAdaptiveHierarchicalTransformforMultiAttr(
+  bool raht_prediction_enabled_flag,
+  const int predictionThreshold[2],
+  const Qps* pointQpOffsets,
+  const std::vector<QpSet>& qpSets,
+  int64_t* mortonCode,
+  int* attributes,
+  const int attribCount,
+  const int voxelCount,
+  int* coefficients);
+
+void regionAdaptiveHierarchicalInverseTransformforMultiAttr(
+  bool raht_prediction_enabled_flag,
+  const int predictionThreshold[2],
+  const Qps* pointQpOffsets,
+  std::vector<QpSet>& qpSets,
+  int64_t* mortonCode,
+  int* attributes,
+  const int attribCount,
+  const int voxelCount,
+  int* coefficients);
+
 } /* namespace pcc */
