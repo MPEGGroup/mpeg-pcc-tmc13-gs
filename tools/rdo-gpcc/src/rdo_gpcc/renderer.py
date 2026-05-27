@@ -23,6 +23,7 @@ class Renderer:
         Ks: Tensor,
         width: int,
         height: int,
+        override_colors: Tensor | None = None,
         **kwargs,
     ) -> Tuple[Tensor, Tensor, Dict]:
         means = splats.means  # [N, 3]
@@ -32,7 +33,13 @@ class Renderer:
         scales = torch.exp(splats.scales)  # [N, 3]
         opacities = torch.sigmoid(splats.opacities)  # [N,]
 
-        colors = torch.cat([splats.sh0, splats.shN], 1)  # [N, K, 3]
+        if override_colors is not None:
+            colors = override_colors
+            sh_degree = None
+        else:
+            colors = torch.cat([splats.sh0, splats.shN], 1)  # [N, K, 3]
+            sh_degree = splats.sh_degree
+
 
         render_colors, render_alphas, info = rasterization(
             means=means,
@@ -45,7 +52,7 @@ class Renderer:
             width=width,
             height=height,
             packed=False,
-            sh_degree=splats.sh_degree,
+            sh_degree=sh_degree,
             **kwargs,
         )
         return render_colors, render_alphas, info

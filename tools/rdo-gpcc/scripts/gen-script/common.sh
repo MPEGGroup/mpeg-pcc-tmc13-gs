@@ -250,8 +250,8 @@ for MODE in "${MODEs[@]}"; do
                                     --dataset-dir \"${DATASET_PATH}/${SEQ}/colmap_data/${FRAME}\" \
                                     --dataset.subsample-every \"${VIEW_PERIOD}\" \
                                     --quantizer.position-bitdepth 18 \
-                                    --trainer.max-steps 10_000 \
                                     --trainer.neighbor-loss-weight 5e-10 --trainer.lr-scale 0.1 \
+                                    ${FINETUNE_EXTRA_ARGS:-} \
                                     "
                             echo "touch $OUT/jobs/done/finetune/\${SLURM_JOB_ID:-UNDEFINED}"
                         } > "$JOBFILE_FINETUNE"
@@ -270,6 +270,9 @@ for MODE in "${MODEs[@]}"; do
                         echo "set -euo pipefail"
                         # SRC_PLY="${FILE/.camerapos/}"
                         echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$FINETUNE_RESULT_DIR/$FRAME.ply\""
+                        # Remove locally decoded ply to save disk space.
+                        # Assume $FRAME.ply.bin.ply and $FRAME.ply.bin.decoded.ply are identical.
+                        # echo "rm \"$RESULT_DIR/$FRAME.ply.bin.ply\""
                         echo "touch $OUT/jobs/done/gpcc/\${SLURM_JOB_ID:-UNDEFINED}"
                     } > "$JOBFILE"
                     chmod +x "$JOBFILE"
@@ -412,7 +415,7 @@ declare -f run_with_progress > "$MASTER_RUN"
     echo
     echo "echo '▶ Step 0: Fine-tuning in parallel'"
     echo "${PYTHON} ${SCRIPT_DIR}/run_jobs_in_parallel.py --exit-on-fail --skip-completed --job-file \"$RUN_FINETUNE\" --log-dir \"$OUT/jobs/logs/finetune\"  --n-workers 1"
-    # echo "run_with_progress \"$RUN_FINETUNE\" \"$FINETUNE_NUM_THREADS\""
+    # echo "run_with_progress \"$RUN_FINETUNE\" 1"
     echo
     echo "echo '▶ Step 1: GPCC encode/decode in parallel'"
     echo "${PYTHON} ${SCRIPT_DIR}/run_jobs_in_parallel.py --exit-on-fail --skip-completed --job-file \"$RUN_GPCC\" --log-dir \"$OUT/jobs/logs/gpcc\"  --n-workers \"$(nproc)\""

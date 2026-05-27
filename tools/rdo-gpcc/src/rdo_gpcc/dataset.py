@@ -34,6 +34,8 @@ class DatasetConfig:
     global_scale: float = 1.0
     # Cashe rendered images.
     cache_images: bool = True
+    # Number of workers for caching images.
+    n_cache_workers: int = 8
 
 
 class Dataset:
@@ -70,7 +72,7 @@ class Dataset:
             self.cache_dir = tempfile.TemporaryDirectory()
             CONSOLE.log(f"Created image cache directory {self.cache_dir.name} .")
 
-        cameras = self.generate_cameras(image_indices=image_indices)
+        cameras = self.generate_cameras(image_indices=image_indices, n_workers=self.config.n_cache_workers)
 
         assert not (config.test_every > 0 and config.test_image_names is not None)
         if config.test_every > 0:
@@ -92,13 +94,13 @@ class Dataset:
         self.train_cameras = train_cameras
         self.test_cameras = test_cameras
 
-    @property
-    def trainset(self) -> List[Dict]:
-        return DatasetWrapper(self.train_cameras)
+    def get_trainset(self, skip_image: bool = False) -> "DatasetWrapper":
+        """Get training dataset. If skip_image is True, the returned dataset will not load images for speed."""
+        return DatasetWrapper(self.train_cameras, skip_image=skip_image)
 
-    @property
-    def valset(self) -> List[Dict]:
-        return DatasetWrapper(self.test_cameras)
+    def get_valset(self, skip_image: bool = False) -> "DatasetWrapper":
+        """Get validation dataset. If skip_image is True, the returned dataset will not load images for speed."""
+        return DatasetWrapper(self.test_cameras, skip_image=skip_image)
 
     def generate_cameras(self, image_indices=None, n_workers=8):
         if image_indices is None:
@@ -157,7 +159,16 @@ class Dataset:
                 )
                 image = save_path
 
-            cameras.append({"K": K, "camtoworld": camtoworlds, "image": image, "name": name})
+            cameras.append(
+                {
+                    "K": K,
+                    "camtoworld": camtoworlds,
+                    "image": image,
+                    "name": name,
+                    "width": width,
+                    "height": height,
+                }
+            )
 
         if self.config.cache_images:
             for future in concurrent.futures.as_completed(futures):
@@ -168,8 +179,9 @@ class Dataset:
 
 
 class DatasetWrapper:
-    def __init__(self, dataset: List[Dict]):
+    def __init__(self, dataset: List[Dict], skip_image: bool = False):
         self.dataset = dataset
+        self.skip_image = skip_image
 
     def __len__(self):
         return len(self.dataset)
@@ -178,11 +190,12 @@ class DatasetWrapper:
         data = self.dataset[idx].copy()
 
         # Load cached image.
-        image = data["image"]
-        if isinstance(image, Path):
-            image_path = image
-            image = imageio.imread(image_path)
-            image = torch.from_numpy(image)
-            data["image"] = image
+        if isinstance(data["image"], Path):
+            if self.skip_image:
+                data.pop("image")
+            else:
+                image = imageio.imread(data["image"])
+                image = torch.from_numpy(image)
+                data["image"] = image
 
         return data

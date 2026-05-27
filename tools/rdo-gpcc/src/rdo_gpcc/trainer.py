@@ -29,7 +29,7 @@ from rdo_gpcc.util import CONSOLE
 class TrainerConfig:
     # Directory to save results
     result_dir: Path
-    # Quantization-qware training
+    # Quantization-aware training
     use_qat: bool = True
     # Number of training steps
     max_steps: int = 10_000
@@ -47,11 +47,10 @@ class TrainerConfig:
     tb_every: int = 100
     # Save training images to tensorboard
     tb_save_image: bool = False
-
-    def __post_init__(self):
-        if self.max_steps not in self.eval_steps:
-            self.eval_steps.append(self.max_steps)
-            CONSOLE.log(f"Updating eval steps ({self.eval_steps})")
+    # Number of workers for training dataloaders.
+    n_train_workers: int = 8
+    # Number of workers for validation dataloaders.
+    n_val_workers: int = 1
 
 
 class Trainer:
@@ -135,11 +134,10 @@ class Trainer:
             yaml.dump(vars(cfg), f)
 
         trainloader = torch.utils.data.DataLoader(
-            self.dataset.trainset,
+            self.dataset.get_trainset(),
             batch_size=1,
             shuffle=True,
-            num_workers=8,
-            prefetch_factor=1,  # To save memory.
+            num_workers=cfg.n_train_workers,
             persistent_workers=True,
             pin_memory=True,
         )
@@ -206,7 +204,7 @@ class Trainer:
                 )
                 loss.backward()
                 if step % 1000 == 0:
-                    CONSOLE.log(f"[Step {step}] loss={loss.item():.3f}")
+                    CONSOLE.log(f"[Step {step}] loss={loss.item():.3g}")
 
                 # optimize
                 self.optimizer.step()
@@ -229,8 +227,10 @@ class Trainer:
 
                 # eval the full set
                 if step in [i - 1 for i in cfg.eval_steps]:
-                    self.eval(step, save_images=step == cfg.eval_steps[-1] - 1)
+                    self.eval(step)
                     torch.cuda.empty_cache()
+
+        return self.splats
 
     @torch.no_grad()
     def eval(self, step: int, stage: str = "val", save_images: bool = False):
@@ -238,7 +238,13 @@ class Trainer:
         CONSOLE.log("Running evaluation...")
         device = self.device
 
-        valloader = torch.utils.data.DataLoader(self.dataset.valset, batch_size=1, shuffle=False, num_workers=1)
+        valloader = torch.utils.data.DataLoader(
+            self.dataset.get_valset(),
+            batch_size=1,
+            shuffle=False,
+            num_workers=self.cfg.n_val_workers,
+            pin_memory=True,
+        )
         ellipse_time = 0
         metrics_list = []
         for i, data in enumerate(valloader):
@@ -277,19 +283,8 @@ class Trainer:
             colors_p = colors.permute(0, 3, 1, 2)  # [1, 3, H, W]
             metrics = {}
             metrics["mse"] = torch.nn.functional.mse_loss(colors_p, pixels_p).item()
-            metrics["qmse"] = torch.nn.functional.mse_loss(
-                (colors_p * 255).to(torch.uint8).float(),
-                (pixels_p * 255).to(torch.uint8).float(),
-            ).item()
             metrics["psnr"] = self.psnr(colors_p, pixels_p).item()
-            metrics["qpsnr"] = self.psnr(
-                (colors_p * 255).to(torch.uint8).float() / 255,
-                (pixels_p * 255).to(torch.uint8).float() / 255,
-            ).item()
-            metrics["ssim"] = self.ssim(
-                (colors_p * 255).to(torch.uint8).float(),
-                (pixels_p * 255).to(torch.uint8).float(),
-            ).item()
+            metrics["ssim"] = self.ssim(colors_p, pixels_p).item()
             metrics["name"] = data["name"][0]
             metrics_list.append(metrics)
 
