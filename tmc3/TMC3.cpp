@@ -651,7 +651,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     " 0: pre/post-processing,  1: bypass")
 
    ("maxAttributeNumberPerGroup",
-    params.maxAttributeNumberPerGroup, 3,
+    params.maxAttributeNumberPerGroup, 1,
     "Maximum number of attribute groups merged into one RAHT encoding or decoding pass\n"
     " value <= 1: RAHT transform merging disabled")
 
