@@ -175,6 +175,7 @@ do_one_cfgset() {
 	# (gen-cfg.pl won't touch mtimes if content is unchanged, but it also won't
 	# delete obsolete variants / files.)
 	if [[ "$mode" == "gaussiansplat" ]]; then
+		find "$outdir" -type d -name "r05" -prune -exec rm -rf {} + 2>/dev/null || true
 		find "$outdir" -type d -name "r06" -prune -exec rm -rf {} + 2>/dev/null || true
 		find "$outdir" -type f -name "pcerror.cfg" -exec rm -f {} + 2>/dev/null || true
 	fi
