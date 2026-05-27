@@ -125,8 +125,7 @@ categories:
        - direct_avg_predictor_disabled_flag: 0
        - max_num_direct_predictors: 3
        - outputBinaryPly: 1
-       - inputScale: 8388608
-       - codingScale: 0.0001220703125
+       - inputScale: 2097152 # 2^21
        - sequenceScale: 1
        - externalScale: 0
        - attrFracBits: 12
