@@ -98,19 +98,32 @@ private:
 
 //============================================================================
 
-bool predModeEligibleColor(
+bool predModeEligibleAttrMultiComp(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
   const std::vector<uint32_t>& indexes,
   const PCCPredictor& predictor);
 
-bool predModeEligibleRefl(
+bool predModeEligibleAttrSingleComp(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
   const std::vector<uint32_t>& indexes,
   const PCCPredictor& predictor);
+
+//============================================================================
+
+Vec3<attr_t> getAttribute(
+  const AttributeDescription& desc,
+  const PCCPointSet3& pointCloud,
+  uint32_t pointIndex);
+
+void setAttribute(
+  const AttributeDescription& desc,
+  PCCPointSet3& pointCloud,
+  uint32_t pointIndex,
+  const Vec3<attr_t>& attribute);
 
 //============================================================================
 

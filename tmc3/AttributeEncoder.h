@@ -83,42 +83,21 @@ public:
 protected:
   // todo(df): consider alternative encapsulation
 
-  void encodeReflectancesLift(
+  void encodeAttributeLift(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const QpSet& qpSet,
     PCCPointSet3& pointCloud,
     PCCResidualsEncoder& encoder);
 
-  void encodeColorsLift(
+  void encodeAttributePred(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const QpSet& qpSet,
     PCCPointSet3& pointCloud,
     PCCResidualsEncoder& encoder);
 
-  void encodeReflectancesPred(
-    const AttributeDescription& desc,
-    const AttributeParameterSet& aps,
-    const QpSet& qpSet,
-    PCCPointSet3& pointCloud,
-    PCCResidualsEncoder& encoder);
-
-  void encodeColorsPred(
-    const AttributeDescription& desc,
-    const AttributeParameterSet& aps,
-    const QpSet& qpSet,
-    PCCPointSet3& pointCloud,
-    PCCResidualsEncoder& encoder);
-
-  void encodeReflectancesTransformRaht(
-    const AttributeDescription& desc,
-    const AttributeParameterSet& aps,
-    const QpSet& qpSet,
-    PCCPointSet3& pointCloud,
-    PCCResidualsEncoder& encoder);
-
-  void encodeColorsTransformRaht(
+  void encodeAttributeTransformRaht(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const QpSet& qpSet,
@@ -126,20 +105,21 @@ protected:
     PCCResidualsEncoder& encoder,
     std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients);
 
-  static Vec3<int64_t> computeColorResiduals(
+  static Vec3<int64_t> computeAttrMultiCompResiduals(
+    const AttributeDescription& desc,
     const AttributeParameterSet& aps,
-    const Vec3<attr_t> color,
-    const Vec3<attr_t> predictedColor,
+    const Vec3<attr_t> attribute,
+    const Vec3<attr_t> predictedAttribute,
     const Vec3<int8_t> icpCoeff,
     const Quantizers& quant);
 
-  static int computeColorDistortions(
+  static int computeAttrMultiCompDistortions(
     const AttributeDescription& desc,
-    const Vec3<attr_t> color,
-    const Vec3<attr_t> predictedColor,
+    const Vec3<attr_t> attribute,
+    const Vec3<attr_t> predictedAttribute,
     const Quantizers& quant);
 
-  static void decidePredModeColor(
+  static void decidePredModeAttrMultiComp(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const PCCPointSet3& pointCloud,
@@ -151,15 +131,16 @@ protected:
     const Vec3<int8_t>& icpCoeff,
     const Quantizers& quant);
 
-  static void encodePredModeColor(
+  static void encodePredModeAttrMultiComp(
+    const AttributeDescription& desc,
     const AttributeParameterSet& aps, int predMode, Vec3<int32_t>& coeff);
 
-  static int64_t computeReflectanceResidual(
+  static int64_t computeAttrSingleCompResidual(
     const uint64_t reflectance,
     const uint64_t predictedReflectance,
     const Quantizer& quant);
 
-  static void decidePredModeRefl(
+  static void decidePredModeAttrSingleComp(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
     const PCCPointSet3& pointCloud,
@@ -170,7 +151,7 @@ protected:
     PCCResidualsEntropyEstimator& context,
     const Quantizer& quant);
 
-  static void encodePredModeRefl(
+  static void encodePredModeAttrSingleComp(
     const AttributeParameterSet& aps, int predMode, int32_t& coeff);
 
 private:

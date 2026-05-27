@@ -321,107 +321,74 @@ struct PCCNeighborInfo {
 
 //---------------------------------------------------------------------------
 
+Vec3<attr_t> getAttribute(
+  const AttributeDescription& desc,
+  const PCCPointSet3& pointCloud,
+  uint32_t pointIndex);
+
 struct PCCPredictor {
   uint32_t neighborCount;
   PCCNeighborInfo neighbors[kAttributePredictionMaxNeighbourCount];
   int8_t predMode;
 
-  Vec3<attr_t> predictColor(
-    const PCCPointSet3& pointCloud, const std::vector<uint32_t>& indexes,
-	const AttributeDescription& desc) const
+  Vec3<attr_t> predictAttrMultiComp(
+  const PCCPointSet3& pointCloud, const std::vector<uint32_t>& indexes,
+  const AttributeDescription& desc) const
   {
+    const int attrCount = desc.attr_num_dimensions_minus1 + 1;
     Vec3<int64_t> predicted(0);
     if (predMode > neighborCount) {
       /* nop */
     } else if (predMode > 0) {
-		Vec3<attr_t> color;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour)
-			color =
-			pointCloud.getColor(indexes[neighbors[predMode - 1].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			color =
-			pointCloud.getScale(indexes[neighbors[predMode - 1].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			color =
-				pointCloud.getRotationVec(indexes[neighbors[predMode - 1].predictorIndex]);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-      int SHindex = (int)desc.params.sh_coefficient_label;
-      color = pointCloud.getSHCoefficient(
-        SHindex, indexes[neighbors[predMode - 1].predictorIndex]);
-    }
+      // Single predictor
+      Vec3<attr_t> attribute =
+        getAttribute(desc, pointCloud, indexes[neighbors[predMode - 1].predictorIndex]);
 
-      for (size_t k = 0; k < 3; ++k) {
-        predicted[k] += color[k];
+      for (int k = 0; k < attrCount; ++k) {
+        predicted[k] += attribute[k];
       }
-    } else {
+    }
+    else {
+      // Weighted average of neighbors
       for (size_t i = 0; i < neighborCount; ++i) {
-				Vec3<attr_t> color;
-				if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-					color =
-							pointCloud.getColor(indexes[neighbors[i].predictorIndex]);
-				else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-					color =
-					pointCloud.getScale(indexes[neighbors[i].predictorIndex]);
-				else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-					assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-					color =
-						pointCloud.getRotationVec(indexes[neighbors[i].predictorIndex]);
-				} 
-				else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-					int SHindex = (int)desc.params.sh_coefficient_label;
-					color = pointCloud.getSHCoefficient(
-						SHindex, indexes[neighbors[i].predictorIndex]);
-				}
+        Vec3<attr_t> attribute =
+          getAttribute(desc, pointCloud, indexes[neighbors[i].predictorIndex]);
 
         const uint32_t w = neighbors[i].weight;
-        for (size_t k = 0; k < 3; ++k) {
-          predicted[k] += w * color[k];
+        for (int k = 0; k < attrCount; ++k) {
+          predicted[k] += w * attribute[k];
         }
       }
-      for (uint32_t k = 0; k < 3; ++k) {
+
+      for (int k = 0; k < attrCount; ++k) {
         predicted[k] =
           divExp2RoundHalfInf(predicted[k], kFixedPointWeightShift);
       }
     }
+
     return Vec3<attr_t>(predicted[0], predicted[1], predicted[2]);
   }
 
-  int64_t predictReflectance(
-    const PCCPointSet3& pointCloud, const std::vector<uint32_t>& indexes, 
-	  const AttributeDescription& desc) const
+  int64_t predictAttrSingleComp(
+    const PCCPointSet3& pointCloud, const std::vector<uint32_t>& indexes,
+      const AttributeDescription& desc) const
   {
     int64_t predicted(0);
     if (predMode > neighborCount) {
       /* nop */
     } else if (predMode > 0) {
-		if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-			predicted = pointCloud.getReflectance(
-				indexes[neighbors[predMode - 1].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-			predicted = pointCloud.getOpacity(
-				indexes[neighbors[predMode - 1].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-			predicted = pointCloud.getRotationScalar(
-				indexes[neighbors[predMode - 1].predictorIndex]);
-		}
-    } else {
+      // Single predictor
+      predicted =
+        getAttribute(desc, pointCloud, indexes[neighbors[predMode - 1].predictorIndex])[0];
+    }
+    else {
+      // Weighted average
       for (size_t i = 0; i < neighborCount; ++i) {
-		  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-			  predicted += neighbors[i].weight
-			  * pointCloud.getReflectance(indexes[neighbors[i].predictorIndex]);
-		  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-			  predicted += neighbors[i].weight
-			  * pointCloud.getOpacity(indexes[neighbors[i].predictorIndex]);
-		  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-			  predicted += neighbors[i].weight
-				  * pointCloud.getRotationScalar(indexes[neighbors[i].predictorIndex]);
-		  }
+        predicted += neighbors[i].weight
+          * getAttribute(desc, pointCloud, indexes[neighbors[i].predictorIndex])[0];
       }
-      predicted = divExp2RoundHalfInf(predicted, kFixedPointWeightShift);
+      predicted =
+        divExp2RoundHalfInf(predicted, kFixedPointWeightShift);
     }
     return predicted;
   }
