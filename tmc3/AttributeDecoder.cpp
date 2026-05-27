@@ -601,11 +601,7 @@ AttributeDecoder::decodeMultiAttributeRAHT(
   PCCPointSet3& pointCloud,
   int maxAttributeNumberPerGroup)
 {
-
   std::vector<std::vector<int>> AttributeGroups = AttributeGroup(_allAttrAbh, _apss, maxAttributeNumberPerGroup);  //Attribute Set for Multi-Attribute decoding
-
-
-  
   const int voxelCount = int(pointCloud.getPointCount());
   if (_sortedMortonCode.size() == 0) {
     std::vector<MortonCodeWithIndex> packedVoxel(voxelCount);
@@ -625,76 +621,57 @@ AttributeDecoder::decodeMultiAttributeRAHT(
 
   std::vector<Qps> pointQpOffsets(voxelCount);
   for (int i = 0; i < voxelCount; i++)
-    pointQpOffsets[i] = {0, 0};
-
-
-    for (auto AttributeGroup : AttributeGroups) {
+    pointQpOffsets[i] = {0, 0}; // qpSet.regionQpOffset(pointCloud[index]);
+     
+  for (auto AttributeGroup : AttributeGroups) {
     // Transform.
+    const int attribCount = 3 * AttributeGroup.size();
+    std::vector<int> coefficients(attribCount * voxelCount);
+    std::vector<int> attributes(attribCount * voxelCount);
+    std::vector<QpSet> qpSets;
+
+    int rahtPredThreshold[2];
+    bool raht_prediction_enabled_flag;
+    for (int i = 0; i < AttributeGroup.size(); i++){
+      FixedPoint::kFracBits =_apss[AttributeGroup[i]].raht_fixed_point_precision;
+      init_LUT();
+
+      auto abh = _allAttrAbh[AttributeGroup[i]];
+      int attr_attr_parameter_set_id = abh.attr_attr_parameter_set_id;
+      auto start =bufferRahtCoefficients[attr_attr_parameter_set_id].begin();
+      auto end = start + 3 * voxelCount;
+      std::copy(start, end, coefficients.begin() + 3 * i * voxelCount);
+      const auto it_attr_aps = _apss.find(abh.attr_attr_parameter_set_id);
+      const auto& attr_aps = it_attr_aps->second;
+      rahtPredThreshold[0] = attr_aps.raht_prediction_threshold0;
+      rahtPredThreshold[1] = attr_aps.raht_prediction_threshold1;
+      raht_prediction_enabled_flag = attr_aps.raht_prediction_enabled_flag;
+      const auto& attr_sps = sps.attributeSets[abh.attr_sps_attr_idx];
+      QpSet qpSet = deriveQpSet(attr_sps, attr_aps, abh);
+      qpSets.push_back(qpSet);
+    }
     
-      const int attribCount = 3 * AttributeGroup.size();
-      std::vector<int> coefficients(attribCount * voxelCount);
-      std::vector<int> attributes(attribCount * voxelCount);
-      std::vector<QpSet> qpSets;
+    regionAdaptiveHierarchicalInverseTransformforMultiAttr(
+      raht_prediction_enabled_flag, rahtPredThreshold, pointQpOffsets.data(),
+      qpSets,_sortedMortonCode.data(), attributes.data(),
+      attribCount, voxelCount, coefficients.data());
 
-      int rahtPredThreshold[2];
-      bool raht_prediction_enabled_flag;
-      for (int i = 0; i < AttributeGroup.size(); i++){
-        FixedPoint::kFracBits =_apss[AttributeGroup[i]].raht_fixed_point_precision;
-        init_LUT();
-
-        auto abh = _allAttrAbh[AttributeGroup[i]];
-        int attr_attr_parameter_set_id = abh.attr_attr_parameter_set_id;
-        auto start =bufferRahtCoefficients[attr_attr_parameter_set_id].begin();
-        auto end = start + 3 * voxelCount;
-        std::copy(start, end, coefficients.begin() + 3 * i * voxelCount);
-        const auto it_attr_aps = _apss.find(abh.attr_attr_parameter_set_id);
-        const auto& attr_aps = it_attr_aps->second;
-        rahtPredThreshold[0] = attr_aps.raht_prediction_threshold0;
-        rahtPredThreshold[1] = attr_aps.raht_prediction_threshold1;
-        raht_prediction_enabled_flag = attr_aps.raht_prediction_enabled_flag;
-        const auto& attr_sps = sps.attributeSets[abh.attr_sps_attr_idx];
-        QpSet qpSet = deriveQpSet(attr_sps, attr_aps, abh);
-        qpSets.push_back(qpSet);
-      }
-
-      
-      regionAdaptiveHierarchicalInverseTransformforMultiAttr(
-        raht_prediction_enabled_flag, rahtPredThreshold, pointQpOffsets.data(),
-        qpSets,_sortedMortonCode.data(), attributes.data(),
-        attribCount, voxelCount, coefficients.data());
-
-      for (int i = 0; i < AttributeGroup.size(); i++) {
-        auto abh = _allAttrAbh[AttributeGroup[i]];
-        auto desc = sps.attributeSets[abh.attr_sps_attr_idx];
-        int clipMax = (1 << desc.bitdepth) - 1;
-        for (int n = 0; n < voxelCount; n++) {
-          const int r = attributes[attribCount * n + 3 * i];
-          const int g = attributes[attribCount * n + 1 + 3 * i];
-          const int b = attributes[attribCount * n + 2 + 3 * i];
-          Vec3<attr_t> color;
-          color[0] = attr_t(PCCClip(r, 0, clipMax));
-          color[1] = attr_t(PCCClip(g, 0, clipMax));
-          color[2] = attr_t(PCCClip(b, 0, clipMax));
-
-          if (desc.attributeLabel == KnownAttributeLabel::kColour)
-            pointCloud.setColor(_sortedIndex[n], color);
-          else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-            pointCloud.setScale(_sortedIndex[n], color);
-          else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-            assert(
-              desc.params.rotation_component_label
-              == RotationComponentLabel::kRotation_XYZ);
-            pointCloud.setRotationVec(_sortedIndex[n], color);
-          } else if (
-            desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-            int SHindex = (int)desc.params.sh_coefficient_label;
-            pointCloud.setSHCoefficient(SHindex, _sortedIndex[n], color);
-          }
+    for (int i = 0; i < AttributeGroup.size(); i++) {
+      auto abh = _allAttrAbh[AttributeGroup[i]];
+      auto desc = sps.attributeSets[abh.attr_sps_attr_idx];
+      int clipMax = (1 << desc.bitdepth) - 1;
+      for (int n = 0; n < voxelCount; n++) {
+        auto index = _sortedIndex[n];
+        Vec3<attr_t> attribute(0);
+        for (int d = 0; d < attribCount; ++d) {
+          int value = attributes[attribCount * n + 3 * i + d];
+          attribute[d] = attr_t(PCCClip(value, 0, clipMax));
         }
+
+        setAttribute(desc, pointCloud, index, attribute);
       }
-
+    }
   }
-
 
   bufferRahtCoefficients.clear();
 }

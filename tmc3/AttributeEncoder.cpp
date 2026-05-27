@@ -1065,6 +1065,32 @@ AttributeEncoder::encodeAttributeTransformRaht(
 
   // Allocate arrays
   const int attribCount = desc.attr_num_dimensions_minus1 + 1;
+  auto aps_attr_parameter_set_id = aps.aps_attr_parameter_set_id;
+  auto it = (*bufferRahtCoefficients).find(aps_attr_parameter_set_id);
+  if (it != bufferRahtCoefficients->end()) {
+    // Entropy encode.
+    std::vector<int> values(attribCount);
+    int zeroRun = 0;
+    for (int n = 0; n < voxelCount; ++n) {
+      bool allZero = true;
+      for (int d = 0; d < attribCount; ++d) {
+        values[d] = it->second[voxelCount * d + n];
+        if (values[d] != 0) allZero = false;
+      }
+      if (allZero)
+        ++zeroRun;
+      else {
+        encoder.encodeRunLength(zeroRun);
+        encoder.encode(values.data(), attribCount);
+        zeroRun = 0;
+      }
+    }
+    if (zeroRun)
+      encoder.encodeRunLength(zeroRun);
+      
+    return;
+  } 
+
   std::vector<int> attributes(attribCount * voxelCount);
   std::vector<int> coefficients(attribCount * voxelCount);
   std::vector<Qps> pointQpOffsets(voxelCount);
@@ -1215,19 +1241,26 @@ AttributeEncoder::encodeMultiAttributeRAHT(
     attributeIdxMap, attr_aps, maxAttributeNumberPerGroup);  //Attribute Set for Multi-Attribute Encoding
  
   const int voxelCount = int(pointCloud.getPointCount());
-  
-  std::vector<MortonCodeWithIndexAndPos> packedVoxel(voxelCount);
-  for (int n = 0; n < voxelCount; n++) {
-    packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
-    packedVoxel[n].index = n;
+  if (_sortedMortonCode.size() == 0)
+  {
+    std::vector<MortonCodeWithIndex> packedVoxel(voxelCount);
+    for (int n = 0; n < voxelCount; n++) {
+      packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
+      packedVoxel[n].index = n;
+    }
+    sort(packedVoxel.begin(), packedVoxel.end());
+    _sortedMortonCode.resize(voxelCount);
+    _sortedIndex.resize(voxelCount);
+    for (int n = 0; n < voxelCount; n++) {
+      _sortedMortonCode[n] = packedVoxel[n].mortonCode;
+      _sortedIndex[n] = packedVoxel[n].index;
+    }
   }
-  sort(packedVoxel.begin(), packedVoxel.end());
 
   // Allocate arrays.
   for (auto AttributeGroup : AttributeGroups) {
     const int attribCount = 3 * AttributeGroup.size();
 
-    std::vector<int64_t> mortonCode(voxelCount);
     std::vector<int> attributes(attribCount * voxelCount);
     std::vector<int> coefficients(attribCount * voxelCount);
     std::vector<Qps> pointQpOffsets(voxelCount);
@@ -1239,28 +1272,11 @@ AttributeEncoder::encodeMultiAttributeRAHT(
       auto desc = _sps.attributeSets[attrIdx];
 
       for (int n = 0; n < voxelCount; n++) {
-
-        mortonCode[n] = packedVoxel[n].mortonCode;
-        Vec3<attr_t> color;
-        if (desc.attributeLabel == KnownAttributeLabel::kColour)
-          color = pointCloud.getColor(packedVoxel[n].index);
-        else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-          color = pointCloud.getScale(packedVoxel[n].index);
-        else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-          assert(
-            desc.params.rotation_component_label
-            == RotationComponentLabel::kRotation_XYZ);
-          color = pointCloud.getRotationVec(packedVoxel[n].index);
-        } else if (
-          desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-          int SHindex = (int)desc.params.sh_coefficient_label;
-          color = pointCloud.getSHCoefficient(SHindex, packedVoxel[n].index);
-        }
-
-        attributes[attribCount * n + 3 * AttributeGroupIdx] = color[0];
-        attributes[attribCount * n + 3 * AttributeGroupIdx + 1] = color[1];
-        attributes[attribCount * n + 3 * AttributeGroupIdx + 2] = color[2];
-        pointQpOffsets[n] = {0, 0};
+        auto& index = _sortedIndex[n];
+        Vec3<attr_t> attribute = getAttribute(desc, pointCloud, index);
+        for (int d = 0; d < attribCount; ++d)
+          attributes[attribCount * n + 3 * AttributeGroupIdx + d] = attribute[d];
+        pointQpOffsets[n] = {0, 0}; // qpSet.regionQpOffset(pointCloud[index]);
       }
     }
     
@@ -1290,7 +1306,7 @@ AttributeEncoder::encodeMultiAttributeRAHT(
 
     regionAdaptiveHierarchicalTransformforMultiAttr(
       raht_prediction_enabled_flag, rahtPredThreshold, pointQpOffsets.data(),qpSets,
-      mortonCode.data(), attributes.data(), attribCount, voxelCount,
+      _sortedMortonCode.data(), attributes.data(), attribCount, voxelCount,
       coefficients.data());
 
     for (int AttributeGroupIdx = 0; AttributeGroupIdx < AttributeGroup.size();
@@ -1309,28 +1325,14 @@ AttributeEncoder::encodeMultiAttributeRAHT(
 
       int clipMax = (1 << desc.bitdepth) - 1;
       for (int n = 0; n < voxelCount; n++) {
-        const int r = attributes[attribCount * n + 3 * AttributeGroupIdx];
-        const int g = attributes[attribCount * n + 3 * AttributeGroupIdx + 1];
-        const int b = attributes[attribCount * n + 3 * AttributeGroupIdx + 2];
-        Vec3<attr_t> color;
-        color[0] = attr_t(PCCClip(r, 0, clipMax));
-        color[1] = attr_t(PCCClip(g, 0, clipMax));
-        color[2] = attr_t(PCCClip(b, 0, clipMax));
-
-        if (desc.attributeLabel == KnownAttributeLabel::kColour)
-          pointCloud.setColor(packedVoxel[n].index, color);
-        else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-          pointCloud.setScale(packedVoxel[n].index, color);
-        else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-          assert(
-            desc.params.rotation_component_label
-            == RotationComponentLabel::kRotation_XYZ);
-          pointCloud.setRotationVec(packedVoxel[n].index, color);
-        } else if (
-          desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-          int SHindex = (int)desc.params.sh_coefficient_label;
-          pointCloud.setSHCoefficient(SHindex, packedVoxel[n].index, color);
+        auto index = _sortedIndex[n];
+        Vec3<attr_t> attribute(0);
+        for (int d = 0; d < attribCount; ++d) {
+          int value = attributes[attribCount * n + 3 * AttributeGroupIdx + d];
+          attribute[d] = attr_t(PCCClip(value, 0, clipMax));
         }
+
+        setAttribute(desc, pointCloud, index, attribute);
       }
     }
   }
