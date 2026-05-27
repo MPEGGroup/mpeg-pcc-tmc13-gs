@@ -143,6 +143,14 @@ struct EncoderParams {
   std::vector<int> attr_DU_modes;
   
   bool externalPrePost;
+
+  // Enable calculating QP layer offsets
+	bool adjustQPLayerOffsetsEnabled;
+
+	// training image width/height 
+	int refImageWidth;
+	int refImageHeight;
+
 };
 
 //============================================================================

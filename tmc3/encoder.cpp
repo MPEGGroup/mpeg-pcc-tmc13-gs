@@ -68,6 +68,9 @@ PCCPointSet3 getPartition(
   const SrcMappedPointSet& map,
   const std::vector<int32_t>& indexes);
 
+void 
+adjustQPLayerOffsets(const PCCPointSet3& source, int width, int height,std::vector<int> &qplayers);
+
 //============================================================================
 
 PCCTMC3Encoder3::PCCTMC3Encoder3() : _frameCounter(-1)
@@ -726,12 +729,19 @@ PCCTMC3Encoder3::compressPartition(
   // Buffer for RAHT coefficients, key is aps_attr_parameter_set_id 
   std::unordered_map<int, std::vector<int>> bufferRahtCoefficients;
 
+  // Buffer for QP layter offset
+  std::vector<int> qpLayers;
+  // adjust QP layer offset
+  if (params->adjustQPLayerOffsetsEnabled) 
+    adjustQPLayerOffsets(pointCloud, params->refImageWidth, params->refImageHeight, qpLayers);
+
   // for each attribute
   for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
     const auto& attr_aps = *_aps[attrIdx];
     const auto& attr_enc = params->attr[attrIdx];
     const auto& label = attr_sps.attributeLabel;
+
     pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
     clock_user.start();
 
@@ -749,8 +759,13 @@ PCCTMC3Encoder3::compressPartition(
     abh.attr_geom_slice_id = _sliceId;
     abh.attr_qp_delta_luma = 0;
     abh.attr_qp_delta_chroma = 0;
-    abh.attr_layer_qp_delta_luma = attr_enc.abh.attr_layer_qp_delta_luma;
-    abh.attr_layer_qp_delta_chroma = attr_enc.abh.attr_layer_qp_delta_chroma;
+    if (params->adjustQPLayerOffsetsEnabled) {
+      abh.attr_layer_qp_delta_luma = qpLayers;
+      abh.attr_layer_qp_delta_chroma = qpLayers;
+    } else { 
+      abh.attr_layer_qp_delta_luma = attr_enc.abh.attr_layer_qp_delta_luma;
+      abh.attr_layer_qp_delta_chroma = attr_enc.abh.attr_layer_qp_delta_chroma;
+    }
 
     // NB: regionQpOrigin/regionQpSize use the STV axes, not XYZ.
     if (false) {
@@ -1173,6 +1188,63 @@ getPartition(
   }
 
   return dst;
+}
+
+//----------------------------------------------------------------------------
+// 
+void adjustQPLayerOffsets(
+  const PCCPointSet3& source,
+  int width,
+  int height,
+  std::vector<int> &qplayers)
+{
+  if (!qplayers.empty())
+    return;
+  const size_t pointCountSource = source.getPointCount();
+
+  uint64_t totalPixels = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+
+  const static int tabel[5] = {9,9,3,1,0};
+  int factorIdx = PCCClip(ilog2(totalPixels) - 19,0,4);
+  int factor = tabel[factorIdx];
+
+  std::vector<uint64_t> mortonCode(pointCountSource);
+  for (int n = 0; n < pointCountSource; n++) {
+    mortonCode[n] = mortonAddr(source[n]);
+  }
+
+  std::vector<int> level_num;
+  level_num.push_back(pointCountSource);
+  std::vector<uint64_t> cur = std::move(mortonCode); 
+  while (true) {
+    for (auto& c : cur) {
+      c >>= 3;
+    }
+
+    std::sort(cur.begin(), cur.end());
+    auto last = std::unique(cur.begin(), cur.end());
+    cur.erase(last, cur.end());
+    level_num.push_back(static_cast<int>(cur.size()));
+    if (cur.size() <= 1) {
+      break;
+    }
+  }
+  
+  for (int i = level_num.size() - 1; i >= 0; i--) {
+    int qpoffset;
+    for (qpoffset = 0; qpoffset <= 40; qpoffset++) {
+      int64_t a = std::pow(qpoffset + 1, 3) * pointCountSource;
+      int64_t b = std::pow(factor, 3) * level_num[i];
+      if (a > b)
+        break;
+    }
+    qplayers.push_back(qpoffset);
+  }
+
+  int  beta= (factor * 3) >> 2;
+  for (int i = 0; i < qplayers.size(); i++) {
+    qplayers[i] -= beta;
+  }
 }
 
 //============================================================================

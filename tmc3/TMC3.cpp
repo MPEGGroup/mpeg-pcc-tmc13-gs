@@ -1215,6 +1215,18 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       params_attr.encoder.abh.attr_layer_qp_delta_chroma, {},
       "Attribute's per layer chroma QP offsets")
 
+   ("calcQPLayerOffsetsEnabled",
+    params.encoder.adjustQPLayerOffsetsEnabled, false,
+    "automatically calculate QP layer offsets.")
+
+   ("refResolutionWidth",
+     params.encoder.refImageWidth, 1920,
+     "Width of the reference resolution for QP calculation.")
+
+   ("refResolutionHeight",
+     params.encoder.refImageHeight, 1080,
+     "Height of the reference resolution for QP calculation.")
+
   // This section is just dedicated to attribute recolouring (encoder only).
   // parameters are common to all attributes.
   (po::Section("Recolouring"))

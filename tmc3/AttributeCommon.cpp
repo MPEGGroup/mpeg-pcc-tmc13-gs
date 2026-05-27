@@ -34,7 +34,6 @@
  */
 
 #include "AttributeCommon.h"
-
 #include "PCCTMC3Common.h"
 
 namespace pcc {
