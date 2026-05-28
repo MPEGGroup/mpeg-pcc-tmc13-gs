@@ -36,6 +36,7 @@
 #ifndef PCCTMC3Common_h
 #define PCCTMC3Common_h
 
+#include "TMC3Config.h"
 #include "PCCMath.h"
 #include "PCCPointSet.h"
 #include "constants.h"
@@ -851,6 +852,8 @@ computeNearestNeighbors(
       if (curAtlasId != pointAtlasId) {
         atlas.clearUpdates();
         curAtlasId = pointAtlasId;
+        // Note: This is a temporary macro. It must be removed after the conformance bitstream is regenerated.
+        #if !TEST_CONFORMANCE
         while (cubeIndex < retainedSize){
           auto retMorton = packedVoxel[retained[cubeIndex]].mortonCode;
           auto retAtlasId = retMorton >> atlasBoundaryBit;
@@ -861,6 +864,17 @@ computeNearestNeighbors(
           }
           ++cubeIndex;
         }
+        #else
+        while (
+          cubeIndex < retainedSize
+          && (packedVoxel[retained[cubeIndex]].mortonCode >> atlasBoundaryBit)
+            == curAtlasId) {
+          atlas.set(
+            packedVoxel[retained[cubeIndex]].mortonCode >> shiftBits3,
+            cubeIndex);
+          ++cubeIndex;
+        }
+        #endif
       }
 
       if (lastMortonCodeShift3 != mortonCodeShiftBits3) {
