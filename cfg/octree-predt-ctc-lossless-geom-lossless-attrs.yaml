@@ -314,7 +314,6 @@ categories:
       breakfast_untracked: { width: 1920, height: 1080 }
       breakfast_tracked: { width: 1920, height: 1080 }
       breakfast_semitracked: { width: 1920, height: 1080 }
-      breakdance_untracked: { width: 1920, height: 1080 }
       bartender_tracked: { width: 1920, height: 1080 }
       bartender_semitracked: { width: 1920, height: 1080 }
       trio: { width: 1920, height: 1080 }

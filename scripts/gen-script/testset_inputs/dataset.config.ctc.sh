@@ -3,24 +3,25 @@
 # This file is sourced by the main script.
 # The function ADD_SEQ(name, width, height) is already defined in the main script.
 
-# NF and 1F sequences
+# Forward facing
+ADD_SEQ bartender_tracked       1920 1080
 ADD_SEQ bartender_semitracked   1920 1080
+ADD_SEQ cinema_tracked          1920 1080
 ADD_SEQ cinema_semitracked      1920 1080
+ADD_SEQ breakfast_tracked       1920 1080
 ADD_SEQ breakfast_semitracked   1920 1080
 ADD_SEQ breakfast_untracked     1920 1080
-ADD_SEQ breakdance_untracked    1920 1080
-ADD_SEQ manwithfruit_tracked    3840 2160
-
-# Optional NF sequences
-ADD_SEQ bartender_tracked       1920 1080
-ADD_SEQ cinema_tracked          1920 1080
-ADD_SEQ breakfast_tracked       1920 1080
-
-# 1F sequences (only included if FLAG_1F == 1)
 if [ "${FLAG_1F:-0}" -eq 1 ]; then
+    # 1F sequences
     ADD_SEQ trio                1920 1080
     ADD_SEQ makeup              1920 1080
-    #ADD_SEQ musical             1920 1080
+    ADD_SEQ musical             1920 1080
+fi
+
+# Object centric
+ADD_SEQ manwithfruit_tracked    3840 2160
+if [ "${FLAG_1F:-0}" -eq 1 ]; then
+    # 1F sequences
     ADD_SEQ lego_ferrari        4594 5514
     ADD_SEQ lego_bugatti        3852 2868
     ADD_SEQ cricket_player      4520 2540

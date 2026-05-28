@@ -24,10 +24,6 @@ sequences:
     group: catGS
     has_colour: 0
     has_refl: 0
-  breakdance_untracked:
-    group: catGS
-    has_colour: 0
-    has_refl: 0
   bartender_tracked:
     group: catGS
     has_colour: 0
