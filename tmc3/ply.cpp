@@ -848,12 +848,11 @@ ply::analyzeMinMax (
     int rounded_min = static_cast<int>(std::floor(stat.min));
     int rounded_max = static_cast<int>(std::ceil(stat.max));
     int offset = rounded_min;
-    int attr_scale = rounded_max - rounded_min;
-    if (attr_scale <= 0)
-    {
-      attr_scale = 1;
-      offset = 0;
-    }
+
+    int64_t attr_frac_bits_scale = 1ll << desc.params.attr_frac_bits;
+    int64_t bit_depth_scale = (1ll << desc.bitdepth) - 1ll;
+    int64_t d_code = int64_t(rounded_max) - int64_t(rounded_min);
+    int64_t attr_scale = (d_code * attr_frac_bits_scale + (bit_depth_scale>>1)) / bit_depth_scale;
 
     desc.params.attr_offset = offset;
     desc.params.attr_scale_minus1 = attr_scale - 1;
@@ -871,23 +870,21 @@ ply::quantizationLinear (
   int pointCount = cloud.getPointCount();  
   for (auto& desc : attrDescs)
   {
-    int offset = desc.params.attr_offset;
-    int attr_scale = desc.params.attr_scale_minus1 + 1;
-    auto attr_frac_bits_scale = 1ULL << desc.params.attr_frac_bits;
-    float clip_max = (1 << desc.bitdepth) - 1;
+    const int64_t offset = desc.params.attr_offset;
+    const int64_t attr_scale = desc.params.attr_scale_minus1 + 1;
+    const int64_t attr_frac_bits_scale = 1ll << desc.params.attr_frac_bits;
+    const int64_t clip_max = (1ll << desc.bitdepth) - 1ll;
     
-    if (desc.attr_num_dimensions_minus1 == 0)
-    {
+    if (desc.attr_num_dimensions_minus1 == 0) {
       double* src;
       std::vector<int> indices = getAttrIndices(desc, properties);
       src = &inputAttrBuf[indices[0]*pointCount];
 
       auto& dst = cloud.getAttrScalar(desc);
-      for (int i = 0; i < pointCount; i++)
-      {
+      for (int i = 0; i < pointCount; i++) {
         dst[i] = attr_t(PCCClip(
-                round((src[i] - offset) * attr_frac_bits_scale / attr_scale),
-                0.0f, clip_max));
+                std::llround((src[i] - offset) * attr_frac_bits_scale / attr_scale),
+                0, clip_max));
       }
     } else {
       double* src[3];
@@ -901,8 +898,8 @@ ply::quantizationLinear (
       for (int c = 0; c < 3; c++) {
         for (int i = 0; i < pointCount; i++) {
           dst[i][c] = attr_t(PCCClip(
-                round((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
-                0.0f, clip_max));
+                std::llround((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
+                0, clip_max));
         }
       }
     }
@@ -911,8 +908,8 @@ ply::quantizationLinear (
       for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
         desc.params.attr_default_value[c] = 
           attr_t(PCCClip(
-            round((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
-            0.0f, (1 << desc.bitdepth) - 1));
+            std::llround((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
+            0, clip_max));
       }
     }
   }
