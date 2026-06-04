@@ -2,10 +2,10 @@
 set -xeuo pipefail
 
 GSCTOOL="third_party/mpeg-gsc-tools"
-PYTHON="uv run"
 
 input_dir=data/CTC
 output_dir=data/CTC.processed
+
 
 datasets=(
     # Forward-facing scenes
@@ -48,14 +48,8 @@ for dataset in "${datasets[@]}"; do
         --output=${output_dir}/${dataset}/plys/frame_${frame}.camerapos.ply \
         -v 1
 
-    # Generate training views by minimum spanning tree.
-    ${PYTHON} scripts/dataset/generate_training_views.py \
-        --dataset-dir ${input_dir}/${dataset}/colmap_data/frame_${frame} \
-        --output-dir ${output_dir}/${dataset}/colmap_data/frame_${frame}.mst \
-        --save-merged-model
-
     # Copy original views.
     mkdir -p ${output_dir}/${dataset}/colmap_data/frame_${frame}
-    cp -r ${input_dir}/${dataset}/colmap_data/frame_${frame}/sparse ${output_dir}/${dataset}/colmap_data/frame_${frame}/sparse
+    cp -r ${input_dir}/${dataset}/colmap_data/frame_${frame}/sparse ${output_dir}/${dataset}/colmap_data/frame_${frame}/
 done
 

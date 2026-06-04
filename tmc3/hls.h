@@ -119,6 +119,12 @@ struct AttributeLabel {
     return lhs.known_attribute_label == rhs;
   }
 
+  friend bool
+  operator!=(const AttributeLabel& lhs, const KnownAttributeLabel& rhs)
+  {
+    return lhs.known_attribute_label != rhs;
+  }
+
   //--------------------------------------------------------------------------
 
   bool known_attribute_label_flag() const
@@ -301,6 +307,7 @@ struct AttributeParameters {
   // soft default attribute values.
   // If empty, use hard default values.
   std::vector<int> attr_default_value;
+  std::vector<double> input_attr_default_value;
 
   // Gaussian Splat Compression
   bool sh_dc_coefficient_flag = false;
@@ -332,6 +339,7 @@ struct AttributeParameters {
     cicpParametersPresent = false;
     scalingParametersPresent = false;
     attr_default_value.clear();
+    input_attr_default_value.clear();
     opaqueParameters.clear();
 		shCoefficientParameterPresent = false;
 		rotationComponentParameterPresent = false;

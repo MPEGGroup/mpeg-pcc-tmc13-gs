@@ -63,6 +63,9 @@ struct DecoderParams {
   // Number of fractional bits used in output position representation.
   int outputFpBits;
 
+  // Maximum number of attribute groups merged into one RAHT decoding pass.
+  int maxAttributeNumberPerGroup;
+
   bool gs_ext = false;
 };
 
@@ -164,6 +167,9 @@ private:
 
   // Attribute decoder for reuse between attributes of same slice
   std::unique_ptr<AttributeDecoderIntf> _attrDecoder;
+  std::vector<AttributeBrickHeader> _allAttrAbh;
+  std::unordered_map<int, std::vector<int>> bufferRahtCoefficients;
+  int receive_attr_num = 0;
 };
 
 //----------------------------------------------------------------------------

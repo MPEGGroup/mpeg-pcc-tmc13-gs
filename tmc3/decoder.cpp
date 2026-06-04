@@ -576,10 +576,29 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
   }
 
   auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
+
+  receive_attr_num++;
+  if (attr_sps.attr_num_dimensions_minus1 == 2
+    && attr_aps.attr_encoding == AttributeEncoding::kRAHTransform)
+    _allAttrAbh.push_back(abh);
+
+
   _attrDecoder->decode(
     *_sps, attr_sps, attr_aps, abh, _gbh.footer.geom_num_points_minus1,
     _params.minGeomNodeSizeLog2, buf.data() + abhSize, buf.size() - abhSize,
-    ctxtMemAttr, _currentPointCloud);
+    ctxtMemAttr, _currentPointCloud, _params.maxAttributeNumberPerGroup,
+    &bufferRahtCoefficients);
+
+  if (
+    receive_attr_num == _sps->attributeSets.size()&& _params.maxAttributeNumberPerGroup > 1) {
+    _attrDecoder->decodeMultiAttributeRAHT(
+      *_sps, _apss, _allAttrAbh, _gbh.footer.geom_num_points_minus1,
+      _params.minGeomNodeSizeLog2, bufferRahtCoefficients, _currentPointCloud,
+      _params.maxAttributeNumberPerGroup);
+    receive_attr_num = 0;
+    _allAttrAbh.clear();
+  }
+
 
   if (attr_aps.spherical_coord_flag)
     _currentPointCloud.swapPoints(altPositions);

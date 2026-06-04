@@ -114,8 +114,7 @@ categories:
        - convertPlyColourspace: 0
        - transformType: 0
        - outputBinaryPly: 1
-       - inputScale: 8388608
-       - codingScale: 0.0001220703125
+       - inputScale: 2097152 # 2^21
        - sequenceScale: 1
        - externalScale: 0
        - attrFracBits: 12
@@ -128,13 +127,11 @@ categories:
            r02: 18
            r03: 10
            r04: 6
-           r05: 4
        - qpChromaOffset:
            r01: 4
            r02: 4
            r03: 4
            r04: 2
-           r05: 0
        - shCoefficientLabel: 0
        - attribute: SHCoefficient0
 
@@ -145,7 +142,6 @@ categories:
            r02: 30
            r03: 22
            r04: 14
-           r05: 10
        - qpChromaOffset: 4
        - shCoefficientLabel: 1
        - attribute: SHCoefficient1
@@ -154,7 +150,6 @@ categories:
            r02: 30
            r03: 22
            r04: 14
-           r05: 10
        - qpChromaOffset: 4
        - shCoefficientLabel: 2
        - attribute: SHCoefficient2
@@ -163,7 +158,6 @@ categories:
            r02: 30
            r03: 22
            r04: 14
-           r05: 10
        - qpChromaOffset: 4
        - shCoefficientLabel: 3
        - attribute: SHCoefficient3
@@ -175,7 +169,6 @@ categories:
            r02: 38
            r03: 30
            r04: 22
-           r05: 14
        - qpChromaOffset: 4
        - shCoefficientLabel: 4
        - attribute: SHCoefficient4
@@ -184,7 +177,6 @@ categories:
            r02: 38
            r03: 30
            r04: 22
-           r05: 14
        - qpChromaOffset: 4
        - shCoefficientLabel: 5
        - attribute: SHCoefficient5
@@ -193,7 +185,6 @@ categories:
            r02: 38
            r03: 30
            r04: 22
-           r05: 14
        - qpChromaOffset: 4
        - shCoefficientLabel: 6
        - attribute: SHCoefficient6
@@ -202,7 +193,6 @@ categories:
            r02: 38
            r03: 30
            r04: 22
-           r05: 14
        - qpChromaOffset: 4
        - shCoefficientLabel: 7
        - attribute: SHCoefficient7
@@ -211,7 +201,6 @@ categories:
            r02: 38
            r03: 30
            r04: 22
-           r05: 14
        - qpChromaOffset: 4
        - shCoefficientLabel: 8
        - attribute: SHCoefficient8
@@ -223,7 +212,6 @@ categories:
            r02: 41
            r03: 33
            r04: 25
-           r05: 18
        - qpChromaOffset: 4
        - shCoefficientLabel: 9
        - attribute: SHCoefficient9
@@ -232,7 +220,6 @@ categories:
            r02: 41
            r03: 33
            r04: 25
-           r05: 18
        - qpChromaOffset: 4
        - shCoefficientLabel: 10
        - attribute: SHCoefficient10
@@ -241,7 +228,6 @@ categories:
            r02: 41
            r03: 33
            r04: 25
-           r05: 18
        - qpChromaOffset: 4
        - shCoefficientLabel: 11
        - attribute: SHCoefficient11
@@ -250,7 +236,6 @@ categories:
            r02: 41
            r03: 33
            r04: 25
-           r05: 18
        - qpChromaOffset: 4
        - shCoefficientLabel: 12
        - attribute: SHCoefficient12
@@ -259,7 +244,6 @@ categories:
            r02: 41
            r03: 33
            r04: 25
-           r05: 18
        - qpChromaOffset: 4
        - shCoefficientLabel: 13
        - attribute: SHCoefficient13
@@ -268,7 +252,6 @@ categories:
            r02: 41
            r03: 33
            r04: 25
-           r05: 18
        - qpChromaOffset: 4
        - shCoefficientLabel: 14
        - attribute: SHCoefficient14
@@ -277,7 +260,6 @@ categories:
            r02: 41
            r03: 33
            r04: 25
-           r05: 18
        - qpChromaOffset: 4
        - shCoefficientLabel: 15
        - attribute: SHCoefficient15
@@ -289,7 +271,6 @@ categories:
            r02: 38
            r03: 30
            r04: 22
-           r05: 14
        - attribute: opacity
 
        - ""
@@ -299,7 +280,6 @@ categories:
            r02: 30
            r03: 22
            r04: 14
-           r05: 10
        - qpChromaOffset: 0
        - attribute: scale
 
@@ -310,21 +290,9 @@ categories:
            r02: 30
            r03: 22
            r04: 14
-           r05: 10
        - qpChromaOffset: 0
-       - rotationComponentLabel: 1
-       - attribute: rotationXYZ
-
-       - ""
-       - "# Rotation ---------"
-       - qp:
-           r01: 38
-           r02: 30
-           r03: 22
-           r04: 14
-           r05: 10
        - rotationComponentLabel: 0
-       - attribute: rotationW
+       - attribute: rotationXYZ
 
     decflags:
      - mode: 1
@@ -411,7 +379,6 @@ categories:
       breakfast_untracked:
       breakfast_tracked:
       breakfast_semitracked:
-      breakdance_untracked:
       bartender_tracked:
       bartender_semitracked:
       trio:

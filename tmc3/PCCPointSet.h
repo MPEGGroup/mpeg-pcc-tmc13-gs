@@ -50,6 +50,7 @@
 
 #include "PCCMath.h"
 #include "PCCMisc.h"
+#include "hls.h"
 
 #include "gstable.h"
 
@@ -799,7 +800,49 @@ public:
     }
     return bbox;
   }
+  void setAttribute(KnownAttributeLabel attrLabel)
+  {
+    if (KnownAttributeLabel::kColour == attrLabel)
+      withColors = true;
+    else if (KnownAttributeLabel::kReflectance == attrLabel)
+      withReflectances = true;
+    else if (KnownAttributeLabel::kOpacity == attrLabel)
+      withOpacities = true;
+    else if (KnownAttributeLabel::kScale == attrLabel)
+      withScales = true;
+    else if (KnownAttributeLabel::kRotation == attrLabel) {
+      withRotations = true;
+    }
+    else if (KnownAttributeLabel::kSH_coefficients == attrLabel)
+      withSHCoefficients = true;
+  }
 
+  std::vector<Vec3<attr_t>>& getAttrVec(AttributeDescription& desc) {
+    if (desc.attributeLabel == KnownAttributeLabel::kColour)
+      return getColor();
+    else if (desc.attributeLabel == KnownAttributeLabel::kScale)
+      return getScale();
+    else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
+      return getRotationVec();
+    else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
+      return getSHCoefficient(int(desc.params.sh_coefficient_label));
+    else {
+      assert(0);
+      return getColor();
+    }
+  }
+  std::vector<attr_t>& getAttrScalar(AttributeDescription& desc) {
+    if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
+      return getReflectance();
+    else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
+      return getOpacity();
+    else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
+      return getRotationScalar();
+    else {
+      assert(0);
+      return getReflectance();
+    }
+  }
   //--------------------------------------------------------------------------
 
 private:

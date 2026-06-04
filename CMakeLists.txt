@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.0)
 project (TMC3 CXX)
 
+# Note: This is a temporary macro. It must be removed after the conformance bitstream is regenerated.
+option(TEST_CONFORMANCE "Conformance testing" ON)
+
 include( CheckCXXCompilerFlag )
 CHECK_CXX_COMPILER_FLAG( "-std=c++11" COMPILER_SUPPORTS_CXX11 )
 CHECK_CXX_COMPILER_FLAG( "-std=c++0x" COMPILER_SUPPORTS_CXX0X )

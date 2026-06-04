@@ -34,7 +34,6 @@
  */
 
 #include "AttributeCommon.h"
-
 #include "PCCTMC3Common.h"
 
 namespace pcc {
@@ -136,56 +135,42 @@ AttributeLods::isReusable(
 //============================================================================
 
 bool
-predModeEligibleColor(
+predModeEligibleAttrMultiComp(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
   const std::vector<uint32_t>& indexes,
   const PCCPredictor& predictor)
 {
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
+
   if (predictor.neighborCount <= 1 || !aps.max_num_direct_predictors)
     return false;
 
   Vec3<int64_t> minValue = {0, 0, 0};
   Vec3<int64_t> maxValue = {0, 0, 0};
+
   for (int i = 0; i < predictor.neighborCount; ++i) {
-		Vec3<attr_t> colorNeighbor;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-			colorNeighbor = pointCloud.getColor(
-				indexes[predictor.neighbors[i].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			colorNeighbor = pointCloud.getScale(
-				indexes[predictor.neighbors[i].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			colorNeighbor = pointCloud.getRotationVec(
-				indexes[predictor.neighbors[i].predictorIndex]);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			colorNeighbor = pointCloud.getSHCoefficient(
-				SHindex, indexes[predictor.neighbors[i].predictorIndex]);
-		}
-
-
-    for (size_t k = 0; k < 3; ++k) {
-      if (i == 0 || colorNeighbor[k] < minValue[k]) {
-        minValue[k] = colorNeighbor[k];
-      }
-      if (i == 0 || colorNeighbor[k] > maxValue[k]) {
-        maxValue[k] = colorNeighbor[k];
-      }
+    Vec3<attr_t> attributeNeighbor = getAttribute(
+      desc, pointCloud, indexes[predictor.neighbors[i].predictorIndex]);
+    for (int k = 0; k < attribCount; ++k) {
+      if (i == 0 || attributeNeighbor[k] < minValue[k])
+        minValue[k] = attributeNeighbor[k];
+      if (i == 0 || attributeNeighbor[k] > maxValue[k])
+        maxValue[k] = attributeNeighbor[k];
     }
   }
 
-  auto maxDiff = (maxValue - minValue).max();
+  int64_t maxDiff = 0;
+  for (int k = 0; k < attribCount; ++k)
+    maxDiff = std::max(maxDiff, maxValue[k] - minValue[k]);
   return maxDiff >= aps.adaptivePredictionThreshold(desc);
 }
 
 //----------------------------------------------------------------------------
 
 bool
-predModeEligibleRefl(
+predModeEligibleAttrSingleComp(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
@@ -198,28 +183,92 @@ predModeEligibleRefl(
   int64_t minValue = 0;
   int64_t maxValue = 0;
   for (int i = 0; i < predictor.neighborCount; ++i) {
-	  attr_t reflectanceNeighbor;
-	  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-		  reflectanceNeighbor = pointCloud.getReflectance(
-			  indexes[predictor.neighbors[i].predictorIndex]);
-	  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-		  reflectanceNeighbor = pointCloud.getOpacity(
-			  indexes[predictor.neighbors[i].predictorIndex]);
-	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-		  reflectanceNeighbor = pointCloud.getRotationScalar(
-			  indexes[predictor.neighbors[i].predictorIndex]);
-	  }
-    if (i == 0 || reflectanceNeighbor < minValue) {
-      minValue = reflectanceNeighbor;
-    }
-    if (i == 0 || reflectanceNeighbor > maxValue) {
-      maxValue = reflectanceNeighbor;
-    }
+    attr_t attributeNeighbor = getAttribute(
+      desc, pointCloud, indexes[predictor.neighbors[i].predictorIndex])[0];
+    if (i == 0 || attributeNeighbor < minValue)
+      minValue = attributeNeighbor;
+    if (i == 0 || attributeNeighbor > maxValue)
+      maxValue = attributeNeighbor;
   }
 
   auto maxDiff = maxValue - minValue;
   return maxDiff >= aps.adaptivePredictionThreshold(desc);
+}
+
+//============================================================================
+
+Vec3<attr_t>
+getAttribute(
+  const AttributeDescription& desc,
+  const PCCPointSet3& pointCloud,
+  uint32_t pointIndex)
+{
+  Vec3<attr_t> attribute(0);
+
+  if (desc.attributeLabel == KnownAttributeLabel::kColour) {
+    attribute = pointCloud.getColor(pointIndex);
+  }
+  else if (desc.attributeLabel == KnownAttributeLabel::kScale) {
+    attribute = pointCloud.getScale(pointIndex);
+  }
+  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+    if (desc.params.rotation_component_label ==
+        RotationComponentLabel::kRotation_XYZ) {
+      attribute = pointCloud.getRotationVec(pointIndex);
+    }
+    else {
+      attribute[0] = pointCloud.getRotationScalar(pointIndex);
+    }
+  }
+  else if (desc.attributeLabel == KnownAttributeLabel::kReflectance) {
+    attribute[0] = pointCloud.getReflectance(pointIndex);
+  }
+  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity) {
+    attribute[0] = pointCloud.getOpacity(pointIndex);
+  }
+  else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+    int sh = int(desc.params.sh_coefficient_label);
+    attribute = pointCloud.getSHCoefficient(sh, pointIndex);
+  }
+
+  return attribute;
+}
+
+//----------------------------------------------------------------------------
+
+void
+setAttribute(
+  const AttributeDescription& desc,
+  PCCPointSet3& pointCloud,
+  uint32_t pointIndex,
+  const Vec3<attr_t>& attribute)
+{
+  if (desc.attributeLabel == KnownAttributeLabel::kColour) {
+    pointCloud.setColor(pointIndex, attribute);
+  }
+  else if (desc.attributeLabel == KnownAttributeLabel::kScale) {
+    pointCloud.setScale(pointIndex, attribute);
+  }
+  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+    if (desc.params.rotation_component_label ==
+        RotationComponentLabel::kRotation_XYZ)
+      pointCloud.setRotationVec(pointIndex, attribute);
+    else
+      pointCloud.setRotationScalar(pointIndex, attribute[0]);
+  }
+  else if (desc.attributeLabel ==
+           KnownAttributeLabel::kReflectance) {
+    pointCloud.setReflectance(pointIndex, attribute[0]);
+  }
+  else if (desc.attributeLabel ==
+           KnownAttributeLabel::kOpacity) {
+    pointCloud.setOpacity(pointIndex, attribute[0]);
+  }
+  else if (desc.attributeLabel ==
+           KnownAttributeLabel::kSH_coefficients) {
+    int SHindex = int(desc.params.sh_coefficient_label);
+    pointCloud.setSHCoefficient(SHindex, pointIndex, attribute);
+  }
 }
 
 //============================================================================

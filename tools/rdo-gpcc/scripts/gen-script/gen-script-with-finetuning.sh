@@ -41,17 +41,38 @@ run () {
     # RDO config.
     JOBNAME_SUFFIX=$1
     USE_RDO=$2
+    shift 2
+    FINETUNE_EXTRA_ARGS=$@
 
     # Generate run-script.
     source "$SCRIPT_DIR/common.sh"
 }
 
-# Anchor for sanity check.
+# # Anchor (for sanity check).
 # (
 #     run "anchor" False
 # )
 
-# Proposal.
-(
-    run "finetune" True
-)
+# # Fine-tuning only (for sanity check).
+# (
+#     run "finetune" True \
+#         --trainer.max-steps 10_000 \
+#         --pruner.prune-ratio 0.0
+# )
+
+# Proposal: Pruning with or without fine-tuning.
+prune_ratio=0.3
+for prune_mode in "gscm" "gsplat" ; do
+    # Pruning + fine-tuning.
+    (
+        run "finetune-with-prune_pr-${prune_ratio}_pm-${prune_mode}" True \
+            --trainer.max-steps 10_000 \
+            --pruner.prune-ratio "$prune_ratio" --pruner.mode "$prune_mode"
+    )
+    # Pruning only (no fine-tuning).
+    (
+        run "prune-only_pr-${prune_ratio}_pm-${prune_mode}" True \
+            --trainer.max-steps 0 \
+            --pruner.prune-ratio "$prune_ratio" --pruner.mode "$prune_mode"
+    )
+done

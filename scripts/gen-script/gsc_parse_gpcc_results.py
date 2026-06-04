@@ -45,7 +45,6 @@ ROT_KEYS   = ["rotations_XYZ", "rotations_W"]
 SCALE_KEYS = ["scales"]
 
 ATTR_KEYS = SH_B0_KEYS + SH_B1_KEYS + SH_B2_KEYS + SH_B3_KEYS + ROT_KEYS + SCALE_KEYS + ["opacities"]
-ATTR_KEY_ORDER = ["positions","SH_dc_coefficients_0","SH_ac_coefficients_1","SH_ac_coefficients_10","SH_ac_coefficients_11","SH_ac_coefficients_12","SH_ac_coefficients_13","SH_ac_coefficients_14","SH_ac_coefficients_15","SH_ac_coefficients_2","SH_ac_coefficients_3","SH_ac_coefficients_4","SH_ac_coefficients_5","SH_ac_coefficients_6","SH_ac_coefficients_7","SH_ac_coefficients_8","SH_ac_coefficients_9","opacities","rotations_XYZ","rotations_W","scales"]
 
 # ===== Results structure =====
 results = {
@@ -75,22 +74,21 @@ def avg(values):
     """Return average of list rounded to 12 decimals, or 0.0 if empty."""
     return round(sum(values) / len(values), 12) if values else 0.0
 
-ATTR_KEY_SIZE=len(ATTR_KEY_ORDER)
 def parse_enc_log(file_path):
     """Parse encoder log file for byte size and encoding times."""
     with open(file_path, "rt") as fp:
-        attr_id=0
         for line in fp:
             if "Total bitstream size" in line:
-                token = line.strip().split()    
+                token = line.strip().split()
                 results["TMC13Info"]["Total"]["byte"].append(int(token[3]))
             elif "bitstream size" in line:
                 token = line.strip().split()
-                results["TMC13Info"][ATTR_KEY_ORDER[attr_id%ATTR_KEY_SIZE]]["byte"].append(int(token[3]))
+                attr = token[0]
+                results["TMC13Info"][attr]["byte"].append(int(token[3]))
             elif "processing time (user)" in line:
                 token = line.strip().split()
-                results["TMC13Info"][ATTR_KEY_ORDER[attr_id%ATTR_KEY_SIZE]]["encT"].append(float(token[-2]))
-                attr_id+=1
+                attr = token[0]
+                results["TMC13Info"][attr]["encT"].append(float(token[-2]))
             elif "Processing time (user)" in line:
                 token = line.strip().split()
                 results["TMC13Info"]["Total"]["encT"].append(float(token[-2]))
@@ -98,12 +96,11 @@ def parse_enc_log(file_path):
 def parse_dec_log(file_path):
     """Parse decoder log file for decoding times."""
     with open(file_path, "rt") as fp:
-        attr_id=0
         for line in fp:
             if "processing time (user)" in line:
                 token = line.strip().split()
-                results["TMC13Info"][ATTR_KEY_ORDER[attr_id % ATTR_KEY_SIZE]]["decT"].append(float(token[-2]))
-                attr_id+=1
+                attr = token[0]
+                results["TMC13Info"][attr]["decT"].append(float(token[-2]))
             elif "Processing time (user)" in line:
                 token = line.strip().split()
                 results["TMC13Info"]["Total"]["decT"].append(float(token[-2]))

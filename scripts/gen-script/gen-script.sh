@@ -46,7 +46,7 @@ WRITE() { echo "$2" >> "$1"; }
 MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 
 ## Experiment name
-JOBNAME="TM13-GS-v1"
+JOBNAME="TM13-GS-v2"
 
 ## Experiment settings
 CFG_DIR=cfg
@@ -70,21 +70,35 @@ METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
 GSCTOOL="/path/to/mpeg-gsc-tools/"
 PYTHON="python3"
 
+## External Pre-Post processing
+FLAG_EXT_PP=0  # 0 = No external pre/post, 1 = External pre-/post-processing
+PRE_SCRIPT="/path/to/gs_pre_process.py"
+POST_SCRIPT="/path/to/gs_post_process.py"
+
 # Initial checks
 ENSURE_DIR "$DATASET_PATH"
 ENSURE_DIR "$TMC13_DIR"
 ENSURE_DIR "$GSCTOOL"
-ENSURE_DIR "$CFG_PATH"
 ENSURE_EXEC "$TMC13_BIN"
 ENSURE_EXEC "$METRIC"
 ENSURE_FILE "$INPUT_SEQUENCES_CFG"
 
 if [[ $RUN_MODE -eq 0 ]]; then
-    MODEs=("lossless-geom-lossy-attrs")
-    TOOLs=("octree-hybrid")
+    MODE_TOOLs=(
+        "lossless-geom-lossy-attrs octree-hybrid"
+        "lossless-geom-lossless-attrs octree-predlift"
+    )
 else
-    MODEs=("lossless-geom-lossy-attrs" "lossless-geom-lossless-attrs")
-    TOOLs=("predgeom-hybrid" "octree-predlift" "octree-raht" "predgeom-predlift" "predgeom-raht")
+    MODE_TOOLs=(
+        "lossless-geom-lossy-attrs octree-hybrid"
+        "lossless-geom-lossy-attrs octree-predlift"
+        "lossless-geom-lossy-attrs octree-raht"
+        "lossless-geom-lossy-attrs predgeom-hybrid"
+        "lossless-geom-lossy-attrs predgeom-predlift"
+        "lossless-geom-lossy-attrs predgeom-raht"
+        "lossless-geom-lossless-attrs octree-predlift"
+        "lossless-geom-lossless-attrs predgeom-predlift"
+    )
 fi
 
 ###########################################################################################
@@ -102,6 +116,12 @@ ADD_SEQ() {
     PATHs["$seq"]="$DATASET_PATH/$seq/$PLYS_SUBFOLDER/"
     REND_RESs["$seq"]="$width $height"
 }
+
+if [ "$FLAG_1F" -eq 1 ]; then
+    PREFIX="1F"
+else
+    PREFIX="NF"
+fi
 
 # Load sequences from external file
 source "$INPUT_SEQUENCES_CFG"
@@ -143,6 +163,26 @@ if [[ ! -d "$TMC13_DIR/build" ]]; then
     exit 1
 fi
 
+## automatic cfg generation
+mkdir -p "$TMC13_DIR/$CFG_DIR" 
+cd "$TMC13_DIR/$CFG_DIR"
+if [ $FLAG_1F == 1 ]; then
+    if [ $RUN_MODE == 0 ]; then
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --pred-lift --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
+    else 
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --all --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
+    fi
+else
+    if [ $RUN_MODE == 0 ]; then
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --pred-lift --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
+    else 
+    bash "$TMC13_DIR/script/gen-cfg.sh" --all --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
+    fi
+fi
+ENSURE_DIR "$CFG_PATH"
+
 # Build binaries
 cd "$TMC13_DIR/build"
 make -j"$(nproc)"
@@ -159,98 +199,122 @@ RUN_SUMMARY="$OUT/jobs/step3_run_summary.sh"
 : > "$RUN_METRIC"
 : > "$RUN_SUMMARY"
 
-cnt=0
-for MODE in "${MODEs[@]}"; do
-    for TOOL in "${TOOLs[@]}"; do
+for MODE_TOOL in "${MODE_TOOLs[@]}"; do
+    read -r MODE TOOL <<< "$MODE_TOOL"
+
+    [[ ! -d "$CFG_PATH/$TOOL/$MODE" ]] && continue
+
+    csv_file="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+    echo "seq, rate, total_Byte, pos_Byte, sh0_Byte, sh1_Byte, sh2_Byte, sh3_Byte, rot_Byte, scale_Byte, opacity_Byte, RGB-PSNR, YUV-PSNR, YUV-SSIM, YUV-IVSSIM, GT-RGB-PSNR, min_RGB-PSNR, min_YUV-PSNR, min_YUV-SSIM, max_RGB-PSNR, max_YUV-PSNR, max_YUV-SSIM, total_encT, pos_encT, att_encT, total_decT, pos_decT, att_decT, enc_MaxRSS, dec_MaxRSS" > "$csv_file"
+
+    for SEQ in "${!PATHs[@]}"; do
+        PLY_PATH="${PATHs[$SEQ]}"
+        files=("$PLY_PATH"/*.camerapos.ply)
+        read -r REN_W REN_H <<< "${REND_RESs[$SEQ]}"
         
-        [[ ! -d "$CFG_PATH/$TOOL/$MODE" ]] && continue
+        # set the start frame, the number of frames, viewpoints sampling period
+        if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
+        if [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi  
 
-        if [ $FLAG_1F == 1 ]; then
-            csv_file="$OUT/metrics/1F_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+        SelFILEs=("${files[@]:0:$NUM_FRAMES}")
+        if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+            CFG_DIRs=("$CFG_PATH/$TOOL/$MODE/$SEQ")
         else
-            csv_file="$OUT/metrics/NF_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+            CFG_DIRs=($CFG_PATH/$TOOL/$MODE/$SEQ/*)
         fi
-        echo "seq, rate, total_Byte, pos_Byte, sh0_Byte, sh1_Byte, sh2_Byte, sh3_Byte, rot_Byte, scale_Byte, opacity_Byte, RGB-PSNR, YUV-PSNR, YUV-SSIM, YUV-IVSSIM, GT-RGB-PSNR, min_RGB-PSNR, min_YUV-PSNR, min_YUV-SSIM, max_RGB-PSNR, max_YUV-PSNR, max_YUV-SSIM, total_encT, pos_encT, att_encT, total_decT, pos_decT, att_decT, enc_MaxRSS, dec_MaxRSS" > "$csv_file"
-
-        for SEQ in "${!PATHs[@]}"; do
-            PLY_PATH="${PATHs[$SEQ]}"
-            files=("$PLY_PATH"/*.camerapos.ply)
-            read -r REN_W REN_H <<< "${REND_RESs[$SEQ]}"
-            
-            # set the start frame, the number of frames, viewpoints sampling period
-            if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
-            if [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi  
-
-            SelFILEs=("${files[@]:0:$NUM_FRAMES}")
+        for CFG in "${CFG_DIRs[@]}"; do
             if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
-                CFG_DIRs=("$CFG_PATH/$TOOL/$MODE/$SEQ")
+                RATE="r06"   # dummy rate name for CSV and Excel
+                RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ"
+                MKDIRCK "$RESULT_DIR"
             else
-                CFG_DIRs=($CFG_PATH/$TOOL/$MODE/$SEQ/*)
+                RATE="$(basename "$CFG")"
+                RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/$RATE"
+                MKDIRCK "$RESULT_DIR"
             fi
-            for CFG in "${CFG_DIRs[@]}"; do
-                if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
-                    RATE="r01"   # dummy rate name for CSV and Excel
-                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ"
-                    MKDIRCK "$RESULT_DIR"
-                else
-                    RATE="$(basename "$CFG")"
-                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/$RATE"
-                    MKDIRCK "$RESULT_DIR"
-                fi
 
-                echo "$TOOL/$MODE/$SEQ/$RATE"
+            echo "$TOOL/$MODE/$SEQ/$RATE"
 
-                for FILE in "${SelFILEs[@]}"; do
-                    ((cnt+=1))
-                    N=$(( (cnt - 1) % 4 + 1 ))
-                    NODE=$(printf "pcc-worker%02d" "$N")
-                    FRAME="$(basename "$FILE" .camerapos.ply)"
-                    JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
+            for FILE in "${SelFILEs[@]}"; do
+                FRAME="$(basename "$FILE" .camerapos.ply)"
+                JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
 
+                {
+                    echo "#!/bin/bash"
+                    echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+                    echo "#SBATCH --ntasks-per-node=1"
+                    echo "#SBATCH --nodes=1"
+                    echo "#SBATCH --mem-per-cpu=8G"
+                    SRC_PLY="${FILE/.camerapos/}"
+                    if [ $FLAG_EXT_PP == 1 ]; then
+                        echo "$PYTHON ${PRE_SCRIPT} -i \"$SRC_PLY\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.pre.ply\""
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$RESULT_DIR/$FRAME.pre.ply\""
+                        echo "$PYTHON \"$POST_SCRIPT\" -i \"$RESULT_DIR/$FRAME.pre.ply.bin.decoded.ply\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\""
+                    else
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\""
+                    fi
+                    echo "touch $OUT/jobs/done/gpcc/\$SLURM_JOB_ID"
+                } > "$JOBFILE"
+                chmod +x "$JOBFILE"
+                echo "$JOBFILE" >> "$RUN_GPCC"
+
+                numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
+                for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
+                    JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
                     {
                         echo "#!/bin/bash"
                         echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
                         echo "#SBATCH --ntasks-per-node=1"
                         echo "#SBATCH --nodes=1"
                         echo "#SBATCH --mem-per-cpu=8G"
-                        SRC_PLY="${FILE/.camerapos/}"
-                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\""
-                        echo "touch $OUT/jobs/done/gpcc/\$SLURM_JOB_ID"
-                    } > "$JOBFILE"
-                    chmod +x "$JOBFILE"
-                    echo "$JOBFILE" >> "$RUN_GPCC"
-
-                    numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
-                    for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
-                        ((cnt+=1))
-                        N=$(( (cnt - 1) % 4 + 1 ))
-                        NODE=$(printf "pcc-worker%02d" "$N")
-                        JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
-                        {
-                            echo "#!/bin/bash"
-                            echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
-                            echo "#SBATCH --ntasks-per-node=1"
-                            echo "#SBATCH --nodes=1"
-                            echo "#SBATCH --mem-per-cpu=8G"
-                            echo "OMP_NUM_THREADS=1 $METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
-                            echo "touch $OUT/jobs/done/metric/\$SLURM_JOB_ID"
-                        } > "$JOBFILE_MET"
-                        chmod +x "$JOBFILE_MET"
-                        echo "$JOBFILE_MET" >> "$RUN_METRIC"
-                    done
+                        echo "$METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeSsim=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
+                        echo "touch $OUT/jobs/done/metric/\$SLURM_JOB_ID"
+                    } > "$JOBFILE_MET"
+                    chmod +x "$JOBFILE_MET"
+                    echo "$JOBFILE_MET" >> "$RUN_METRIC"
                 done
-                echo "$PYTHON $SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
-            
             done
+            echo "$PYTHON $SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
+        
         done
-
-        if [ $FLAG_1F == 1 ]; then
-        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" -p \"$csv_file\" -x \"$OUT/metrics/1F_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
-        else
-        echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$SCRIPT_DIR/anchor_results/NF_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
-        fi
     done
 done
+
+if [[ $RUN_MODE -eq 0 ]]; then
+    read -r MODE TOOL <<< "${MODE_TOOLs[0]}"
+    csv_C1="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+
+    read -r MODE TOOL <<< "${MODE_TOOLs[1]}"
+    csv_CW="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+
+    echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f $FLAG_1F \
+        -t \"$SCRIPT_DIR/templates/WG04N0826_template.xlsm\" \
+        -x \"$OUT/metrics/${PREFIX}_CTC_$JOBNAME.xlsm\" \
+        --aC1 \"$SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" \
+        --pC1 \"$csv_C1\" \
+        --aCW \"$SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs.csv\" \
+        --pCW \"$csv_CW\"" >> "$RUN_SUMMARY"
+
+else
+    for MODE_TOOL in "${MODE_TOOLs[@]}"; do
+        read -r MODE TOOL <<< "${MODE_TOOL}"
+        csv_file="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+        
+        CMD_BASE="$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f $FLAG_1F \
+            -t \"$SCRIPT_DIR/templates/WG04N0826_template.xlsm\" \
+            -x \"$OUT/metrics/${PREFIX}_CTC_$JOBNAME.xlsm\""
+
+        if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+            echo "$CMD_BASE \
+                --aCW \"$SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs.csv\" \
+                --pCW \"$csv_file\"" >> "$RUN_SUMMARY"
+        else
+            echo "$CMD_BASE \
+                --aC1 \"$SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" \
+                --pC1 \"$csv_file\"" >> "$RUN_SUMMARY"
+        fi
+    done
+fi
 
 # Function to run jobs in parallel with progress display
 run_with_progress() {

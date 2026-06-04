@@ -117,6 +117,9 @@ struct Parameters {
 
   // resort the input points by azimuth angle
   bool sortInputByAzimuth;
+
+  // Maximum number of attribute groups that can be processed in one RAHT encoding or decoding pass.
+  int maxAttributeNumberPerGroup;
 };
 
 //----------------------------------------------------------------------------
@@ -132,7 +135,8 @@ public:
     const std::string& postInvScalePath,
     const std::string& preInvScalePath,
     const CloudFrame& reconFrame,
-    PCCPointSet3& cloud);
+    PCCPointSet3& cloud,
+    bool externalPrePost);
 
   // determine the output ply scale factor
   double outputScale(const CloudFrame& cloud) const;
@@ -553,20 +557,13 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       //
 
       // NB: insert returns any existing element
-      const auto& it = params.encoder.attributeIdxMap.insert(
+      params.encoder.attributeIdxMap.push_back(
         {name, int(params.encoder.attributeIdxMap.size())});
 
-      if (it.second) {
-        params.encoder.sps.attributeSets.push_back(params_attr.desc);
-        params.encoder.aps.push_back(params_attr.aps);
-        params.encoder.attr.push_back(params_attr.encoder);
-        return;
-      }
+      params.encoder.sps.attributeSets.push_back(params_attr.desc);
+      params.encoder.aps.push_back(params_attr.aps);
+      params.encoder.attr.push_back(params_attr.encoder);
 
-      // update existing entry
-      params.encoder.sps.attributeSets[it.first->second] = params_attr.desc;
-      params.encoder.aps[it.first->second] = params_attr.aps;
-      params.encoder.attr[it.first->second] = params_attr.encoder;
     };
 
   /* clang-format off */
@@ -647,6 +644,16 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Output header type regarding position data type, element face, element list\n"
     " 0: Conformance\n"
     " 1: Other")
+
+  ("externalPrePost",
+    params.encoder.externalPrePost, false,
+    "Perform pre-processing in encoder \n"
+    " 0: pre/post-processing,  1: bypass")
+
+   ("maxAttributeNumberPerGroup",
+    params.maxAttributeNumberPerGroup, 1,
+    "Maximum number of attribute groups merged into one RAHT encoding or decoding pass\n"
+    " value <= 1: RAHT transform merging disabled")
 
   // This section controls all general geometry scaling parameters
   (po::Section("Coordinate system scaling"))
@@ -1022,7 +1029,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Attribute bitdepth")
 
   ("defaultValue",
-    params_attr.desc.params.attr_default_value, {},
+    params_attr.desc.params.input_attr_default_value, {},
     "Default attribute component value(s) in case of data omission")
 
   // todo(df): this should be per-attribute
@@ -1208,6 +1215,18 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       params_attr.encoder.abh.attr_layer_qp_delta_chroma, {},
       "Attribute's per layer chroma QP offsets")
 
+   ("calcQPLayerOffsetsEnabled",
+    params.encoder.adjustQPLayerOffsetsEnabled, false,
+    "automatically calculate QP layer offsets.")
+
+   ("refResolutionWidth",
+     params.encoder.refImageWidth, 1920,
+     "Width of the reference resolution for QP calculation.")
+
+   ("refResolutionHeight",
+     params.encoder.refImageHeight, 1080,
+     "Height of the reference resolution for QP calculation.")
+
   // This section is just dedicated to attribute recolouring (encoder only).
   // parameters are common to all attributes.
   (po::Section("Recolouring"))
@@ -1300,6 +1319,8 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   if (params.compressedStreamPath.empty())
     err.error() << "compressedStreamPath not set\n";
 
+  params.encoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
+  params.decoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
   // report the current configuration (only in the absence of errors so
   // that errors/warnings are more obvious and in the same place).
   if (err.is_errored)
@@ -1525,19 +1546,26 @@ sanitizeEncoderOpts(
     if (attrMeta.cicp_matrix_coefficients_idx == ColourMatrix::kYCgCo)
       attr_sps.bitdepth++;
 
-    attr_sps.attr_instance_id = it.second; //todo: fix temporary implementation
-
     // Extend the default attribute value to the correct width if present
-    int& attr_DU_mode = params.encoder.attr_DU_modes[attr_sps.attr_instance_id];
+    int& attr_DU_mode = params.encoder.attr_DU_modes[it.second];
     attr_DU_mode = 1; // ADU
-    if (!attrMeta.attr_default_value.empty()) {
-      attrMeta.attr_default_value.resize(
+    if (!attrMeta.input_attr_default_value.empty()) {
+      // double input default values
+      attrMeta.input_attr_default_value.resize(
         attr_sps.attr_num_dimensions_minus1 + 1,
-        attrMeta.attr_default_value.back());
+        attrMeta.input_attr_default_value.back());
+      
+      // integer default values
+      attrMeta.attr_default_value.resize(
+        attr_sps.attr_num_dimensions_minus1 + 1);
 
-      if (attrMeta.attr_default_value[0] == -1)
+      for (int i = 0; i < attr_sps.attr_num_dimensions_minus1 + 1; i++)
+        attrMeta.attr_default_value[i] = std::round(attrMeta.input_attr_default_value[i]);
+
+      if (attrMeta.attr_default_value[0] == -1) {
         attrMeta.attr_default_value.clear();
-      else {
+        attrMeta.input_attr_default_value.clear();
+      } else {
         // check default values are same as maximum value
         attr_DU_mode = 0; // None, infered at decoder
         int InferedDefaultValue = 1<<(attr_sps.bitdepth-1);
@@ -1548,8 +1576,10 @@ sanitizeEncoderOpts(
             break;
           }
         }
-        if (!attr_DU_mode)
+        if (!attr_DU_mode) {
           attrMeta.attr_default_value.clear(); 
+          attrMeta.input_attr_default_value.clear();
+        }
       }
     }
     // In order to simplify specification of dist2 values, which are
@@ -1682,7 +1712,7 @@ sanitizeEncoderOpts(
     < params.encoder.partition.sliceMinPoints)
     err.error()
       << "sliceMaxPoints must be greater than or equal to sliceMinPoints\n";
-
+  
   for (const auto& it : params.encoder.attributeIdxMap) {
     const auto& attr_sps = params.encoder.sps.attributeSets[it.second];
     const auto& attr_aps = params.encoder.aps[it.second];
@@ -1863,7 +1893,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   pointCloud.setNumSHCoeffsWithNumBandsMinus1(numBandsMinus1);
 
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->encoder.externalPrePost)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
@@ -1876,35 +1906,43 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     sortByAzimuth(
       pointCloud, 0, pointCloud.getPointCount(), 0., _angularOrigin);
 
+  auto hasAttr = [&](const std::string& name) {
+      return std::find_if(params->encoder.attributeIdxMap.begin(), 
+                          params->encoder.attributeIdxMap.end(),
+                          [&](const std::pair<std::string, int>& element) {
+                              return element.first == name; 
+                          }) != params->encoder.attributeIdxMap.end();
+  };
+
   // Sanitise the input point cloud
   // todo(df): remove the following with generic handling of properties
-  bool codeColour = params->encoder.attributeIdxMap.count("color");
+  bool codeColour = hasAttr("color");
   if (!codeColour)
     pointCloud.removeColors();
   assert(codeColour == pointCloud.hasColors());
 
-  bool codeReflectance = params->encoder.attributeIdxMap.count("reflectance");
+  bool codeReflectance = hasAttr("reflectance");
   if (!codeReflectance)
     pointCloud.removeReflectances();
   assert(codeReflectance == pointCloud.hasReflectances());
 
-  bool codeOpacity = params->encoder.attributeIdxMap.count("opacity");
+  bool codeOpacity = hasAttr("opacity");
   if (!codeOpacity)
 	  pointCloud.removeOpacities();
   assert(codeOpacity == pointCloud.hasOpacities());
 
-  bool codeRotation = params->encoder.attributeIdxMap.count("rotationXYZ");
+  bool codeRotation = hasAttr("rotationXYZ");
   if (!codeRotation) {
 	  pointCloud.removeRotations();
   }
   assert(codeRotation == pointCloud.hasRotations());
 
-  bool codeScale = params->encoder.attributeIdxMap.count("scale");
+  bool codeScale = hasAttr("scale");
   if (!codeScale)
 	  pointCloud.removeScales();
   assert(codeScale == pointCloud.hasScales());
 
-  bool codeSHCoefficient = params->encoder.attributeIdxMap.count("SHCoefficient0");
+  bool codeSHCoefficient = hasAttr("SHCoefficient0");
   if (!codeSHCoefficient)
 	  pointCloud.removeSHCoefficients();
   assert(codeSHCoefficient == pointCloud.hasSHCoefficients());
@@ -1934,7 +1972,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   clock->stop();
 
   if (reconPtr)
-    writeOutputFrame(params->reconstructedDataPath, {}, recon, recon.cloud);
+    writeOutputFrame(params->reconstructedDataPath, {}, recon, recon.cloud, params->encoder.externalPrePost);
 
   return 0;
 }
@@ -1963,7 +2001,7 @@ SequenceEncoder::onPostRecolour(const PCCPointSet3& cloud)
   frame.cloud = cloud;
   frame.frameNum = frameNum - params->firstFrameNum;
 
-  writeOutputFrame(params->postRecolorPath, {}, frame, tmpCloud);
+  writeOutputFrame(params->postRecolorPath, {}, frame, tmpCloud, params->encoder.externalPrePost);
 }
 
 //============================================================================
@@ -2022,7 +2060,7 @@ SequenceDecoder::onOutputCloud(const CloudFrame& frame)
   // copy the point cloud in order to modify it according to the output options
   PCCPointSet3 pointCloud(frame.cloud);
   writeOutputFrame(
-    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud);
+    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud, params->encoder.externalPrePost);
 
   clock->start();
 }
@@ -2061,7 +2099,9 @@ SequenceCodec::writeOutputFrame(
   const std::string& postInvScalePath,
   const std::string& preInvScalePath,
   const CloudFrame& frame,
-  PCCPointSet3& cloud)
+  PCCPointSet3& cloud,
+  bool externalPrePost=true
+  )
 {
   if (postInvScalePath.empty() && preInvScalePath.empty())
     return;
@@ -2084,7 +2124,7 @@ SequenceCodec::writeOutputFrame(
   // Dump the decoded colour using the pre inverse scaled geometry
   if (!preInvScalePath.empty()) {
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType);
+    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->encoder.externalPrePost);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
@@ -2092,7 +2132,7 @@ SequenceCodec::writeOutputFrame(
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
         cloud, attrNames, plyScale, plyOrigin, decName,
-        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType)) {
+        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, externalPrePost)) {
     cout << "Error: can't open output file!" << endl;
   }
 }

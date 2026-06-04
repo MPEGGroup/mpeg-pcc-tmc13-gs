@@ -34,7 +34,7 @@
  */
 
 #include "AttributeEncoder.h"
-
+#include <set>
 #include "DualLutCoder.h"
 #include "attribute_raw.h"
 #include "constants.h"
@@ -70,20 +70,19 @@ public:
 
   void encodeRunLength(int runLength);
   void encodeSymbol(uint32_t value, int k1, int k2, int k3);
-  void encode(int32_t value0, int32_t value1, int32_t value2);
-  void encode(int32_t value);
+  void encode(const int32_t* values, int attribCount);
 
   int availPredModes;
-  double bitsPtColor(Vec3<int32_t> value, int parity);
-  double bitsPtRefl(int32_t value, int parity);
+  double bitsPtAttrMultiComp(Vec3<int32_t> value, int parity, int attribCount);
+  double bitsPtAttrSingleComp(int32_t value, int parity);
 
   // Encoder side residual cost calculation
   const int scaleRes = 1 << 20;
   const int windowLog2 = 6;
   int probResGt0[3];  //prob of residuals larger than 0: 1 for each component
   int probResGt1[3];  //prob of residuals larger than 1: 1 for each component
-  void resStatUpdateColor(Vec3<int32_t> values);
-  void resStatUpdateRefl(int32_t values);
+  void resStatUpdateAttrMultiComp(Vec3<int32_t> values, int attribCount);
+  void resStatUpdateAttrSingleComp(int32_t values);
   void resStatReset();
 };
 
@@ -133,9 +132,9 @@ PCCResidualsEncoder::resStatReset()
 //----------------------------------------------------------------------------
 
 void
-PCCResidualsEncoder::resStatUpdateColor(Vec3<int32_t> value)
+PCCResidualsEncoder::resStatUpdateAttrMultiComp(Vec3<int32_t> value, int attribCount)
 {
-  for (int k = 0; k < 3; k++) {
+  for (int k = 0; k < attribCount; k++) {
     probResGt0[k] += value[k] ? (scaleRes - probResGt0[k]) >> windowLog2
                               : -((probResGt0[k]) >> windowLog2);
     if (value[k])
@@ -148,7 +147,7 @@ PCCResidualsEncoder::resStatUpdateColor(Vec3<int32_t> value)
 //----------------------------------------------------------------------------
 
 void
-PCCResidualsEncoder::resStatUpdateRefl(int32_t value)
+PCCResidualsEncoder::resStatUpdateAttrSingleComp(int32_t value)
 {
   probResGt0[0] += value ? (scaleRes - probResGt0[0]) >> windowLog2
                          : -(probResGt0[0] >> windowLog2);
@@ -160,9 +159,12 @@ PCCResidualsEncoder::resStatUpdateRefl(int32_t value)
 //----------------------------------------------------------------------------
 
 double
-PCCResidualsEncoder::bitsPtColor(Vec3<int32_t> value, int mode)
+PCCResidualsEncoder::bitsPtAttrMultiComp(Vec3<int32_t> value, int mode, int attribCount)
 {
-  if (availPredModes == 4) {
+  if (attribCount == 2) {
+    if (availPredModes > 1)
+      value[1] = availPredModes * abs(value[1]) + mode;
+  } else if (availPredModes == 4) {
     value[1] = 2 * abs(value[1]) + (mode >> 1);
     value[2] = 2 * abs(value[2]) + (mode & 1);
   } else if (availPredModes == 3) {
@@ -175,7 +177,7 @@ PCCResidualsEncoder::bitsPtColor(Vec3<int32_t> value, int mode)
 
   int log2scaleRes = ilog2(uint32_t(scaleRes));
   double bits = 0;
-  for (int k = 0; k < 3; k++) {
+  for (int k = 0; k < attribCount; k++) {
     bits += value[k] ? log2scaleRes - log2(probResGt0[k])
                      : log2scaleRes - log2(scaleRes - probResGt0[k]);  //Gt0
     int mag = abs(value[k]);
@@ -194,7 +196,7 @@ PCCResidualsEncoder::bitsPtColor(Vec3<int32_t> value, int mode)
 //----------------------------------------------------------------------------
 
 double
-PCCResidualsEncoder::bitsPtRefl(int32_t value, int mode)
+PCCResidualsEncoder::bitsPtAttrSingleComp(int32_t value, int mode)
 {
   if (availPredModes == 4) {
     value = (abs(value) << 2) + (mode);
@@ -270,39 +272,77 @@ PCCResidualsEncoder::encodeSymbol(uint32_t value, int k1, int k2, int k3)
 //----------------------------------------------------------------------------
 
 void
-PCCResidualsEncoder::encode(int32_t value0, int32_t value1, int32_t value2)
+PCCResidualsEncoder::encode(const int32_t* value, int attribCount)
 {
-  int mag0 = abs(value0);
-  int mag1 = abs(value1);
-  int mag2 = abs(value2);
+  int mag0 = abs(value[0]);
 
-  int b0 = (mag1 == 0);
-  int b1 = (mag1 <= 1);
-  int b2 = (mag2 == 0);
-  int b3 = (mag2 <= 1);
-  encodeSymbol(mag1, 0, 0, 1);
-  if (mag1)
-    arithmeticEncoder.encode(value1 < 0);
+  int bZeroPrev = 0;
+  int bLe1Prev  = 0;
 
-  encodeSymbol(mag2, 1 + b0, 1 + b1, 1);
-  if (mag2)
-    arithmeticEncoder.encode(value2 < 0);
+  // Packed flags representing zero / <=1 conditions of preceding components
+  int zeroBits = 0;
+  int le1Bits  = 0;
 
-  auto mag0minusX = b0 && b2 ? mag0 - 1 : mag0;
+  // True if all preceding components are zero
+  int allZero = 1;
+
+  if (attribCount >= 2) {
+    // Encode component 1 (first non-last)
+    int mag1 = abs(value[1]);
+
+    int b0 = (mag1 == 0);
+    int b1 = (mag1 <= 1);
+
+    bZeroPrev = b0;
+    bLe1Prev  = b1;
+
+    int w0 = 1 << (attribCount - 2);
+    zeroBits += b0 * w0;
+    le1Bits  += b1 * w0;
+    allZero  &= b0;
+
+    encodeSymbol(mag1, 0, 0, 1);
+    if (mag1)
+      arithmeticEncoder.encode(value[1] < 0);
+
+    // Encode remaining non-last components
+    for (int k = 2; k < attribCount; ++k) {
+      int magK = abs(value[k]);
+
+      int bZeroK = (magK == 0);
+      int bLe1K  = (magK <= 1);
+
+      encodeSymbol(magK, 1 + bZeroPrev, 1 + bLe1Prev, 1);
+      if (magK)
+        arithmeticEncoder.encode(value[k] < 0);
+
+      int w = 1 << (attribCount - 1 - k);
+      zeroBits += bZeroK * w;
+      le1Bits  += bLe1K  * w;
+      allZero  &= bZeroK;
+
+      bZeroPrev = bZeroK;
+      bLe1Prev  = bLe1K;
+    }
+  }
+
+  // Encode component 0 (last)
+  // Adjustment matches decoder:
+  //  - single component: mag0 - 1
+  //  - otherwise: subtract 1 if all previous components are zero
+  int mag0minusX =
+    (attribCount == 1) ? (mag0 - 1) : (mag0 - allZero);
+
   assert(mag0minusX >= 0);
-  encodeSymbol(mag0minusX, 3 + (b0 << 1) + b2, 3 + (b1 << 1) + b3, 0);
+
+  // Contexts derived from accumulated flags
+  int ctxZ   = 3 + zeroBits;
+  int ctxLe1 = 3 + le1Bits;
+
+  encodeSymbol(mag0minusX, ctxZ, ctxLe1, 0);
+
   if (mag0)
-    arithmeticEncoder.encode(value0 < 0);
-}
-
-//----------------------------------------------------------------------------
-
-void
-PCCResidualsEncoder::encode(int32_t value)
-{
-  int mag = abs(value) - 1;
-  encodeSymbol(mag, 0, 0, 0);
-  arithmeticEncoder.encode(value < 0);
+    arithmeticEncoder.encode(value[0] < 0);
 }
 
 //============================================================================
@@ -469,7 +509,8 @@ AttributeEncoder::encode(
   AttributeBrickHeader& abh,
   AttributeContexts& ctxtMem,
   PCCPointSet3& pointCloud,
-  PayloadBuffer* payload)
+  PayloadBuffer* payload,
+  std::unordered_map<int, std::vector<int>> *bufferRahtCoefficients)
 {
   if (attr_aps.attr_encoding == AttributeEncoding::kRaw) {
     AttrRawEncoder::encode(sps, desc, attr_aps, abh, pointCloud, payload);
@@ -489,47 +530,23 @@ AttributeEncoder::encode(
   PCCResidualsEncoder encoder(attr_aps, abh, ctxtMem);
   encoder.start(sps, int(pointCloud.getPointCount()));
 
-  if (desc.attr_num_dimensions_minus1 == 0) {
-    switch (attr_aps.attr_encoding) {
-    case AttributeEncoding::kRAHTransform:
-      encodeReflectancesTransformRaht(
-        desc, attr_aps, qpSet, pointCloud, encoder);
-      break;
+  switch (attr_aps.attr_encoding) {
+  case AttributeEncoding::kRAHTransform:
+    encodeAttributeTransformRaht(
+      desc, attr_aps, qpSet, pointCloud, encoder, bufferRahtCoefficients);
+    break;
 
-    case AttributeEncoding::kPredictingTransform:
-      encodeReflectancesPred(desc, attr_aps, qpSet, pointCloud, encoder);
-      break;
+  case AttributeEncoding::kPredictingTransform:
+    encodeAttributePred(desc, attr_aps, qpSet, pointCloud, encoder);
+    break;
 
-    case AttributeEncoding::kLiftingTransform:
-      encodeReflectancesLift(desc, attr_aps, qpSet, pointCloud, encoder);
-      break;
+  case AttributeEncoding::kLiftingTransform:
+    encodeAttributeLift(desc, attr_aps, qpSet, pointCloud, encoder);
+    break;
 
-    case AttributeEncoding::kRaw:
-      // Already handled
-      break;
-    }
-  } else if (desc.attr_num_dimensions_minus1 == 2) {
-    switch (attr_aps.attr_encoding) {
-    case AttributeEncoding::kRAHTransform:
-      encodeColorsTransformRaht(desc, attr_aps, qpSet, pointCloud, encoder);
-      break;
-
-    case AttributeEncoding::kPredictingTransform:
-      encodeColorsPred(desc, attr_aps, qpSet, pointCloud, encoder);
-      break;
-
-    case AttributeEncoding::kLiftingTransform:
-      encodeColorsLift(desc, attr_aps, qpSet, pointCloud, encoder);
-      break;
-
-    case AttributeEncoding::kRaw:
-      // Already handled
-      break;
-    }
-  } else {
-    assert(
-      desc.attr_num_dimensions_minus1 == 0
-      || desc.attr_num_dimensions_minus1 == 2);
+  case AttributeEncoding::kRaw:
+    // Already handled
+    break;
   }
 
   uint32_t acDataLen = encoder.stop();
@@ -558,13 +575,13 @@ AttributeEncoder::isReusable(
 //----------------------------------------------------------------------------
 
 int64_t
-AttributeEncoder::computeReflectanceResidual(
-  const uint64_t reflectance,
-  const uint64_t predictedReflectance,
+AttributeEncoder::computeAttrSingleCompResidual(
+  const uint64_t attribute,
+  const uint64_t predictedAttribute,
   const Quantizer& quant)
 {
-  const int64_t quantAttValue = reflectance;
-  const int64_t quantPredAttValue = predictedReflectance;
+  const int64_t quantAttValue = attribute;
+  const int64_t quantPredAttValue = predictedAttribute;
   const int64_t delta = quant.quantize(
     (quantAttValue - quantPredAttValue) << kFixedPointAttributeShift);
   return delta;
@@ -573,7 +590,7 @@ AttributeEncoder::computeReflectanceResidual(
 //----------------------------------------------------------------------------
 
 void
-AttributeEncoder::decidePredModeRefl(
+AttributeEncoder::decidePredModeAttrSingleComp(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
@@ -584,46 +601,30 @@ AttributeEncoder::decidePredModeRefl(
   PCCResidualsEntropyEstimator& context,
   const Quantizer& quant)
 {
-  uint64_t attrValue = 0;
-  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-	  attrValue = pointCloud.getReflectance(indexesLOD[predictorIndex]);
-  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-	  attrValue = pointCloud.getOpacity(indexesLOD[predictorIndex]);
-  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-	  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-	  attrValue = pointCloud.getRotationScalar(indexesLOD[predictorIndex]);
-  }
+  uint64_t attrValue = uint64_t(getAttribute(desc, pointCloud, indexesLOD[predictorIndex])[0]);
 
   // base case: start with the first neighbour
   // NB: skip evaluation of mode 0 (weighted average of n neighbours)
-  int startpredIndex = aps.direct_avg_predictor_disabled_flag;
-  predictor.predMode = startpredIndex;
-  uint64_t attrPred = predictor.predictReflectance(pointCloud, indexesLOD, desc);
+  int startPredIndex = aps.direct_avg_predictor_disabled_flag;
+  predictor.predMode = startPredIndex;
+  uint64_t attrPred = predictor.predictAttrSingleComp(pointCloud, indexesLOD, desc);
   int64_t attrResidualQuant =
-    computeReflectanceResidual(attrValue, attrPred, quant);
+    computeAttrSingleCompResidual(attrValue, attrPred, quant);
 
   // NB: idxBits is not included in the score
   int mode = predictor.predMode - aps.direct_avg_predictor_disabled_flag;
-  int64_t best_score = encoder.bitsPtRefl(attrResidualQuant, mode);
+  int64_t best_score = encoder.bitsPtAttrSingleComp(attrResidualQuant, mode);
 
-  for (int i = startpredIndex; i < predictor.neighborCount; i++) {
+  for (int i = startPredIndex; i < predictor.neighborCount; i++) {
     if (i == aps.max_num_direct_predictors)
       break;
-		if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-			attrPred = pointCloud.getReflectance(
-				indexesLOD[predictor.neighbors[i].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-			attrPred = pointCloud.getOpacity(
-				indexesLOD[predictor.neighbors[i].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-			attrPred = pointCloud.getRotationScalar(
-				indexesLOD[predictor.neighbors[i].predictorIndex]);
-		}
-    attrResidualQuant = computeReflectanceResidual(attrValue, attrPred, quant);
+    const uint32_t neighPointIndex =
+      indexesLOD[predictor.neighbors[i].predictorIndex];
+    attrPred = uint64_t(getAttribute(desc, pointCloud, neighPointIndex)[0]);
+    attrResidualQuant = computeAttrSingleCompResidual(attrValue, attrPred, quant);
 
     mode = i + !aps.direct_avg_predictor_disabled_flag;
-    int64_t score = encoder.bitsPtRefl(attrResidualQuant, mode);
+    const int64_t score = encoder.bitsPtAttrSingleComp(attrResidualQuant, mode);
     if (score < best_score) {
       best_score = score;
       predictor.predMode = i + 1;
@@ -636,7 +637,7 @@ AttributeEncoder::decidePredModeRefl(
 //----------------------------------------------------------------------------
 
 void
-AttributeEncoder::encodePredModeRefl(
+AttributeEncoder::encodePredModeAttrSingleComp(
   const AttributeParameterSet& aps, int predMode, int32_t& coeff)
 {
   int coeffSign = coeff < 0 ? -1 : 1;
@@ -663,110 +664,27 @@ AttributeEncoder::encodePredModeRefl(
 
 //----------------------------------------------------------------------------
 
-void
-AttributeEncoder::encodeReflectancesPred(
+Vec3<int64_t>
+AttributeEncoder::computeAttrMultiCompResiduals(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
-  const QpSet& qpSet,
-  PCCPointSet3& pointCloud,
-  PCCResidualsEncoder& encoder)
-{
-  const uint32_t pointCount = pointCloud.getPointCount();
-  const int64_t clipMax = (1ll << desc.bitdepth) - 1;
-  PCCResidualsEntropyEstimator context;
-  int zeroRunAcc = 0;
-
-  const size_t lodCount = _lods.numPointsInLod.size();
-  for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
-    int quantLayer = std::min(int(qpSet.layers.size()) - 1, int(lod));
-
-    auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
-    for (auto predictorIndex : coeffRange) {
-      const uint32_t pointIndex = _lods.indexes[predictorIndex];
-      auto quant = qpSet.quantizers(pointCloud[pointIndex], quantLayer);
-      auto& predictor = _lods.predictors[predictorIndex];
-      predictor.predMode = 0;
-      
-
-      bool predModeEligible =
-        predModeEligibleRefl(desc, aps, pointCloud, _lods.indexes, predictor); 
-      if (predModeEligible)
-        decidePredModeRefl(
-          desc, aps, pointCloud, _lods.indexes, predictorIndex, predictor,
-          encoder, context, quant[0]);
-
-			int32_t attValue0 = 0;
-			uint64_t reflectance;
-			if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-				reflectance = pointCloud.getReflectance(pointIndex);
-			else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-				reflectance = pointCloud.getOpacity(pointIndex);
-			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-				reflectance = pointCloud.getRotationScalar(pointIndex);
-			}
-      const attr_t predictedReflectance =
-        predictor.predictReflectance(pointCloud, _lods.indexes, desc);
-      const int64_t quantAttValue = reflectance;
-      const int64_t quantPredAttValue = predictedReflectance;
-      const int64_t delta = quant[0].quantize(
-        (quantAttValue - quantPredAttValue) << kFixedPointAttributeShift);
-      attValue0 = delta;
-
-      if (predModeEligible)
-        encodePredModeRefl(aps, predictor.predMode, attValue0);
-
-      const int64_t reconstructedDelta =
-        divExp2RoundHalfUp(quant[0].scale(delta), kFixedPointAttributeShift);
-      const int64_t reconstructedQuantAttValue =
-        quantPredAttValue + reconstructedDelta;
-      attr_t reconstructedReflectance = 
-        reconstructedReflectance = attr_t(PCCClip(reconstructedQuantAttValue, int64_t(0), clipMax));
-
-
-      if (!attValue0)
-        ++zeroRunAcc;
-      else {
-        encoder.encodeRunLength(zeroRunAcc);
-        encoder.encode(attValue0);
-        zeroRunAcc = 0;
-      }
-			if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-				pointCloud.setReflectance(pointIndex, reconstructedReflectance);
-			else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-				pointCloud.setOpacity(pointIndex, reconstructedReflectance);
-			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-				pointCloud.setRotationScalar(pointIndex, reconstructedReflectance);
-			}
-      encoder.resStatUpdateRefl(attValue0);
-    }
-  }
-  if (zeroRunAcc)
-    encoder.encodeRunLength(zeroRunAcc);
-}
-
-//----------------------------------------------------------------------------
-
-Vec3<int64_t>
-AttributeEncoder::computeColorResiduals(
-  const AttributeParameterSet& aps,
-  const Vec3<attr_t> color,
-  const Vec3<attr_t> predictedColor,
+  const Vec3<attr_t> attribute,
+  const Vec3<attr_t> predictedAttribute,
   const Vec3<int8_t> icpCoeff,
   const Quantizers& quant)
 {
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
   Vec3<int64_t> residuals;
-  const int64_t quantAttValue = color[0];
-  const int64_t quantPredAttValue = predictedColor[0];
+  const int64_t quantAttValue = attribute[0];
+  const int64_t quantPredAttValue = predictedAttribute[0];
   const int64_t delta = quant[0].quantize(
     (quantAttValue - quantPredAttValue) << kFixedPointAttributeShift);
   residuals[0] = delta;
   const int64_t residual0 =
     divExp2RoundHalfUp(quant[0].scale(delta), kFixedPointAttributeShift);
-  for (size_t k = 1; k < 3; ++k) {
-    const int64_t quantAttValue = color[k];
-    const int64_t quantPredAttValue = predictedColor[k];
+  for (size_t k = 1; k < attribCount; ++k) {
+    const int64_t quantAttValue = attribute[k];
+    const int64_t quantPredAttValue = predictedAttribute[k];
 
     if (aps.inter_component_prediction_enabled_flag) {
       auto err = quantAttValue - quantPredAttValue
@@ -786,7 +704,7 @@ AttributeEncoder::computeColorResiduals(
 //----------------------------------------------------------------------------
 
 void
-AttributeEncoder::decidePredModeColor(
+AttributeEncoder::decidePredModeAttrMultiComp(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const PCCPointSet3& pointCloud,
@@ -798,30 +716,22 @@ AttributeEncoder::decidePredModeColor(
   const Vec3<int8_t>& icpCoeff,
   const Quantizers& quant)
 {
-	Vec3<attr_t> attrValue;
-	if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-	  attrValue = pointCloud.getColor(indexesLOD[predictorIndex]);
-	else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-		attrValue = pointCloud.getScale(indexesLOD[predictorIndex]);
-	else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-		assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-		attrValue = pointCloud.getRotationVec(indexesLOD[predictorIndex]);
-	}
-	else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-		int SHindex = (int)desc.params.sh_coefficient_label;
-		attrValue = pointCloud.getSHCoefficient(SHindex, indexesLOD[predictorIndex]);
-	}
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
+
+  const uint32_t pointIndex = indexesLOD[predictorIndex];
+  Vec3<attr_t> attrValue = getAttribute(desc, pointCloud, pointIndex);
 
   // base case: weighted average of n neighbours
   int startpredIndex = aps.direct_avg_predictor_disabled_flag;
   predictor.predMode = startpredIndex;
-  Vec3<attr_t> attrPred = predictor.predictColor(pointCloud, indexesLOD, desc);
-  Vec3<int64_t> attrResidualQuant =
-    computeColorResiduals(aps, attrValue, attrPred, icpCoeff, quant);
-  auto attrDistortion =
-    computeColorDistortions(desc, attrValue, attrPred, quant);
+  Vec3<attr_t> attrPred = predictor.predictAttrMultiComp(pointCloud, indexesLOD, desc);
 
-  double rate = encoder.bitsPtColor(attrResidualQuant, 0);
+  Vec3<int64_t> attrResidualQuant =
+    computeAttrMultiCompResiduals(desc, aps, attrValue, attrPred, icpCoeff, quant);
+  auto attrDistortion =
+    computeAttrMultiCompDistortions(desc, attrValue, attrPred, quant);
+
+  double rate = encoder.bitsPtAttrMultiComp(attrResidualQuant, 0, attribCount);
   double best_score = attrDistortion
     + rate * kAttrPredLambdaC
       * (quant[0].stepSize() >> kFixedPointAttributeShift);
@@ -830,30 +740,15 @@ AttributeEncoder::decidePredModeColor(
     if (i == aps.max_num_direct_predictors)
       break;
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-			attrPred =
-				pointCloud.getColor(indexesLOD[predictor.neighbors[i].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			attrPred =
-			pointCloud.getScale(indexesLOD[predictor.neighbors[i].predictorIndex]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			attrPred =
-				pointCloud.getRotationVec(indexesLOD[predictor.neighbors[i].predictorIndex]);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			attrPred =
-				pointCloud.getSHCoefficient(SHindex,
-					indexesLOD[predictor.neighbors[i].predictorIndex]);
-		}
+    const uint32_t neighPointIndex = indexesLOD[predictor.neighbors[i].predictorIndex];
+    attrPred = getAttribute(desc, pointCloud, neighPointIndex);
 
     attrResidualQuant =
-      computeColorResiduals(aps, attrValue, attrPred, icpCoeff, quant);
-    attrDistortion = computeColorDistortions(desc, attrValue, attrPred, quant);
+      computeAttrMultiCompResiduals(desc, aps, attrValue, attrPred, icpCoeff, quant);
+    attrDistortion = computeAttrMultiCompDistortions(desc, attrValue, attrPred, quant);
 
     int sigIdx = i + !aps.direct_avg_predictor_disabled_flag;
-    double rate = encoder.bitsPtColor(attrResidualQuant, sigIdx);
+    double rate = encoder.bitsPtAttrMultiComp(attrResidualQuant, sigIdx, attribCount);
     double score = attrDistortion
       + rate * kAttrPredLambdaC
         * (quant[0].stepSize() >> kFixedPointAttributeShift);
@@ -870,9 +765,12 @@ AttributeEncoder::decidePredModeColor(
 //----------------------------------------------------------------------------
 
 void
-AttributeEncoder::encodePredModeColor(
+AttributeEncoder::encodePredModeAttrMultiComp(
+  const AttributeDescription& desc,
   const AttributeParameterSet& aps, int predMode, Vec3<int32_t>& coeff)
 {
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
+
   int signk1 = coeff[1] < 0 ? -1 : 1;
   int signk2 = coeff[2] < 0 ? -1 : 1;
   int coeffAbsk1 = abs(coeff[1]);
@@ -881,7 +779,14 @@ AttributeEncoder::encodePredModeColor(
   int mode = predMode - aps.direct_avg_predictor_disabled_flag;
   int maxcand =
     aps.max_num_direct_predictors + !aps.direct_avg_predictor_disabled_flag;
-  assert(mode < maxcand);
+
+  if (attribCount == 2) {
+    int signk1 = coeff[1] < 0 ? -1 : 1;
+    int coeffAbsk1 = abs(coeff[1]);
+    coeff[1] = signk1 * (coeffAbsk1 * maxcand + mode);
+    return;
+  }
+
   switch (maxcand) {
     int parityk1, parityk2;
   case 4:
@@ -913,9 +818,10 @@ AttributeEncoder::encodePredModeColor(
 
 std::vector<Vec3<int8_t>>
 AttributeEncoder::computeInterComponentPredictionCoeffs(
-	const AttributeDescription& desc,
+  const AttributeDescription& desc,
   const AttributeParameterSet& aps, const PCCPointSet3& pointCloud)
 {
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
   int maxNumDetailLevels = aps.maxNumDetailLevels();
   assert(_lods.numPointsInLod.size() <= maxNumDetailLevels);
 
@@ -933,20 +839,9 @@ AttributeEncoder::computeInterComponentPredictionCoeffs(
 
     // taking first neighbor for simplicity
     predictor.predMode = 1;
-    auto predAttr = predictor.predictColor(pointCloud, _lods.indexes, desc);
-		Vec3<attr_t> srcAttr;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-			srcAttr = pointCloud.getColor(pointIdx);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			srcAttr = pointCloud.getScale(pointIdx);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			srcAttr = pointCloud.getRotationVec(pointIdx);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			srcAttr = pointCloud.getSHCoefficient(SHindex, pointIdx);
-		}
+    auto predAttr = predictor.predictAttrMultiComp(pointCloud, _lods.indexes, desc);
+
+    Vec3<attr_t> srcAttr = getAttribute(desc, pointCloud, pointIdx);
 
     residual[predIdx] = Vec3<int>(srcAttr) - Vec3<int>(predAttr);
 
@@ -965,17 +860,17 @@ AttributeEncoder::computeInterComponentPredictionCoeffs(
       Vec3<int32_t> resid = residual[predIdx];
 
       for (int w = 0; w < nWeights; w++)
-        for (int k = 1; k < 3; k++) {
+        for (int k = 1; k < attribCount; k++) {
           auto pred = signs[lod][k] * (((w + 1) * resid[0] + 2) >> nShift);
           sumPredCoeff[w][k] += abs(resid[k] - pred);
         }
 
-      for (int k = 1; k < 3; k++)
+      for (int k = 1; k < attribCount; k++)
         sumOrigCoeff[k] += abs(resid[k]);
     }
 
     // find the best weight
-    for (int k = 1; k < 3; k++) {
+    for (int k = 1; k < attribCount; k++) {
       auto best = std::min_element(
         sumPredCoeff.begin(), sumPredCoeff.end(),
         [=](Vec3<int64_t>& a, Vec3<int64_t>& b) { return a[k] < b[k]; });
@@ -1005,28 +900,31 @@ AttributeEncoder::computeInterComponentPredictionCoeffs(
 //----------------------------------------------------------------------------
 
 void
-AttributeEncoder::encodeColorsPred(
+AttributeEncoder::encodeAttributePred(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const QpSet& qpSet,
   PCCPointSet3& pointCloud,
   PCCResidualsEncoder& encoder)
 {
-  const size_t pointCount = pointCloud.getPointCount();
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
+  const bool isSingleComp = (attribCount == 1);
 
-  int64_t clipMax = (1 << desc.bitdepth) - 1;
-  Vec3<int32_t> values;
+  int64_t clipMax = (int64_t(1) << desc.bitdepth) - 1;
   PCCResidualsEntropyEstimator context;
   int zeroRunAcc = 0;
 
-  bool icpPresent = _abh->icpPresent(desc, aps);
-  if (icpPresent)
-    _abh->icpCoeffs = computeInterComponentPredictionCoeffs(desc, aps, pointCloud);
+  bool icpPresent = false;
+  if (aps.inter_component_prediction_enabled_flag && !isSingleComp) {
+    icpPresent = _abh->icpPresent(desc, aps);
+    if (icpPresent)
+      _abh->icpCoeffs = computeInterComponentPredictionCoeffs(desc, aps, pointCloud);
+  }
 
   const size_t lodCount = _lods.numPointsInLod.size();
   for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
-    int quantLayer = std::min(int(qpSet.layers.size()) - 1, int(lod));
-    auto icpCoeff = icpPresent ? _abh->icpCoeffs[lod] : 0;
+    int quantLayer = std::min<int>(qpSet.layers.size() - 1, int(lod));
+    Vec3<int8_t> icpCoeff = (icpPresent && !isSingleComp) ? _abh->icpCoeffs[lod] : Vec3<int8_t>(0);
 
     auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
     for (auto predictorIndex : coeffRange) {
@@ -1035,81 +933,101 @@ AttributeEncoder::encodeColorsPred(
       auto& predictor = _lods.predictors[predictorIndex];
       predictor.predMode = 0;
 
-      bool predModeEligible =
-        predModeEligibleColor(desc, aps, pointCloud, _lods.indexes, predictor);
-      if (predModeEligible)
-        decidePredModeColor(
-          desc, aps, pointCloud, _lods.indexes, predictorIndex, predictor,
-          encoder, context, icpCoeff, quant);
+      if (isSingleComp) {
+        bool predModeEligible =
+          predModeEligibleAttrSingleComp(desc, aps, pointCloud, _lods.indexes, predictor);
+        if (predModeEligible)
+          decidePredModeAttrSingleComp(
+            desc, aps, pointCloud, _lods.indexes, predictorIndex, predictor,
+            encoder, context, quant[0]);
 
-			Vec3<attr_t> color;
-			if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-				color = pointCloud.getColor(pointIndex);
-			else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-				color = pointCloud.getScale(pointIndex);
-			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-				color = pointCloud.getRotationVec(pointIndex);
-			}
-		  else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-			  color = pointCloud.getSHCoefficient(SHindex, pointIndex);
-		  }
+        Vec3<attr_t> attribute = getAttribute(desc, pointCloud, pointIndex);
+        const attr_t predictedAttribute =
+          predictor.predictAttrSingleComp(pointCloud, _lods.indexes, desc);
+        const int64_t quantAttValue = attribute[0];
+        const int64_t quantPredAttValue = predictedAttribute;
+        const int32_t delta = int32_t(quant[0].quantize(
+            (quantAttValue - quantPredAttValue) << kFixedPointAttributeShift));
+        int32_t attValue0 = delta;
 
-      const Vec3<attr_t> predictedColor =
-        predictor.predictColor(pointCloud, _lods.indexes, desc);
+        if (predModeEligible)
+          encodePredModeAttrSingleComp(aps, predictor.predMode, attValue0);
 
-      Vec3<attr_t> reconstructedColor;
-      int64_t residual0 = 0;
-      for (int k = 0; k < 3; ++k) {
-        const auto& q = quant[std::min(k, 1)];
-        int64_t residual = color[k] - predictedColor[k];
+        const int64_t reconstructedDelta =
+          divExp2RoundHalfUp(quant[0].scale(delta), kFixedPointAttributeShift);
+        const int64_t reconstructedQuantAttValue =
+          quantPredAttValue + reconstructedDelta;
+        Vec3<attr_t> reconstructedAttribute(0);
+          reconstructedAttribute[0] = attr_t(PCCClip(reconstructedQuantAttValue, int64_t(0), clipMax));
 
-        int64_t residualQ = q.quantize(residual << kFixedPointAttributeShift);
-        int64_t residualR =
-          divExp2RoundHalfUp(q.scale(residualQ), kFixedPointAttributeShift);
+        if (!attValue0) {
+          ++zeroRunAcc;
+        } else {
+          encoder.encodeRunLength(zeroRunAcc);
+          encoder.encode(&attValue0, 1);
+          zeroRunAcc = 0;
+        }
+        setAttribute(desc, pointCloud, pointIndex, reconstructedAttribute);
+        encoder.resStatUpdateAttrSingleComp(attValue0);
+      } else {
+        bool predModeEligible =
+          predModeEligibleAttrMultiComp(desc, aps, pointCloud, _lods.indexes, predictor);
+        if (predModeEligible)
+          decidePredModeAttrMultiComp(
+            desc, aps, pointCloud, _lods.indexes, predictorIndex, predictor,
+            encoder, context, icpCoeff, quant);
+        Vec3<attr_t> attribute = getAttribute(desc, pointCloud, pointIndex);
 
-        if (aps.inter_component_prediction_enabled_flag && k > 0) {
-          residual = residual - ((icpCoeff[k] * residual0 + 2) >> 2);
-          residualQ = q.quantize(residual << kFixedPointAttributeShift);
-          residualR = ((icpCoeff[k] * residual0 + 2) >> 2)
-            + divExp2RoundHalfUp(
-                        q.scale(residualQ), kFixedPointAttributeShift);
+        const Vec3<attr_t> predictedAttribute =
+          predictor.predictAttrMultiComp(pointCloud, _lods.indexes, desc);
+
+        Vec3<int32_t> values = 0;
+        Vec3<attr_t> reconstructedAttribute = 0;
+        int64_t residual0 = 0;
+        for (int k = 0; k < attribCount; ++k) {
+          const auto& q = quant[std::min(k, 1)];
+          int64_t residual = int64_t(attribute[k]) - int64_t(predictedAttribute[k]);
+
+          int64_t residualQ = q.quantize(residual << kFixedPointAttributeShift);
+          int64_t residualR =
+            divExp2RoundHalfUp(q.scale(residualQ), kFixedPointAttributeShift);
+
+          if (aps.inter_component_prediction_enabled_flag && k > 0) {
+            residual = residual - ((icpCoeff[k] * residual0 + 2) >> 2);
+            residualQ = q.quantize(residual << kFixedPointAttributeShift);
+            residualR = ((icpCoeff[k] * residual0 + 2) >> 2)
+              + divExp2RoundHalfUp(
+                q.scale(residualQ), kFixedPointAttributeShift);
+          }
+
+          if (k == 0)
+            residual0 = residualR;
+
+          values[k] = int32_t(residualQ);
+
+          int64_t recon = int64_t(predictedAttribute[k]) + residualR;
+          reconstructedAttribute[k] = attr_t(PCCClip(recon, int64_t(0), clipMax));
         }
 
-        if (k == 0)
-          residual0 = residualR;
+        if (predModeEligible)
+          encodePredModeAttrMultiComp(desc, aps, predictor.predMode, values);
 
-        values[k] = residualQ;
+        setAttribute(desc, pointCloud, pointIndex, reconstructedAttribute);
 
-        int64_t recon = predictedColor[k] + residualR;
-        reconstructedColor[k] = attr_t(PCCClip(recon, int64_t(0), clipMax));
-      }
+        encoder.resStatUpdateAttrMultiComp(values, attribCount);
 
-      if (predModeEligible)
-        encodePredModeColor(aps, predictor.predMode, values);
+        bool allZero = true;
+        for (int k = 0; k < attribCount; ++k)
+          allZero &= (values[k] == 0);
 
-			if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-				pointCloud.setColor(pointIndex, reconstructedColor);
-			else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-				pointCloud.setScale(pointIndex, reconstructedColor);
-			else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-				assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-				pointCloud.setRotationVec(pointIndex, reconstructedColor);
-			}
-		  else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-				int SHindex = (int)desc.params.sh_coefficient_label;
-			  pointCloud.setSHCoefficient(SHindex, pointIndex, reconstructedColor);
-		  }
-
-      encoder.resStatUpdateColor(values);
-
-      if (!values[0] && !values[1] && !values[2]) {
-        ++zeroRunAcc;
-      } else {
-        encoder.encodeRunLength(zeroRunAcc);
-        encoder.encode(values[0], values[1], values[2]);
-        zeroRunAcc = 0;
+        if (allZero) {
+          ++zeroRunAcc;
+        } else {
+          encoder.encodeRunLength(zeroRunAcc);
+          int32_t residualCoeffs[3] = { values[0], values[1], values[2] };
+          encoder.encode(residualCoeffs, attribCount);
+          zeroRunAcc = 0;
+        }
       }
     }
   }
@@ -1120,12 +1038,13 @@ AttributeEncoder::encodeColorsPred(
 //----------------------------------------------------------------------------
 
 void
-AttributeEncoder::encodeReflectancesTransformRaht(
+AttributeEncoder::encodeAttributeTransformRaht(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const QpSet& qpSet,
   PCCPointSet3& pointCloud,
-  PCCResidualsEncoder& encoder)
+  PCCResidualsEncoder& encoder,
+  std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients)
 {
   const int voxelCount = int(pointCloud.getPointCount());
   if (_sortedMortonCode.size() == 0)
@@ -1144,24 +1063,45 @@ AttributeEncoder::encodeReflectancesTransformRaht(
     }
   }
 
-  // Allocate arrays.
-  const int attribCount = 1;
+  // Allocate arrays
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
+  auto aps_attr_parameter_set_id = aps.aps_attr_parameter_set_id;
+  auto it = (*bufferRahtCoefficients).find(aps_attr_parameter_set_id);
+  if (it != bufferRahtCoefficients->end()) {
+    // Entropy encode.
+    std::vector<int> values(attribCount);
+    int zeroRun = 0;
+    for (int n = 0; n < voxelCount; ++n) {
+      bool allZero = true;
+      for (int d = 0; d < attribCount; ++d) {
+        values[d] = it->second[voxelCount * d + n];
+        if (values[d] != 0) allZero = false;
+      }
+      if (allZero)
+        ++zeroRun;
+      else {
+        encoder.encodeRunLength(zeroRun);
+        encoder.encode(values.data(), attribCount);
+        zeroRun = 0;
+      }
+    }
+    if (zeroRun)
+      encoder.encodeRunLength(zeroRun);
+      
+    return;
+  } 
+
   std::vector<int> attributes(attribCount * voxelCount);
   std::vector<int> coefficients(attribCount * voxelCount);
   std::vector<Qps> pointQpOffsets(voxelCount);
 
   // Populate input arrays.
   for (int n = 0; n < voxelCount; n++) {
-		auto& index = _sortedIndex[n];
-		if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-			attributes[attribCount * n] = pointCloud.getReflectance(index); 
-		else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-			attributes[attribCount * n] = pointCloud.getOpacity(index);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-			attributes[attribCount * n] = pointCloud.getRotationScalar(index);
-		}
-		pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[index]);
+    auto& index = _sortedIndex[n];
+    Vec3<attr_t> attribute = getAttribute(desc, pointCloud, index);
+    for (int d = 0; d < attribCount; ++d)
+      attributes[attribCount * n + d] = int(attribute[d]);
+    pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[index]);
   }
 
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
@@ -1175,154 +1115,239 @@ AttributeEncoder::encodeReflectancesTransformRaht(
     pointQpOffsets.data(), _sortedMortonCode.data(), attributes.data(), attribCount,
     voxelCount, coefficients.data());
 
-  // Entropy encode.
+  // Entropy encode
+  std::vector<int> values(attribCount);
   int zeroRun = 0;
   for (int n = 0; n < voxelCount; ++n) {
-    auto value = coefficients[n];
-    if (!value)
-      ++zeroRun;
-    else {
-      encoder.encodeRunLength(zeroRun);
-      encoder.encode(value);
-      zeroRun = 0;
-    }
-  }
-  if (zeroRun)
-    encoder.encodeRunLength(zeroRun);
-
-  const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
-  const int64_t minReflectance = 0;
-  for (int n = 0; n < voxelCount; n++) {
-	  int64_t val = attributes[attribCount * n];
-	  const attr_t reflectance =
-		  attr_t(PCCClip(val, minReflectance, maxReflectance));
-
-	  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-		  pointCloud.setReflectance(_sortedIndex[n], reflectance);
-	  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-		  pointCloud.setOpacity(_sortedIndex[n], reflectance);
-	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-		  pointCloud.setRotationScalar(_sortedIndex[n], reflectance);
-	  }
-  }  
-}
-
-//----------------------------------------------------------------------------
-
-void
-AttributeEncoder::encodeColorsTransformRaht(
-  const AttributeDescription& desc,
-  const AttributeParameterSet& aps,
-  const QpSet& qpSet,
-  PCCPointSet3& pointCloud,
-  PCCResidualsEncoder& encoder)
-{
-  const int voxelCount = int(pointCloud.getPointCount());
-  std::vector<MortonCodeWithIndexAndPos> packedVoxel(voxelCount);
-  for (int n = 0; n < voxelCount; n++) {
-    packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
-    packedVoxel[n].index = n;
-  }
-  sort(packedVoxel.begin(), packedVoxel.end());
-
-  // Allocate arrays.
-  const int attribCount = 3;
-  std::vector<int64_t> mortonCode(voxelCount);
-  std::vector<int> attributes(attribCount * voxelCount);
-  std::vector<int> coefficients(attribCount * voxelCount);
-  std::vector<Qps> pointQpOffsets(voxelCount);
-
-  // Populate input arrays.
-  for (int n = 0; n < voxelCount; n++) {
-    mortonCode[n] = packedVoxel[n].mortonCode;
-
-		Vec3<attr_t> color;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-			color = pointCloud.getColor(packedVoxel[n].index);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			color = pointCloud.getScale(packedVoxel[n].index);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			color = pointCloud.getRotationVec(packedVoxel[n].index);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			color = pointCloud.getSHCoefficient(SHindex, packedVoxel[n].index);
-		}
-
-    attributes[attribCount * n] = color[0];
-    attributes[attribCount * n + 1] = color[1];
-    attributes[attribCount * n + 2] = color[2];
-    pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[packedVoxel[n].index]);
-  }
-
-  const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
-                                    aps.raht_prediction_threshold1};
-
-  // Transform.
-  FixedPoint::kFracBits = aps.raht_fixed_point_precision;
-
-  init_LUT();
-
-  regionAdaptiveHierarchicalTransform(
-    aps.raht_prediction_enabled_flag, rahtPredThreshold, qpSet,
-    pointQpOffsets.data(), mortonCode.data(), attributes.data(), attribCount,
-    voxelCount, coefficients.data());
-
-  // Entropy encode.
-  int values[attribCount];
-  int zeroRun = 0;
-  for (int n = 0; n < voxelCount; ++n) {
+    bool allZero = true;
     for (int d = 0; d < attribCount; ++d) {
       values[d] = coefficients[voxelCount * d + n];
+      if (values[d] != 0) allZero = false;
     }
-    if (!values[0] && !values[1] && !values[2])
+    if (allZero)
       ++zeroRun;
     else {
       encoder.encodeRunLength(zeroRun);
-      encoder.encode(values[0], values[1], values[2]);
+      encoder.encode(values.data(), attribCount);
       zeroRun = 0;
     }
   }
   if (zeroRun)
     encoder.encodeRunLength(zeroRun);
 
-  int clipMax = (1 << desc.bitdepth) - 1;
-  for (int n = 0; n < voxelCount; n++) {
-    const int r = attributes[attribCount * n];
-    const int g = attributes[attribCount * n + 1];
-    const int b = attributes[attribCount * n + 2];
-    Vec3<attr_t> color;
-    color[0] = attr_t(PCCClip(r, 0, clipMax));
-    color[1] = attr_t(PCCClip(g, 0, clipMax));
-    color[2] = attr_t(PCCClip(b, 0, clipMax));
+  int64_t clipMax = (1ll << desc.bitdepth) - 1;
+  for (int n = 0; n < voxelCount; ++n) {
+    auto index = _sortedIndex[n];
+    Vec3<attr_t> attribute(0);
+    for (int d = 0; d < attribCount; ++d) {
+      int value = attributes[attribCount * n + d];
+      attribute[d] = attr_t(PCCClip(value, 0, clipMax));
+    }
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-			pointCloud.setColor(packedVoxel[n].index, color);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			pointCloud.setScale(packedVoxel[n].index, color);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			pointCloud.setRotationVec(packedVoxel[n].index, color);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			pointCloud.setSHCoefficient(SHindex, packedVoxel[n].index, color);
-		}
+    setAttribute(desc, pointCloud, index, attribute);
   }
 }
 
 //----------------------------------------------------------------------------
 
+std::vector<std::vector<int>>
+AttributeGroup(
+  std::vector<std::pair<std::string, int>> attributeIdxMap,
+  std::vector<AttributeParameterSet*> attr_aps,
+  int Group_maxNum)
+{
+  std::vector<std::vector<int>> Groups;
+  std::vector<int> Group;
+  std::set<std::array<int, 2>> uniquePredictionThreshold;
+  for (const auto& it : attributeIdxMap) {
+    int attrIdx = it.second;
+    if (attr_aps[attrIdx]->raht_prediction_enabled_flag) {
+      auto predictionThreshold0 =
+        attr_aps[attrIdx]->raht_prediction_threshold0;
+      auto predictionThreshold1 =
+        attr_aps[attrIdx]->raht_prediction_threshold1;
+      uniquePredictionThreshold.insert(
+        {predictionThreshold0, predictionThreshold1});
+    } else {
+      Group.push_back(attrIdx);
+      if (Group.size() >= Group_maxNum) {
+        Groups.push_back(Group);
+        Group.clear();
+      }
+    }
+  }
+  if (Group.size() != 0)
+    Groups.push_back(Group);
+  Group.clear();
+
+  for (const auto Threshold : uniquePredictionThreshold) {
+    for (const auto& it : attributeIdxMap) {
+      int attrIdx = it.second;
+      if (attr_aps[attrIdx]->raht_prediction_enabled_flag) {
+        auto predictionThreshold0 =
+          attr_aps[attrIdx]->raht_prediction_threshold0;
+        auto predictionThreshold1 =
+          attr_aps[attrIdx]->raht_prediction_threshold1;
+        if (
+          predictionThreshold0 == Threshold[0]
+          && predictionThreshold1 == Threshold[1]) {
+          Group.push_back(attrIdx);
+          if (Group.size() >= Group_maxNum) {
+            Groups.push_back(Group);
+            Group.clear();
+          }
+        }
+      }
+    }
+    if (Group.size() != 0)
+      Groups.push_back(Group);
+    Group.clear();
+  }
+
+  return Groups;
+}
+
+
+
 void
-AttributeEncoder::encodeColorsLift(
+AttributeEncoder::encodeMultiAttributeRAHT(
+  const SequenceParameterSet& _sps,
+  std::vector<AttributeParameterSet*> attr_aps,
+  PCCPointSet3& pointCloud,
+  std::vector<std::pair<std::string, int>> attributeIdxMap,
+  int maxAttributeNumberPerGroup,
+  std::unordered_map<int, std::vector<int>>* bufferRahtCoefficients)
+{
+
+  int rahtAttrNum = 0;
+  for (auto it = attributeIdxMap.begin(); it != attributeIdxMap.end();) {
+    int attrIdx = it->second;
+    const auto& sps = _sps.attributeSets[attrIdx];
+    const auto& aps = attr_aps[attrIdx];
+
+    if (
+      aps->attr_encoding == AttributeEncoding::kRAHTransform
+      && sps.attr_num_dimensions_minus1 == 2) {
+      rahtAttrNum++;
+      ++it;
+    } else {
+      it = attributeIdxMap.erase(it);
+    }
+  }
+  if (rahtAttrNum <= 1)
+    return;
+  
+  std::vector<std::vector<int>> AttributeGroups = AttributeGroup(
+    attributeIdxMap, attr_aps, maxAttributeNumberPerGroup);  //Attribute Set for Multi-Attribute Encoding
+ 
+  const int voxelCount = int(pointCloud.getPointCount());
+  if (_sortedMortonCode.size() == 0)
+  {
+    std::vector<MortonCodeWithIndex> packedVoxel(voxelCount);
+    for (int n = 0; n < voxelCount; n++) {
+      packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
+      packedVoxel[n].index = n;
+    }
+    sort(packedVoxel.begin(), packedVoxel.end());
+    _sortedMortonCode.resize(voxelCount);
+    _sortedIndex.resize(voxelCount);
+    for (int n = 0; n < voxelCount; n++) {
+      _sortedMortonCode[n] = packedVoxel[n].mortonCode;
+      _sortedIndex[n] = packedVoxel[n].index;
+    }
+  }
+
+  // Allocate arrays.
+  for (auto AttributeGroup : AttributeGroups) {
+    const int attribCount = 3 * AttributeGroup.size();
+
+    std::vector<int> attributes(attribCount * voxelCount);
+    std::vector<int> coefficients(attribCount * voxelCount);
+    std::vector<Qps> pointQpOffsets(voxelCount);
+
+    // Populate input arrays.
+    for (int AttributeGroupIdx = 0; AttributeGroupIdx < AttributeGroup.size();
+         AttributeGroupIdx++) {
+      auto attrIdx = AttributeGroup[AttributeGroupIdx];
+      auto desc = _sps.attributeSets[attrIdx];
+
+      for (int n = 0; n < voxelCount; n++) {
+        auto& index = _sortedIndex[n];
+        Vec3<attr_t> attribute = getAttribute(desc, pointCloud, index);
+        for (int d = 0; d < attribCount; ++d)
+          attributes[attribCount * n + 3 * AttributeGroupIdx + d] = attribute[d];
+        pointQpOffsets[n] = {0, 0}; // qpSet.regionQpOffset(pointCloud[index]);
+      }
+    }
+    
+    int rahtPredThreshold[2];
+    bool raht_prediction_enabled_flag;
+    // Transform.
+    FixedPoint::kFracBits = attr_aps[AttributeGroup[0]]->raht_fixed_point_precision;
+
+    init_LUT();
+
+    std::vector<QpSet> qpSets;
+
+    for (const auto& attrIdx : AttributeGroup) {
+      auto attr_sps = _sps.attributeSets[attrIdx];
+      auto aps = attr_aps[attrIdx];
+      rahtPredThreshold[0] = aps->raht_prediction_threshold0;
+      rahtPredThreshold[1] = aps->raht_prediction_threshold1;
+      raht_prediction_enabled_flag = aps->raht_prediction_enabled_flag;
+      AttributeBrickHeader abh;
+      abh.attr_sps_attr_idx = attrIdx;
+      abh.attr_qp_delta_luma = 0;
+      abh.attr_qp_delta_chroma = 0;
+
+      QpSet qpSet = deriveQpSet(attr_sps, *aps, abh);
+      qpSets.push_back(qpSet);
+    }
+
+    regionAdaptiveHierarchicalTransformforMultiAttr(
+      raht_prediction_enabled_flag, rahtPredThreshold, pointQpOffsets.data(),qpSets,
+      _sortedMortonCode.data(), attributes.data(), attribCount, voxelCount,
+      coefficients.data());
+
+    for (int AttributeGroupIdx = 0; AttributeGroupIdx < AttributeGroup.size();
+         AttributeGroupIdx++) {
+      auto attrIdx = AttributeGroup[AttributeGroupIdx];
+      auto desc = _sps.attributeSets[attrIdx];
+
+      std::vector<int> bufferRahtCoefficient;
+      bufferRahtCoefficient.reserve(3 * voxelCount);
+
+      auto start = coefficients.begin() + 3 * AttributeGroupIdx * voxelCount;
+      auto end = start + 3 * voxelCount;
+      bufferRahtCoefficient.assign(start, end); 
+      auto aps_attr_parameter_set_id =attr_aps[attrIdx]->aps_attr_parameter_set_id;
+      (*bufferRahtCoefficients)[aps_attr_parameter_set_id] =bufferRahtCoefficient;
+
+      int clipMax = (1 << desc.bitdepth) - 1;
+      for (int n = 0; n < voxelCount; n++) {
+        auto index = _sortedIndex[n];
+        Vec3<attr_t> attribute(0);
+        for (int d = 0; d < attribCount; ++d) {
+          int value = attributes[attribCount * n + 3 * AttributeGroupIdx + d];
+          attribute[d] = attr_t(PCCClip(value, 0, clipMax));
+        }
+
+        setAttribute(desc, pointCloud, index, attribute);
+      }
+    }
+  }
+}
+
+//----------------------------------------------------------------------------
+void
+AttributeEncoder::encodeAttributeLift(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
   const QpSet& qpSet,
   PCCPointSet3& pointCloud,
   PCCResidualsEncoder& encoder)
 {
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
   const size_t pointCount = pointCloud.getPointCount();
   std::vector<uint64_t> weights;
 
@@ -1334,26 +1359,21 @@ AttributeEncoder::encodeColorsLift(
       _lods.numPointsInLod, _lods.predictors, pointCount, 0, weights);
   }
 
-  std::vector<Vec3<int64_t>> colors;
-  colors.resize(pointCount);
+  std::vector<int64_t> iQuantWeights(pointCount);
+  std::vector<int64_t> quantWeights(pointCount);
+  for (size_t i = 0; i < pointCount; ++i) {
+    iQuantWeights[i] = fastIrsqrt(weights[i]);
+    quantWeights[i] = divExp2RoundHalfUp(weights[i] * iQuantWeights[i], 28);
+  }
+
+  std::vector<Vec3<int64_t>> attributes(pointCount, Vec3<int64_t>(0));
 
   for (size_t index = 0; index < pointCount; ++index) {
-		Vec3<attr_t> color;
-		if (desc.attributeLabel == KnownAttributeLabel::kColour) 
-			color = pointCloud.getColor(_lods.indexes[index]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			color = pointCloud.getScale(_lods.indexes[index]);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			color = pointCloud.getRotationVec(_lods.indexes[index]);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			color = pointCloud.getSHCoefficient(SHindex, _lods.indexes[index]);
-		}
+    Vec3<attr_t> attribute = getAttribute(desc, pointCloud, _lods.indexes[index]);
 
-    for (size_t d = 0; d < 3; ++d) {
-      colors[index][d] = int32_t(color[d]) << kFixedPointAttributeShift;
+    for (int d = 0; d < attribCount; ++d) {
+      attributes[index][d] =
+        int64_t(attribute[d]) << kFixedPointAttributeShift;
     }
   }
 
@@ -1363,55 +1383,65 @@ AttributeEncoder::encodeColorsLift(
       break;
 
     auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
-    PCCLiftPredict(_lods.predictors, coeffRange, true, colors);
-    PCCLiftUpdate(_lods.predictors, weights, coeffRange, true, colors);
+    PCCLiftPredict(_lods.predictors, coeffRange, true, attributes);
+    PCCLiftUpdate (_lods.predictors, weights, coeffRange, true, attributes);
   }
+
+  const bool lcpEnabled = aps.last_component_prediction_enabled_flag && attribCount == 3;
 
   // Per level-of-detail coefficients for last component prediction
-  if (aps.last_component_prediction_enabled_flag) {
-    _abh->attrLcpCoeffs = computeLastComponentPredictionCoeff(aps, colors);
-  }
+  if (lcpEnabled)
+    _abh->attrLcpCoeffs = computeLastComponentPredictionCoeff(aps, attributes);
 
   int zeroRun = 0;
+  std::vector<int32_t> values(attribCount);
   for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
     int quantLayer = std::min(int(qpSet.layers.size()) - 1, int(lod));
 
-    int8_t lastCompPredCoeff = 0;
-    if (aps.last_component_prediction_enabled_flag)
-      lastCompPredCoeff = _abh->attrLcpCoeffs[lod];
+    int8_t lastCompPredCoeff =
+      lcpEnabled ? _abh->attrLcpCoeffs[lod] : 0;
 
     auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
     for (auto predictorIndex : coeffRange) {
       const auto pointIndex = _lods.indexes[predictorIndex];
       auto quant = qpSet.quantizers(pointCloud[pointIndex], quantLayer);
 
-      const int64_t iQuantWeight = fastIrsqrt(weights[predictorIndex]);
-      const int64_t quantWeight =
-        divExp2RoundHalfUp(weights[predictorIndex] * iQuantWeight, 28);
+      const int64_t iQuantWeight = iQuantWeights[predictorIndex];
+      const int64_t quantWeight = quantWeights[predictorIndex];
 
-      auto& color = colors[predictorIndex];
-      int values[3];
-      values[0] = quant[0].quantize(color[0] * quantWeight >> 16);
-      int64_t scaled = quant[0].scale(values[0]);
-      color[0] = divExp2RoundHalfInf(scaled * iQuantWeight, 36);
+      int64_t reconstructedDelta = 0;
 
-      values[1] = quant[1].quantize(color[1] * quantWeight >> 16);
-      scaled = quant[1].scale(values[1]);
-      color[1] = divExp2RoundHalfInf(scaled * iQuantWeight, 36);
+      for (int d = 0; d < attribCount; ++d) {
+        int quantIdx = std::min(d, 1);
 
-      color[2] -= (lastCompPredCoeff * color[1]) >> 2;
-      scaled *= lastCompPredCoeff;
-      scaled >>= 2;
+        int64_t attribute = attributes[predictorIndex][d];
 
-      values[2] = quant[1].quantize(color[2] * quantWeight >> 16);
-      scaled += quant[1].scale(values[2]);
-      color[2] = divExp2RoundHalfInf(scaled * iQuantWeight, 36);
+        // LCP subtraction before quant
+        if (lcpEnabled && d == 2)
+          attribute -= (int64_t(lastCompPredCoeff) * attributes[predictorIndex][1]) >> 2;
 
-      if (!values[0] && !values[1] && !values[2])
+        values[d] = quant[quantIdx].quantize((attribute * quantWeight) >> 16);
+        int64_t scaled = quant[quantIdx].scale(values[d]);
+
+        // LCP add-back after inverse quant
+        if (lcpEnabled && d == 2)
+          scaled += (int64_t(lastCompPredCoeff) * reconstructedDelta) >> 2;
+
+        attributes[predictorIndex][d] = divExp2RoundHalfInf(scaled * iQuantWeight, 36);
+
+        if (d == 1)
+          reconstructedDelta = scaled;
+      }
+
+      bool allZero = true;
+      for (int d = 0; d < attribCount; ++d)
+        allZero &= (values[d] == 0);
+
+      if (allZero)
         ++zeroRun;
       else {
         encoder.encodeRunLength(zeroRun);
-        encoder.encode(values[0], values[1], values[2]);
+        encoder.encode(values.data(), attribCount);
         zeroRun = 0;
       }
     }
@@ -1425,31 +1455,20 @@ AttributeEncoder::encodeColorsLift(
       continue;
 
     auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
-    PCCLiftUpdate(_lods.predictors, weights, coeffRange, false, colors);
-    PCCLiftPredict(_lods.predictors, coeffRange, false, colors);
+    PCCLiftUpdate (_lods.predictors, weights, coeffRange, false, attributes);
+    PCCLiftPredict(_lods.predictors, coeffRange, false, attributes);
   }
 
   int64_t clipMax = (1 << desc.bitdepth) - 1;
   for (size_t f = 0; f < pointCount; ++f) {
-    const auto color0 =
-      divExp2RoundHalfInf(colors[f], kFixedPointAttributeShift);
-    Vec3<attr_t> color;
-    for (size_t d = 0; d < 3; ++d) {
-      color[d] = attr_t(PCCClip(color0[d], 0, clipMax));
+    Vec3<attr_t> attribute(0);
+    for (int d = 0; d < attribCount; ++d) {
+      const auto attribute0 =
+        divExp2RoundHalfInf(attributes[f][d], kFixedPointAttributeShift);
+      attribute[d] = attr_t(PCCClip(attribute0, 0, clipMax));
     }
 
-		if (desc.attributeLabel == KnownAttributeLabel::kColour)
-				pointCloud.setColor(_lods.indexes[f], color);
-		else if (desc.attributeLabel == KnownAttributeLabel::kScale)
-			pointCloud.setScale(_lods.indexes[f], color);
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ);
-			pointCloud.setRotationVec(_lods.indexes[f], color);
-		}
-		else if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-			int SHindex = (int)desc.params.sh_coefficient_label;
-			pointCloud.setSHCoefficient(SHindex, _lods.indexes[f], color);
-		}
+    setAttribute(desc, pointCloud, _lods.indexes[f], attribute);
   }
 }
 
@@ -1495,144 +1514,34 @@ AttributeEncoder::computeLastComponentPredictionCoeff(
   return signs;
 }
 
-//----------------------------------------------------------------------------
-
-void
-AttributeEncoder::encodeReflectancesLift(
-  const AttributeDescription& desc,
-  const AttributeParameterSet& aps,
-  const QpSet& qpSet,
-  PCCPointSet3& pointCloud,
-  PCCResidualsEncoder& encoder)
-{
-  const size_t pointCount = pointCloud.getPointCount();
-  std::vector<uint64_t> weights;
-
-  if (!aps.scalable_lifting_enabled_flag) {
-    computeQuantizationWeights(
-      _lods.numPointsInLod, _lods.predictors, weights);
-  } else {
-    computeQuantizationWeightsScalable(
-      _lods.numPointsInLod, _lods.predictors, pointCount, 0, weights);
-  }
-
-  std::vector<int64_t> reflectances;
-  reflectances.resize(pointCount);
-
-  for (size_t index = 0; index < pointCount; ++index) {
-	  if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-		  reflectances[index] =
-			  int32_t(pointCloud.getReflectance(_lods.indexes[index]))
-			  << kFixedPointAttributeShift;
-	  else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-		  reflectances[index] =
-			  int32_t(pointCloud.getOpacity(_lods.indexes[index]))
-			  << kFixedPointAttributeShift;
-	  else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-		  assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-		  reflectances[index] =
-			  int32_t(pointCloud.getRotationScalar(_lods.indexes[index]))
-			  << kFixedPointAttributeShift;
-	  }
-  }
-
-  const size_t lodCount = _lods.numPointsInLod.size();
-  for (auto lod : LodOrder::FinestToCoarsest(lodCount)) {
-    if (lod == 0 /* coarsest */)
-      break;
-
-    auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
-    PCCLiftPredict(_lods.predictors, coeffRange, true, reflectances);
-    PCCLiftUpdate(_lods.predictors, weights, coeffRange, true, reflectances);
-  }
-
-  // compress
-  int zeroRun = 0;
-  for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
-    int quantLayer = std::min(int(qpSet.layers.size()) - 1, int(lod));
-
-    auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
-    for (auto predictorIndex : coeffRange) {
-      const auto pointIndex = _lods.indexes[predictorIndex];
-      auto quant = qpSet.quantizers(pointCloud[pointIndex], quantLayer);
-
-      const int64_t iQuantWeight = fastIrsqrt(weights[predictorIndex]);
-      const int64_t quantWeight =
-        (weights[predictorIndex] * iQuantWeight + (1ull << 27)) >> 28;
-
-      auto& reflectance = reflectances[predictorIndex];
-      const int64_t delta = quant[0].quantize(reflectance * quantWeight >> 16);
-      const auto detail = delta;
-      const int64_t reconstructedDelta = quant[0].scale(delta);
-      reflectance = divExp2RoundHalfInf(reconstructedDelta * iQuantWeight, 36);
-      if (!detail)
-        ++zeroRun;
-      else {
-        encoder.encodeRunLength(zeroRun);
-        encoder.encode(detail);
-        zeroRun = 0;
-      }
-    }
-  }
-  if (zeroRun)
-    encoder.encodeRunLength(zeroRun);
-
-  // reconstruct
-  for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
-    if (lod == 0 /* coarsest */)
-      continue;
-
-    auto coeffRange = LodCoeffIdxRange(_lods.numPointsInLod, lod);
-    PCCLiftUpdate(_lods.predictors, weights, coeffRange, false, reflectances);
-    PCCLiftPredict(_lods.predictors, coeffRange, false, reflectances);
-  }
-
-  const int64_t maxReflectance = (1 << desc.bitdepth) - 1;
-  for (size_t f = 0; f < pointCount; ++f) {
-    const int64_t refl =
-      divExp2RoundHalfInf(reflectances[f], kFixedPointAttributeShift);
-
-		if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
-			pointCloud.setReflectance(
-				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
-		else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
-			pointCloud.setOpacity(
-				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
-		else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-			assert(desc.params.rotation_component_label == RotationComponentLabel::kRotation_W);
-			pointCloud.setRotationScalar(
-				_lods.indexes[f], attr_t(PCCClip(refl, int64_t(0), maxReflectance)));
-		}
-  }
-}
-
 //============================================================================
 
 int
-AttributeEncoder::computeColorDistortions(
+AttributeEncoder::computeAttrMultiCompDistortions(
   const AttributeDescription& desc,
-  const Vec3<attr_t> color,
-  const Vec3<attr_t> predictedColor,
+  const Vec3<attr_t> attribute,
+  const Vec3<attr_t> predictedAttribute,
   const Quantizers& quant)
 {
   int64_t clipMax = (1 << desc.bitdepth) - 1;
 
-  Vec3<attr_t> reconstructedColor;
-  for (int k = 0; k < 3; ++k) {
+  Vec3<attr_t> reconstructedAttribute;
+  const int attribCount = desc.attr_num_dimensions_minus1 + 1;
+  for (int k = 0; k < attribCount; ++k) {
     const auto& q = quant[std::min(k, 1)];
-    int64_t residual = color[k] - predictedColor[k];
+    int64_t residual = attribute[k] - predictedAttribute[k];
 
     int64_t residualQ = q.quantize(residual << kFixedPointAttributeShift);
     int64_t residualR =
       divExp2RoundHalfUp(q.scale(residualQ), kFixedPointAttributeShift);
 
-    int64_t recon = predictedColor[k] + residualR;
-    reconstructedColor[k] = attr_t(PCCClip(recon, int64_t(0), clipMax));
+    int64_t recon = predictedAttribute[k] + residualR;
+    reconstructedAttribute[k] = attr_t(PCCClip(recon, int64_t(0), clipMax));
   }
 
   int distortion = 0;
-  for (int k = 0; k < 3; ++k)
-    distortion += std::abs(color[k] - reconstructedColor[k]);
+  for (int k = 0; k < attribCount; ++k)
+    distortion += std::abs(attribute[k] - reconstructedAttribute[k]);
 
   return distortion;
 }

@@ -10,6 +10,7 @@ from typing_extensions import Literal
 
 from rdo_gpcc.dataset import Dataset, DatasetConfig
 from rdo_gpcc.mpeg.gs_read_write import read3DG_ply, write3DG_ply
+from rdo_gpcc.pruner import Pruner, PrunerConfig
 from rdo_gpcc.quantizer import Quantizer, QuantizerConfig
 from rdo_gpcc.renderer import Renderer, RendererConfig
 from rdo_gpcc.splat_model import SplatModel
@@ -27,6 +28,7 @@ class Config:
     device: Literal["cuda", "cpu"] = "cuda"
     max_memory: int | None = None
     quantizer: QuantizerConfig = field(default_factory=lambda: QuantizerConfig())  # noqa: PLW0108
+    pruner: PrunerConfig = field(default_factory=lambda: PrunerConfig())  # noqa: PLW0108
     trainer: TrainerConfig = field(default_factory=lambda: TrainerConfig(result_dir=Path()))
     dataset: DatasetConfig = field(default_factory=lambda: DatasetConfig(dataset_dir=Path()))
     renderer: RendererConfig = field(default_factory=lambda: RendererConfig())  # noqa: PLW0108
@@ -116,12 +118,21 @@ def finetune_splats(
     CONSOLE.log("Initializing dataset.")
     dataset = Dataset(config.dataset, target_splats, renderer, config.device)
 
-    CONSOLE.log("Initializing trainer.")
-    trainer = Trainer(splats, dataset, renderer, quantizer, config.device, config.trainer)
+    # Run pruning.
+    if config.pruner.prune_ratio > 0:
+        CONSOLE.log("Initializing pruner.")
+        pruner = Pruner(config.pruner, dataset, renderer)
+        CONSOLE.log("Pruning gaussians.")
+        splats = pruner.prune(splats)
 
-    CONSOLE.log("Training gaussians.")
-    trainer.train()
+    # Run fine-tuning.
+    if config.trainer.max_steps > 0:
+        CONSOLE.log("Initializing trainer.")
+        trainer = Trainer(splats, dataset, renderer, quantizer, config.device, config.trainer)
+        CONSOLE.log("Training gaussians.")
+        splats = trainer.train()
 
+    # Convert torch tensors to numpy arrays.
     f_pos = splats.means.data.cpu().numpy()
     f_sh = torch.cat((splats.sh0, splats.shN), dim=1).data.cpu().numpy()
     f_opacity = splats.opacities.unsqueeze(-1).data.cpu().numpy()

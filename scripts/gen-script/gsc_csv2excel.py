@@ -54,7 +54,7 @@ def get_offset_dict(ws, flag_1f):
     target_flag = "1F" if flag_1f else "NF"
     offset_dict = {}
 
-    for r in range(1, 194):
+    for r in range(1, 183):
         f_flag = ws.cell(row=r, column=2).value
         seqname = ws.cell(row=r, column=3).value
         if f_flag == target_flag and seqname:
@@ -81,7 +81,7 @@ def csv_to_xlsm(ws, csv_path, flag_1f):
                 continue
 
             rate_id = int(csv_tokens[1].split("r")[-1]) - 1
-            rate_id = 0 if rate_id > 5 else rate_id  
+            rate_id = 0 if rate_id > 4 else rate_id  
             row = offset_dict[seq] + rate_id
             
             if DEBUG_MODE:
@@ -107,16 +107,28 @@ def main():
     parser.add_argument("-f", "--flag_1f", type=int, default=0,
                         help="Flag for single frame processing (1: 1F, 0: NF)")
     parser.add_argument("-t", "--template", required=True, help="Path to XLSM template file")
-    parser.add_argument("-a", "--anc_csv", required=True, help="Path to anchor CSV file")
-    parser.add_argument("-p", "--pro_csv", required=True, help="Path to proposed CSV file")
     parser.add_argument("-x", "--xlsm", required=True, help="Path to output XLSM file")
+    parser.add_argument("--aC1", required=False, help="Path to Anchor.C1 CSV file")
+    parser.add_argument("--pC1", required=False, help="Path to Proposal.C1 CSV file")
+    parser.add_argument("--aCW", required=False, help="Path to Anchor.CW CSV file")
+    parser.add_argument("--pCW", required=False, help="Path to Proposal.CW CSV file")
     args = parser.parse_args()
 
     template_path = Path(args.template)
     wb = openpyxl.load_workbook(template_path, read_only=False, keep_vba=True)
-
-    process_csv(wb, Path(args.anc_csv), "Anchor", args.flag_1f)
-    process_csv(wb, Path(args.pro_csv), "Proposal", args.flag_1f)
+    
+    if args.aC1 is not None:
+        process_csv(wb, Path(args.aC1), "Anchor.C1", args.flag_1f)
+    
+    if args.pC1 is not None:
+        process_csv(wb, Path(args.pC1), "Proposal.C1", args.flag_1f)
+    
+    if args.aCW is not None:
+        process_csv(wb, Path(args.aCW), "Anchor.CW", args.flag_1f)
+    
+    if args.pCW is not None:
+        process_csv(wb, Path(args.pCW), "Proposal.CW", args.flag_1f)
+    
     output_path = Path(args.xlsm)
     wb.save(output_path)
     print(f"[INFO] XLSM file saved: {output_path}")
