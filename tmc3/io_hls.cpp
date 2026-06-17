@@ -180,11 +180,9 @@ operator<<(std::ostream& os, const AttributeDescription& desc)
     // Gaussian Splat Compression
   case KnownAttributeLabel::kScale: os << "scale"; break;
   case KnownAttributeLabel::kRotation: 
-		if (desc.params.rotation_label == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 2)
+		if (desc.attr_num_dimensions_minus1 == 2)
       os << "rotations_XYZ";
-    else if (
-      desc.params.rotation_label 
-      == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 0)
+    else if (desc.attr_num_dimensions_minus1 == 0)
       os << "rotations_W"; 		
 		break;
   case KnownAttributeLabel::kSH_coefficients: 
@@ -348,7 +346,10 @@ template<typename Bs>
 void
 writeAttrParamRotationLabel(Bs& bs, const AttributeParameters& param)
 {
-  bs.writeUn(1, param.rotation_label);
+  bs.write(bool(param.rotation_label));
+  if (param.rotation_label == RotationLabel::kEuler) {
+    bs.write(bool(param.euler_angle_unit_type));
+  }
   bs.byteAlign();
 }
 
@@ -358,7 +359,10 @@ template<typename Bs>
 void
 parseAttrParamRotationLabel(Bs& bs, AttributeParameters* param)
 {
-  bs.readUn(1, &param->rotation_label);
+  bs.read(&param->rotation_label);
+  if (param->rotation_label == RotationLabel::kEuler) {
+    bs.read(&param->euler_angle_unit_type);
+  }
   bs.byteAlign();
 }
 

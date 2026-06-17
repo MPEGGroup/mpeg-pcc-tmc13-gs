@@ -264,10 +264,16 @@ enum class SHCoefficientLabel : uint32_t
 
 //============================================================================
 
-enum class RotationLabel : uint32_t
+enum class RotationLabel
 {
   kQuaternion = 0,
   kEuler = 1,
+};
+
+enum class EulerAngleUnitType
+{
+  kRadian = 0,
+  kDegree = 1
 };
 
 //============================================================================
@@ -318,9 +324,7 @@ struct AttributeParameters {
 
   bool rotationParameterPresent = false;
   RotationLabel rotation_label;
-
-  int sh_coefficient_label_temp;
-  int rotation_label_temp;
+  EulerAngleUnitType euler_angle_unit_type;
 
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;

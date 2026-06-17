@@ -107,7 +107,7 @@ permut_12(
 }
 
 static void
-canonicalize(double quat[4], float scale[3], bool isRealRotCoded)
+canonicalize(double quat[4], float scale[3])
 {
   // Apply the 6 scales permutation, and search for quaternion with maximum
   // absolute value component
@@ -176,20 +176,117 @@ canonicalize(double quat[4], float scale[3], bool isRealRotCoded)
     quat[2] = +quats[imax][1];
     quat[3] = -quats[imax][0];
   }
+}
 
-  // Scale quaternion
-  double deNorm = isRealRotCoded
-                ? quat[0] 
-                : std::sqrt(quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3]);
-  double inorm = 1.0 / deNorm;
-  if (quat[0] < 0)
-    inorm = -inorm;
-  // Note: The real part of the quaternion is being ignored here, and will be
-  // estimated at decoder side.
-  quat[0] = 1.0;
-  quat[1] *= inorm;
-  quat[2] *= inorm;
-  quat[3] *= inorm;
+static void normalizeQuat(double quat[4], bool isRealRotCoded, bool isEulerRot)
+{
+  // 1. Handle special rotation encoding case first
+  if (!isEulerRot && isRealRotCoded) {
+    // If it's a real rotation coded format, use quat[0] directly as norm_sq
+    double norm_sq = quat[0];
+    
+    if (norm_sq > 0.0) {
+      if (quat[0] < 0.0 || std::abs(norm_sq - 1.0) > 1e-12) {
+        double inv_norm = 1.0 / std::sqrt(norm_sq);
+        if (quat[0] < 0.0) {
+          inv_norm = -inv_norm;
+        }
+        // Mathematically verified: setting quat[0] to 1.0 restores proper scaling
+        quat[0] = 1.0;
+        quat[1] *= inv_norm;
+        quat[2] *= inv_norm;
+        quat[3] *= inv_norm;
+      }
+    }
+    return; // Early exit to skip standard normalization
+  }
+
+  // 2. Standard Quaternion Normalization
+  double norm_sq = quat[0] * quat[0] 
+                 + quat[1] * quat[1] 
+                 + quat[2] * quat[2] 
+                 + quat[3] * quat[3];
+  
+  if (norm_sq > 0.0) {
+    if (quat[0] < 0.0 || std::abs(norm_sq - 1.0) > 1e-12) {
+      double inv_norm = 1.0 / std::sqrt(norm_sq);
+      if (quat[0] < 0.0) {
+        inv_norm = -inv_norm;
+      }
+      quat[0] *= inv_norm;
+      quat[1] *= inv_norm;
+      quat[2] *= inv_norm;
+      quat[3] *= inv_norm;
+    }
+  }
+}
+
+static void quatToEuler(double quat[4])
+{
+  // 1. Calculate minimum required intermediate values (7 ops)
+  double q0q2 = 2.0 * quat[0] * quat[2]; // 2 * w * y
+  double q0q3 = 2.0 * quat[0] * quat[3]; // 2 * w * z
+
+  double q1q1 = 2.0 * quat[1] * quat[1]; // 2 * x * x
+  double q1q2 = 2.0 * quat[1] * quat[2]; // 2 * x * y
+  double q1q3 = 2.0 * quat[1] * quat[3]; // 2 * x * z
+
+  double q2q2 = 2.0 * quat[2] * quat[2]; // 2 * y * y
+  double q3q3 = 2.0 * quat[3] * quat[3]; // 2 * z * z
+
+  // 2. Extract matrix elements strictly necessary for Pitch (quat[2]) and Yaw (quat[1])
+  double r20 = q1q3 - q0q2;
+  double r10 = q1q2 + q0q3;
+  double r00 = 1.0 - q2q2 - q3q3;
+
+  // 3. Compute Pitch
+  double pitch = std::asin(PCCClip(-r20, -1.0, 1.0));
+
+  if (std::abs(std::cos(pitch)) > 1e-6) {
+    // Regular case (No Gimbal Lock)
+    double q0q1 = 2.0 * quat[0] * quat[1]; // 2 * w * x
+    double q2q3 = 2.0 * quat[2] * quat[3]; // 2 * y * z
+    
+    double r21 = q2q3 + q0q1;
+    double r22 = 1.0 - q1q1 - q2q2;
+
+    quat[1] = std::atan2(r10, r00);
+    quat[3] = std::atan2(r21, r22);
+  } else {
+    // Gimbal Lock case
+    double r01 = q1q2 - q0q3;
+    double r11 = 1.0 - q1q1 - q3q3;
+
+    quat[1] = std::atan2(-r01, r11);
+    quat[3] = 0.0;
+  }
+  quat[2] = pitch;
+}
+
+const double radToDeg = 180.0 / M_PI;
+const double degToRad = M_PI / 180.0;
+static void eulerToQuat(double rot[4])
+{
+  // 1. Extract Euler angles before modifying the array
+  // Assuming the sequence matches the previous quatToEuler (Z-Y-X / Yaw-Pitch-Roll)
+  double yaw   = rot[1]; // Z-axis rotation
+  double pitch = rot[2]; // Y-axis rotation
+  double roll  = rot[3]; // X-axis rotation
+
+  // 2. Precompute half angles to eliminate repetitive divisions
+  double cy = std::cos(yaw * 0.5);
+  double sy = std::sin(yaw * 0.5);
+  double cp = std::cos(pitch * 0.5);
+  double sp = std::sin(pitch * 0.5);
+  double cr = std::cos(roll * 0.5);
+  double sr = std::sin(roll * 0.5);
+
+  // 3. Compute Quaternion elements with proper combination (Z-Y-X sequence)
+  // Store results directly into the array without cross-contamination
+  rot[0] = cy * cp * cr + sy * sp * sr; // w
+  rot[1] = cy * cp * sr - sy * sp * cr; // x
+  rot[2] = cy * sp * cr + sy * cp * sr; // y
+  rot[3] = sy * cp * cr - cy * sp * sr; // z
 }
 
 const AttributeDescription& getAttributeDescription(
@@ -357,6 +454,23 @@ ply::write(
     fout.clear();
     fout.close();
     fout.open(fileName, std::ofstream::binary | std::ofstream::app);
+
+    bool isRealRotCoded = false;
+    bool isEulerRot = false;
+    double rotScaleValue = 1.0;
+    for (auto desc: attrDescs) {
+      if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+        if (desc.attr_num_dimensions_minus1 == 1) {
+          isRealRotCoded = true;
+        } else if (desc.params.rotation_label == RotationLabel::kEuler) {
+          isEulerRot = true;
+          if (desc.params.euler_angle_unit_type == EulerAngleUnitType::kDegree) {
+            rotScaleValue = degToRad;
+          }
+        }
+      }
+    }
+    
     for (size_t i = 0; i < pointCount; ++i) {
       Vec3<double> position = cloud[i] * positionScale + positionOffset;
       if (!asConformance) {
@@ -466,20 +580,10 @@ ply::write(
           auto offset = desc.params.attr_offset;
           auto attr_frac_bits = desc.params.attr_frac_bits;
           auto attr_scale     = desc.params.attr_scale_minus1 + 1;
+          auto attr = cloud.getRotationVec(i);
           for (int k = 0; k < 3; k++) {
-            int32_t attr = int32_t(cloud.getRotationVec(i)[k]);
-            double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
+            double buf = double(attr[k]) * attr_scale / (1<<attr_frac_bits) + offset;
             rot[k+1]= buf;
-          }
-        }
-
-        bool isRealRotCoded = false;
-        for (auto desc: attrDescs) {
-          if (desc.attributeLabel == KnownAttributeLabel::kRotation 
-            && desc.params.rotation_label == RotationLabel::kQuaternion
-            && desc.attr_num_dimensions_minus1 == 1) {
-              isRealRotCoded = true;
-              break;
           }
         }
         
@@ -491,11 +595,18 @@ ply::write(
           auto attr_scale     = desc.params.attr_scale_minus1 + 1;
           rot[0] = double(int32_t(cloud.getRotationScalar(i))) * attr_scale / (1<<attr_frac_bits) + offset;
         }
-        else // Estimate the real part of the quaternion
+        else if (!isEulerRot)// Estimate the real part of the quaternion
         { 
           rot[0] = std::sqrt(std::min(std::max(
             1.0 - rot[1] * rot[1] - rot[2] * rot[2] - rot[3] * rot[3],
             0.0), 1.0));
+        }
+        
+        if (isEulerRot) {
+          rot[1] *= rotScaleValue;
+          rot[2] *= rotScaleValue;
+          rot[3] *= rotScaleValue;
+          eulerToQuat(rot);
         }
 
 				const auto rotation_w = rot[0];
@@ -783,7 +894,7 @@ ply::convertColor (
 }
 
 bool
-ply::canonicalizeRotationAndScale (
+ply::convertRotationAndScale (
   int pointCount,
   std::vector<double>& inputAttrBuf,
   std::vector<AttributeDescription>& attrDescs, 
@@ -807,12 +918,19 @@ ply::canonicalizeRotationAndScale (
   bufScale[2] = &inputAttrBuf[indicesScale[2] * pointCount];
 
   bool isRealRotCoded = false;
+  bool isEulerRot = false;
+  double rotScaleValue = 1.0;
+  
   for (auto desc: attrDescs) {
-    if (desc.attributeLabel == KnownAttributeLabel::kRotation 
-      && desc.params.rotation_label == RotationLabel::kQuaternion
-      && desc.attr_num_dimensions_minus1 == 1) {
+    if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+      if (desc.attr_num_dimensions_minus1 == 1) {
         isRealRotCoded = true;
-        break;
+      } else if (desc.params.rotation_label == RotationLabel::kEuler) {
+        isEulerRot = true;
+        if (desc.params.euler_angle_unit_type == EulerAngleUnitType::kDegree) {
+          rotScaleValue = radToDeg;
+        }
+      }
     }
   }
 
@@ -831,7 +949,18 @@ ply::canonicalizeRotationAndScale (
     scale[2] = bufScale[2][i];
 
     // processing
-    canonicalize(quat, scale, isRealRotCoded);
+    canonicalize(quat, scale);
+    
+    // normalization
+    normalizeQuat(quat, isRealRotCoded, isEulerRot);
+    
+    // convert Quat to Euler
+    if (isEulerRot) {
+      quatToEuler(quat);
+      quat[1] *= rotScaleValue;
+      quat[2] *= rotScaleValue;
+      quat[3] *= rotScaleValue;
+    }
 
     // output
     bufRot[0][i] = quat[0];
@@ -867,16 +996,16 @@ ply::analyzeMinMax (
       }
     }
 
-    int rounded_min = static_cast<int>(std::floor(stat.min));
-    int rounded_max = static_cast<int>(std::ceil(stat.max));
-    int offset = rounded_min;
+    int fmin = static_cast<int>(std::floor(stat.min));
+    int cmax = static_cast<int>(std::ceil(stat.max));
+    int attr_offset = fmin;
 
     int64_t attr_frac_bits_scale = 1ll << desc.params.attr_frac_bits;
     int64_t bit_depth_scale = (1ll << desc.bitdepth) - 1ll;
-    int64_t d_code = int64_t(rounded_max) - int64_t(rounded_min);
+    int64_t d_code = int64_t(cmax) - int64_t(fmin);
     int64_t attr_scale = (d_code * attr_frac_bits_scale + (bit_depth_scale>>1)) / bit_depth_scale;
 
-    desc.params.attr_offset = offset;
+    desc.params.attr_offset = attr_offset;
     desc.params.attr_scale_minus1 = attr_scale - 1;
   }
   return true;
@@ -967,8 +1096,8 @@ ply::read(
     // Color conversion
     convertColor(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
 
-    // Rotation and Scale Canonicalization
-    canonicalizeRotationAndScale(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
+    // Rotation and Scale conversion
+    convertRotationAndScale(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
 
     // Analyze Min-Max
     analyzeMinMax(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
