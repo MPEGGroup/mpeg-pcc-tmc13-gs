@@ -180,11 +180,11 @@ operator<<(std::ostream& os, const AttributeDescription& desc)
     // Gaussian Splat Compression
   case KnownAttributeLabel::kScale: os << "scale"; break;
   case KnownAttributeLabel::kRotation: 
-		if (desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ)
+		if (desc.params.rotation_label == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 2)
       os << "rotations_XYZ";
     else if (
-      desc.params.rotation_component_label
-      == RotationComponentLabel::kRotation_W)
+      desc.params.rotation_label 
+      == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 0)
       os << "rotations_W"; 		
 		break;
   case KnownAttributeLabel::kSH_coefficients: 
@@ -348,7 +348,7 @@ template<typename Bs>
 void
 writeAttrParamRotationLabel(Bs& bs, const AttributeParameters& param)
 {
-  bs.writeUn(2, param.rotation_component_label);
+  bs.writeUn(1, param.rotation_label);
   bs.byteAlign();
 }
 
@@ -358,7 +358,7 @@ template<typename Bs>
 void
 parseAttrParamRotationLabel(Bs& bs, AttributeParameters* param)
 {
-  bs.readUn(2, &param->rotation_component_label);
+  bs.readUn(1, &param->rotation_label);
   bs.byteAlign();
 }
 
@@ -471,7 +471,7 @@ writeAttributeParameters(
     writeAttrParamSHCoefficientLabel(bs, params);
   }
 
-  if (params.rotationComponentParameterPresent) {
+  if (params.rotationParameterPresent) {
     int attr_param_len = 0;
     auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
     writeAttrParamRotationLabel(bsCounter, params);
@@ -518,7 +518,7 @@ parseAttributeParameter(
     break;
   case Type::kRotationLabel:
     parseAttrParamRotationLabel(bs, &params);
-    params.rotationComponentParameterPresent = true;
+    params.rotationParameterPresent = true;
     break;
 
   case Type::kItuT35:

@@ -107,7 +107,7 @@ permut_12(
 }
 
 static void
-canonicalize(double quat[4], float scale[3])
+canonicalize(double quat[4], float scale[3], bool isRealRotCoded)
 {
   // Apply the 6 scales permutation, and search for quaternion with maximum
   // absolute value component
@@ -178,9 +178,10 @@ canonicalize(double quat[4], float scale[3])
   }
 
   // Scale quaternion
-  double inorm = 1.0
-    / std::sqrt(quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2]
-                + quat[3] * quat[3]);
+  double deNorm = isRealRotCoded
+                ? quat[0] 
+                : std::sqrt(quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3]);
+  double inorm = 1.0 / deNorm;
   if (quat[0] < 0)
     inorm = -inorm;
   // Note: The real part of the quaternion is being ignored here, and will be
@@ -202,7 +203,8 @@ const AttributeDescription& getAttributeDescription(
         if (int(desc.params.sh_coefficient_label) == index) return desc;
       }
       else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-        if (int(desc.params.rotation_component_label) == index) return desc;
+        if (index == 0 && desc.attr_num_dimensions_minus1 == 2) return desc;
+        else if (index == 1 && desc.attr_num_dimensions_minus1 == 0) return desc;
       }
       else {
         return desc;
@@ -471,7 +473,17 @@ ply::write(
           }
         }
 
-        if (externalPrePost)
+        bool isRealRotCoded = false;
+        for (auto desc: attrDescs) {
+          if (desc.attributeLabel == KnownAttributeLabel::kRotation 
+            && desc.params.rotation_label == RotationLabel::kQuaternion
+            && desc.attr_num_dimensions_minus1 == 1) {
+              isRealRotCoded = true;
+              break;
+          }
+        }
+        
+        if (externalPrePost || isRealRotCoded)
         {
           auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kRotation, 1);
           auto offset = desc.params.attr_offset;
@@ -479,12 +491,12 @@ ply::write(
           auto attr_scale     = desc.params.attr_scale_minus1 + 1;
           rot[0] = double(int32_t(cloud.getRotationScalar(i))) * attr_scale / (1<<attr_frac_bits) + offset;
         }
-
-        // Estimate the real part of the quaternion
-        if (!externalPrePost)
-        rot[0] = std::sqrt(std::min(std::max(
-          1.0 - rot[1] * rot[1] - rot[2] * rot[2] - rot[3] * rot[3],
-          0.0), 1.0));
+        else // Estimate the real part of the quaternion
+        { 
+          rot[0] = std::sqrt(std::min(std::max(
+            1.0 - rot[1] * rot[1] - rot[2] * rot[2] - rot[3] * rot[3],
+            0.0), 1.0));
+        }
 
 				const auto rotation_w = rot[0];
 				float _buf = (float)rotation_w/GS_PROPERTY_SCALE;
@@ -691,7 +703,7 @@ std::vector<int> getAttrIndices(const AttributeDescription& desc, const std::vec
     } 
     else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
     {
-      if (int(desc.params.rotation_component_label) == 0) {
+      if (desc.attr_num_dimensions_minus1 == 2) {
         if (prop.channel > 0) target_idx = prop.channel - 1;
       } else {
         if (prop.channel == 0) target_idx = prop.channel;
@@ -794,6 +806,16 @@ ply::canonicalizeRotationAndScale (
   bufScale[1] = &inputAttrBuf[indicesScale[1] * pointCount];
   bufScale[2] = &inputAttrBuf[indicesScale[2] * pointCount];
 
+  bool isRealRotCoded = false;
+  for (auto desc: attrDescs) {
+    if (desc.attributeLabel == KnownAttributeLabel::kRotation 
+      && desc.params.rotation_label == RotationLabel::kQuaternion
+      && desc.attr_num_dimensions_minus1 == 1) {
+        isRealRotCoded = true;
+        break;
+    }
+  }
+
   double quat[4];
   float scale[3];
   for (int i = 0; i < pointCount; i++)
@@ -809,7 +831,7 @@ ply::canonicalizeRotationAndScale (
     scale[2] = bufScale[2][i];
 
     // processing
-    canonicalize(quat, scale);
+    canonicalize(quat, scale, isRealRotCoded);
 
     // output
     bufRot[0][i] = quat[0];

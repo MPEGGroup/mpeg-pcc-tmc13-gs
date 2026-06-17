@@ -264,11 +264,10 @@ enum class SHCoefficientLabel : uint32_t
 
 //============================================================================
 
-enum class RotationComponentLabel : uint32_t
+enum class RotationLabel : uint32_t
 {
-	kRotation_XYZ = 0,
-	kRotation_W = 1,
-	kEuler = 2,
+  kQuaternion = 0,
+  kEuler = 1,
 };
 
 //============================================================================
@@ -317,11 +316,11 @@ struct AttributeParameters {
   bool shCoefficientParameterPresent = false;
   SHCoefficientLabel sh_coefficient_label;
 
-  bool rotationComponentParameterPresent = false;
-  RotationComponentLabel rotation_component_label;
+  bool rotationParameterPresent = false;
+  RotationLabel rotation_label;
 
   int sh_coefficient_label_temp;
-  int rotation_component_label_temp;
+  int rotation_label_temp;
 
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;
@@ -330,7 +329,7 @@ struct AttributeParameters {
   {
     int count = opaqueParameters.size() + cicpParametersPresent
       + scalingParametersPresent + !attr_default_value.empty()
-	  + shCoefficientParameterPresent + rotationComponentParameterPresent;
+	  + shCoefficientParameterPresent + rotationParameterPresent;
     return count;
   }
 
@@ -342,7 +341,7 @@ struct AttributeParameters {
     input_attr_default_value.clear();
     opaqueParameters.clear();
 		shCoefficientParameterPresent = false;
-		rotationComponentParameterPresent = false;
+		rotationParameterPresent = false;
   }
 };
 

@@ -212,11 +212,10 @@ getAttribute(
     attribute = pointCloud.getScale(pointIndex);
   }
   else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-    if (desc.params.rotation_component_label ==
-        RotationComponentLabel::kRotation_XYZ) {
+    if (desc.params.rotation_label == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 2) {
       attribute = pointCloud.getRotationVec(pointIndex);
     }
-    else {
+    else if (desc.params.rotation_label == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 0) {
       attribute[0] = pointCloud.getRotationScalar(pointIndex);
     }
   }
@@ -250,10 +249,9 @@ setAttribute(
     pointCloud.setScale(pointIndex, attribute);
   }
   else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
-    if (desc.params.rotation_component_label ==
-        RotationComponentLabel::kRotation_XYZ)
+    if (desc.params.rotation_label == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 2)
       pointCloud.setRotationVec(pointIndex, attribute);
-    else
+    else if (desc.params.rotation_label == RotationLabel::kQuaternion && desc.attr_num_dimensions_minus1 == 0)
       pointCloud.setRotationScalar(pointIndex, attribute[0]);
   }
   else if (desc.attributeLabel ==

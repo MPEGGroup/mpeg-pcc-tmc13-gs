@@ -291,7 +291,7 @@ categories:
            r03: 22
            r04: 14
        - qpChromaOffset: 0
-       - rotationComponentLabel: 0
+       - rotationLabel: 0
        - attribute: rotationXYZ
 
     decflags:

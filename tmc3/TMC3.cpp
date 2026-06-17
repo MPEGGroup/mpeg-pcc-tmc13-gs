@@ -1064,11 +1064,11 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 	"  14 : AC (3, 2)\t"
 	"  15 : AC (3, 3)")
 
-  ("rotationComponentLabel",
-    params_attr.desc.params.rotation_component_label_temp, (int)RotationComponentLabel::kRotation_XYZ,
-    "Rotation component label\n"
-	"  0: xyz\n"
-	"  1: w")
+	("rotationLabel",
+		params_attr.desc.params.rotation_label_temp, (int)RotationLabel::kQuaternion,
+		"Rotation label\n"
+	"  0: Quaternion\n"
+	"  1: Euler")
 
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
@@ -1472,7 +1472,7 @@ sanitizeEncoderOpts(
     attrMeta.cicp_video_full_range_flag = true;
     attrMeta.cicpParametersPresent = false;
 		attrMeta.shCoefficientParameterPresent = false;
-		attrMeta.rotationComponentParameterPresent = false;
+		attrMeta.rotationParameterPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
@@ -1513,13 +1513,14 @@ sanitizeEncoderOpts(
 
 		if (!it.first.compare(0, 8, "rotation")) {
 			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
-			attrMeta.rotation_component_label = (RotationComponentLabel)attrMeta.rotation_component_label_temp;
-			if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_XYZ)
-				attr_sps.attr_num_dimensions_minus1 = 2;
-			else if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_W)
+			attrMeta.rotation_label = RotationLabel::kQuaternion;
+			if (!it.first.compare(0, 9, "rotationW")) {
 				attr_sps.attr_num_dimensions_minus1 = 0;
+			} else {
+				attr_sps.attr_num_dimensions_minus1 = 2;
+			}
 			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-			attrMeta.rotationComponentParameterPresent = true;
+			attrMeta.rotationParameterPresent = true;
 		}
 
 		if (!it.first.compare(0, 13, "SHCoefficient")) {
