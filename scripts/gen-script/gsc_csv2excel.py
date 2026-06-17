@@ -79,9 +79,8 @@ def csv_to_xlsm(ws, csv_path, flag_1f):
             if seq not in offset_dict:
                 print(f"[WARN] Sequence not found in sheet: {seq}")
                 continue
-
-            rate_id = int(csv_tokens[1].split("r")[-1]) - 1
-            rate_id = 0 if rate_id > 4 else rate_id  
+            
+            rate_id = 0 if csv_tokens[1] == "lossless" else int(csv_tokens[1].split("r")[-1]) - 1
             row = offset_dict[seq] + rate_id
             
             if DEBUG_MODE:

@@ -1107,7 +1107,7 @@ AttributeEncoder::encodeAttributeTransformRaht(
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
                                     aps.raht_prediction_threshold1};
 
-  FixedPoint::kFracBits = aps.raht_fixed_point_precision;
+  FixedPoint::kFracBits = aps.raht_fixed_point_precision_minus15 + 15;
   init_LUT();
   // Transform.
   regionAdaptiveHierarchicalTransform(
@@ -1283,7 +1283,7 @@ AttributeEncoder::encodeMultiAttributeRAHT(
     int rahtPredThreshold[2];
     bool raht_prediction_enabled_flag;
     // Transform.
-    FixedPoint::kFracBits = attr_aps[AttributeGroup[0]]->raht_fixed_point_precision;
+    FixedPoint::kFracBits = attr_aps[AttributeGroup[0]]->raht_fixed_point_precision_minus15 + 15;
 
     init_LUT();
 

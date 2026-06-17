@@ -44,7 +44,7 @@ WRITE() { echo "$2" >> "$1"; }
 MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 
 ## Experiment name
-JOBNAME="TM13-GS-v1"
+JOBNAME="TM13-GS-v2-rc2"
 if [[ -n "${JOBNAME_SUFFIX:-}" ]]; then
     JOBNAME="$JOBNAME-$JOBNAME_SUFFIX"
 fi
@@ -84,6 +84,11 @@ GSCTOOL="${PROJECT_DIR}/third_party/mpeg-gsc-tools"
 FINETUNE="${PROJECT_DIR}/scripts/preprocess_rdo.py"
 PYTHON="uv run"
 
+## External Pre-Post processing
+FLAG_EXT_PP=0  # 0 = No external pre/post, 1 = External pre-/post-processing
+PRE_SCRIPT="/path/to/gs_pre_process.py"
+POST_SCRIPT="/path/to/gs_post_process.py"
+
 # Initial checks
 ENSURE_DIR "$DATASET_PATH"
 ENSURE_DIR "$TMC13_DIR"
@@ -94,11 +99,21 @@ ENSURE_EXEC "$METRIC"
 ENSURE_FILE "$INPUT_SEQUENCES_CFG"
 
 if [[ $RUN_MODE -eq 0 ]]; then
-    MODEs=("lossless-geom-lossy-attrs")
-    TOOLs=("octree-hybrid")
+    MODE_TOOLs=(
+        "lossless-geom-lossy-attrs octree-hybrid"
+        "lossless-geom-lossless-attrs octree-predlift"
+    )
 else
-    MODEs=("lossless-geom-lossy-attrs" "lossless-geom-lossless-attrs")
-    TOOLs=("predgeom-hybrid" "octree-predlift" "octree-raht" "predgeom-predlift" "predgeom-raht")
+    MODE_TOOLs=(
+        "lossless-geom-lossy-attrs octree-hybrid"
+        "lossless-geom-lossy-attrs octree-predlift"
+        "lossless-geom-lossy-attrs octree-raht"
+        "lossless-geom-lossy-attrs predgeom-hybrid"
+        "lossless-geom-lossy-attrs predgeom-predlift"
+        "lossless-geom-lossy-attrs predgeom-raht"
+        "lossless-geom-lossless-attrs octree-predlift"
+        "lossless-geom-lossless-attrs predgeom-predlift"
+    )
 fi
 
 ###########################################################################################
@@ -115,7 +130,27 @@ ADD_SEQ() {
     
     PATHs["$seq"]="$DATASET_PATH/$seq/$PLYS_SUBFOLDER/"
     REND_RESs["$seq"]="$width $height"
+    
+    if [[ "$seq" == "library" ]]; then
+        # Check if the camerapos.ply file exists for the library sequence
+        if [ -f "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" ]; then
+            camera_count=$(grep -v "camera_position" "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" | wc -l)
+            if [ "$camera_count" -gt 100 ]; then
+                echo "[WARN] Please update the library dataset from 4,000 views to the 100-sampled COLMAP version on the content server. The viewpoint subsampling feature will be deprecated soon."
+                if [ "$SAMPLE_VIEWS_FOR_LIBRARY" -eq 0 ]; then
+                    echo "[ERROR] If you are using an older version of the library (with 4000 views), please set SAMPLE_VIEWS_FOR_LIBRARY=1."
+                    exit 1
+                fi
+            fi
+        fi
+    fi
 }
+
+if [ "$FLAG_1F" -eq 1 ]; then
+    PREFIX="1F"
+else
+    PREFIX="NF"
+fi
 
 # Load sequences from external file
 source "$INPUT_SEQUENCES_CFG"
@@ -178,89 +213,120 @@ RUN_SUMMARY="$OUT/jobs/step3_run_summary.sh"
 : > "$RUN_METRIC"
 : > "$RUN_SUMMARY"
 
-cnt=0
-for MODE in "${MODEs[@]}"; do
-    for TOOL in "${TOOLs[@]}"; do
+# Fine-tuning result directory (common for all rates since we only fine-tune once per sequence)
+FINETUNED_DATASET_PATH="${PROJECT_DIR}/data/CTC.finetuned"
+
+# Run fine-tuning 
+for SEQ in "${!PATHs[@]}"; do
+    # set the start frame, the number of frames, viewpoints sampling period
+    if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
+    # For only the old version of library sequence (SAMPLE_VIEWS_FOR_LIBRARY=1), we sample viewpoints with a period of 40. 
+    if [ $SAMPLE_VIEWS_FOR_LIBRARY == 1 ] && [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi
+    FINETUNE_RESULT_DIR="$FINETUNED_DATASET_PATH/$SEQ/"
+    MKDIRCK "$FINETUNE_RESULT_DIR"
+
+    PLY_PATH="${PATHs[$SEQ]}"
+    files=("$PLY_PATH"/*.camerapos.ply)
+    SelFILEs=("${files[@]:0:$NUM_FRAMES}")
+
+    for FILE in "${SelFILEs[@]}"; do
+        FRAME="$(basename "$FILE" .camerapos.ply)"
+        JOBFILE_FINETUNE="$BATCH_FINETUNE/$JOBNAME-$CURTIME-$SEQ-$FRAME.sh"
+        {
+            echo "#!/bin/bash"
+            echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+            echo "#SBATCH --gpus=1"
+            echo "#SBATCH --cpus-per-task=32"
+            echo "#SBATCH --ntasks-per-node=1"
+            echo "#SBATCH --nodes=1"
+            echo "#SBATCH --mem-per-cpu=8G"
+            echo "set -euo pipefail"
+            echo "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+            echo "${PYTHON} ${FINETUNE} \
+                    --input-ply-path \"$FILE\" \
+                    --output-dir \"$FINETUNE_RESULT_DIR/$FRAME.finetune\" \
+                    --output-ply-path \"$FINETUNE_RESULT_DIR/$FRAME.ply\" \
+                    --use-rdo \"${USE_RDO}\" \
+                    --dataset-dir \"${DATASET_PATH}/${SEQ}/colmap_data/${FRAME}\" \
+                    --dataset.subsample-every \"${VIEW_PERIOD}\" \
+                    --quantizer.position-bitdepth 18 \
+                    --trainer.neighbor-loss-weight 5e-10 --trainer.lr-scale 0.1 \
+                    ${FINETUNE_EXTRA_ARGS:-} \
+                    "
+            echo "touch $OUT/jobs/done/finetune/\${SLURM_JOB_ID:-UNDEFINED}"
+        } > "$JOBFILE_FINETUNE"
+        chmod +x "$JOBFILE_FINETUNE"
+        echo "$JOBFILE_FINETUNE" >> "$RUN_FINETUNE"
+    done
+done
+
+for MODE_TOOL in "${MODE_TOOLs[@]}"; do
+    read -r MODE TOOL <<< "$MODE_TOOL"
+
+    [[ ! -d "$CFG_PATH/$TOOL/$MODE" ]] && continue
+
+    csv_file="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+    echo "seq, rate, total_Byte, pos_Byte, sh0_Byte, sh1_Byte, sh2_Byte, sh3_Byte, rot_Byte, scale_Byte, opacity_Byte, RGB-PSNR, YUV-PSNR, YUV-SSIM, YUV-IVSSIM, GT-RGB-PSNR, min_RGB-PSNR, min_YUV-PSNR, min_YUV-SSIM, max_RGB-PSNR, max_YUV-PSNR, max_YUV-SSIM, total_encT, pos_encT, att_encT, total_decT, pos_decT, att_decT, enc_MaxRSS, dec_MaxRSS" > "$csv_file"
+
+    for SEQ in "${!PATHs[@]}"; do
+        PLY_PATH="${PATHs[$SEQ]}"
+        files=("$PLY_PATH"/*.camerapos.ply)
+        read -r REN_W REN_H <<< "${REND_RESs[$SEQ]}"
         
-        [[ ! -d "$CFG_PATH/$TOOL/$MODE" ]] && continue
+        # set the start frame, the number of frames, viewpoints sampling period
+        if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
+        # For only the old version of library sequence (SAMPLE_VIEWS_FOR_LIBRARY=1), we sample viewpoints with a period of 40. 
+        if [ $SAMPLE_VIEWS_FOR_LIBRARY == 1 ] && [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi
+        FINETUNE_RESULT_DIR="$FINETUNED_DATASET_PATH/$SEQ/"
 
-        if [ $FLAG_1F == 1 ]; then
-            csv_file="$OUT/metrics/1F_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+        SelFILEs=("${files[@]:0:$NUM_FRAMES}")
+        if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+            CFG_DIRs=("$CFG_PATH/$TOOL/$MODE/$SEQ")
         else
-            csv_file="$OUT/metrics/NF_GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.csv"
+            CFG_DIRs=($CFG_PATH/$TOOL/$MODE/$SEQ/*)
         fi
-        echo "seq, rate, total_Byte, pos_Byte, sh0_Byte, sh1_Byte, sh2_Byte, sh3_Byte, rot_Byte, scale_Byte, opacity_Byte, RGB-PSNR, YUV-PSNR, YUV-SSIM, YUV-IVSSIM, GT-RGB-PSNR, min_RGB-PSNR, min_YUV-PSNR, min_YUV-SSIM, max_RGB-PSNR, max_YUV-PSNR, max_YUV-SSIM, total_encT, pos_encT, att_encT, total_decT, pos_decT, att_decT, enc_MaxRSS, dec_MaxRSS" > "$csv_file"
-
-        for SEQ in "${!PATHs[@]}"; do
-            PLY_PATH="${PATHs[$SEQ]}"
-            files=("$PLY_PATH"/*.camerapos.ply)
-            read -r REN_W REN_H <<< "${REND_RESs[$SEQ]}"
-            
-            # set the start frame, the number of frames, viewpoints sampling period
-            if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
-            # For only the old version of library sequence (SAMPLE_VIEWS_FOR_LIBRARY=1), we sample viewpoints with a period of 40. 
-            if [ $SAMPLE_VIEWS_FOR_LIBRARY == 1 ] && [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi
-            # if [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi  
-
-            SelFILEs=("${files[@]:0:$NUM_FRAMES}")
+        for CFG in "${CFG_DIRs[@]}"; do
             if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
-                CFG_DIRs=("$CFG_PATH/$TOOL/$MODE/$SEQ")
+                RATE="lossless"   
+                RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ"
+                MKDIRCK "$RESULT_DIR"
             else
-                CFG_DIRs=($CFG_PATH/$TOOL/$MODE/$SEQ/*)
+                RATE="$(basename "$CFG")"
+                RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/$RATE"
+                MKDIRCK "$RESULT_DIR"
             fi
-            for CFG in "${CFG_DIRs[@]}"; do
-                if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
-                    RATE="r01"   # dummy rate name for CSV and Excel
-                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ"
-                    MKDIRCK "$RESULT_DIR"
-                else
-                    RATE="$(basename "$CFG")"
-                    RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/$RATE"
-                    MKDIRCK "$RESULT_DIR"
-                fi
-                # Fine-tuning result directory (common for all rates since we only fine-tune once per sequence)
-                FINETUNE_RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ/finetune"
-                MKDIRCK "$FINETUNE_RESULT_DIR"
 
-                echo "$TOOL/$MODE/$SEQ/$RATE"
+            echo "$TOOL/$MODE/$SEQ/$RATE"
 
-                for FILE in "${SelFILEs[@]}"; do
-                    ((cnt+=1))
-                    N=$(( (cnt - 1) % 4 + 1 ))
-                    NODE=$(printf "pcc-worker%02d" "$N")
-                    FRAME="$(basename "$FILE" .camerapos.ply)"
+            for FILE in "${SelFILEs[@]}"; do
+                FRAME="$(basename "$FILE" .camerapos.ply)"
+                JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
 
-                    # Run fine-tuning (Only r1).
-                    if [[ "$CFG" == "${CFG_DIRs[0]}" ]]; then
-                        JOBFILE_FINETUNE="$BATCH_FINETUNE/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$FRAME.sh"
-                        # COLMAP_DIR_SUFFIX=$( [ "$DATASET_TYPE" == "mst" ] && echo ".mst" || echo "" )
-                        {
-                            echo "#!/bin/bash"
-                            echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
-                            echo "#SBATCH --ntasks-per-node=1"
-                            echo "#SBATCH --nodes=1"
-                            echo "#SBATCH --mem-per-cpu=8G"
-                            echo "set -euo pipefail"
-                            echo "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
-                            echo "${PYTHON} ${FINETUNE} \
-                                    --input-ply-path \"$FILE\" \
-                                    --output-dir \"$FINETUNE_RESULT_DIR/$FRAME.finetune\" \
-                                    --output-ply-path \"$FINETUNE_RESULT_DIR/$FRAME.ply\" \
-                                    --use-rdo \"${USE_RDO}\" \
-                                    --dataset-dir \"${DATASET_PATH}/${SEQ}/colmap_data/${FRAME}\" \
-                                    --dataset.subsample-every \"${VIEW_PERIOD}\" \
-                                    --quantizer.position-bitdepth 18 \
-                                    --trainer.neighbor-loss-weight 5e-10 --trainer.lr-scale 0.1 \
-                                    ${FINETUNE_EXTRA_ARGS:-} \
-                                    "
-                            echo "touch $OUT/jobs/done/finetune/\${SLURM_JOB_ID:-UNDEFINED}"
-                        } > "$JOBFILE_FINETUNE"
-                        chmod +x "$JOBFILE_FINETUNE"
-                        echo "$JOBFILE_FINETUNE" >> "$RUN_FINETUNE"
+                {
+                    echo "#!/bin/bash"
+                    echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+                    echo "#SBATCH --ntasks-per-node=1"
+                    echo "#SBATCH --nodes=1"
+                    echo "#SBATCH --mem-per-cpu=8G"
+                    echo "set -euo pipefail"
+                    if [ $FLAG_EXT_PP == 1 ]; then
+                        echo "$PYTHON ${PRE_SCRIPT} -i \"$FINETUNE_RESULT_DIR/$FRAME.ply\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.pre.ply\""
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$RESULT_DIR/$FRAME.pre.ply\""
+                        echo "$PYTHON \"$POST_SCRIPT\" -i \"$RESULT_DIR/$FRAME.pre.ply.bin.decoded.ply\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\""
+                    else
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$FINETUNE_RESULT_DIR/$FRAME.ply\""
                     fi
+                    # Remove locally decoded ply to save disk space.
+                    # Assume $FRAME.ply.bin.ply and $FRAME.ply.bin.decoded.ply are identical.
+                    # echo "rm \"$RESULT_DIR/$FRAME.ply.bin.ply\""
+                    echo "touch $OUT/jobs/done/gpcc/\${SLURM_JOB_ID:-UNDEFINED}"
+                } > "$JOBFILE"
+                chmod +x "$JOBFILE"
+                echo "$JOBFILE" >> "$RUN_GPCC"
 
-                    JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
-
+                numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
+                for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
+                    JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
                     {
                         echo "#!/bin/bash"
                         echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
@@ -268,48 +334,53 @@ for MODE in "${MODEs[@]}"; do
                         echo "#SBATCH --nodes=1"
                         echo "#SBATCH --mem-per-cpu=8G"
                         echo "set -euo pipefail"
-                        # SRC_PLY="${FILE/.camerapos/}"
-                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$FINETUNE_RESULT_DIR/$FRAME.ply\""
-                        # Remove locally decoded ply to save disk space.
-                        # Assume $FRAME.ply.bin.ply and $FRAME.ply.bin.decoded.ply are identical.
-                        # echo "rm \"$RESULT_DIR/$FRAME.ply.bin.ply\""
-                        echo "touch $OUT/jobs/done/gpcc/\${SLURM_JOB_ID:-UNDEFINED}"
-                    } > "$JOBFILE"
-                    chmod +x "$JOBFILE"
-                    echo "$JOBFILE" >> "$RUN_GPCC"
-
-                    numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
-                    for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
-                        ((cnt+=1))
-                        N=$(( (cnt - 1) % 4 + 1 ))
-                        NODE=$(printf "pcc-worker%02d" "$N")
-                        JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
-                        {
-                            echo "#!/bin/bash"
-                            echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
-                            echo "#SBATCH --ntasks-per-node=1"
-                            echo "#SBATCH --nodes=1"
-                            echo "#SBATCH --mem-per-cpu=8G"
-                            echo "set -euo pipefail"
-                            echo "OMP_NUM_THREADS=1 $METRIC -v 1 --threads=1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
-                            echo "touch $OUT/jobs/done/metric/\${SLURM_JOB_ID:-UNDEFINED}"
-                        } > "$JOBFILE_MET"
-                        chmod +x "$JOBFILE_MET"
-                        echo "$JOBFILE_MET" >> "$RUN_METRIC"
-                    done
+                        echo "$METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeSsim=0 --computeOm=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
+                        echo "touch $OUT/jobs/done/metric/\${SLURM_JOB_ID:-UNDEFINED}"
+                    } > "$JOBFILE_MET"
+                    chmod +x "$JOBFILE_MET"
+                    echo "$JOBFILE_MET" >> "$RUN_METRIC"
                 done
-                echo "$PYTHON $GEN_SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
-            
             done
+            echo "$PYTHON $GEN_SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
+        
         done
-
-        if [ $FLAG_1F == 1 ]; then
-        echo "$PYTHON $GEN_SCRIPT_DIR/gsc_csv2excel.py -f 1 -t \"$GEN_SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$GEN_SCRIPT_DIR/anchor_results/1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" -p \"$csv_file\" -x \"$OUT/metrics/1F_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
-        else
-        echo "$PYTHON $GEN_SCRIPT_DIR/gsc_csv2excel.py -f 0 -t \"$GEN_SCRIPT_DIR/templates/WG07N1414 template.xlsm\" -a \"$GEN_SCRIPT_DIR/anchor_results/NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv\" -p \"$csv_file\" -x \"$OUT/metrics/NF_anchor__vs__GPCC-for-GSC-$TOOL-$MODE-$JOBNAME.xlsm\"" >> "$RUN_SUMMARY"
-        fi
     done
 done
+if [[ $RUN_MODE -eq 0 ]]; then
+    read -r MODE TOOL <<< "${MODE_TOOLs[0]}"
+    csv_C1="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+
+    read -r MODE TOOL <<< "${MODE_TOOLs[1]}"
+    csv_CW="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+
+    echo "$PYTHON $GEN_SCRIPT_DIR/gsc_csv2excel.py -f $FLAG_1F \
+        -t \"$GEN_SCRIPT_DIR/templates/WG04N0826_template.xlsm\" \
+        -x \"$OUT/metrics/${PREFIX}_CTC_$JOBNAME.xlsm\" \
+        --aC1 \"$GEN_SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" \
+        --pC1 \"$csv_C1\" \
+        --aCW \"$GEN_SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs.csv\" \
+        --pCW \"$csv_CW\"" >> "$RUN_SUMMARY"
+
+else
+    for MODE_TOOL in "${MODE_TOOLs[@]}"; do
+        read -r MODE TOOL <<< "${MODE_TOOL}"
+        csv_file="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
+        
+        CMD_BASE="$PYTHON $GEN_SCRIPT_DIR/gsc_csv2excel.py -f $FLAG_1F \
+            -t \"$GEN_SCRIPT_DIR/templates/WG04N0826_template.xlsm\" \
+            -x \"$OUT/metrics/${PREFIX}_CTC_$JOBNAME.xlsm\""
+
+        if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
+            echo "$CMD_BASE \
+                --aCW \"$GEN_SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs.csv\" \
+                --pCW \"$csv_file\"" >> "$RUN_SUMMARY"
+        else
+            echo "$CMD_BASE \
+                --aC1 \"$GEN_SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" \
+                --pC1 \"$csv_file\"" >> "$RUN_SUMMARY"
+        fi
+    done
+fi
 
 # Function to run jobs in parallel with progress display
 run_with_progress() {

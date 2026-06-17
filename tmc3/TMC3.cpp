@@ -321,6 +321,30 @@ operator>>(std::istream& in, ColourMatrix& val)
 
 namespace pcc {
 static std::istream&
+operator>>(std::istream& in, SHCoefficientLabel& val)
+{
+  return readUInt(in, val);
+}
+}  // namespace pcc
+
+namespace pcc {
+static std::istream&
+operator>>(std::istream& in, RotationLabel& val)
+{
+  return readUInt(in, val);
+}
+}  // namespace pcc
+
+namespace pcc {
+static std::istream&
+operator>>(std::istream& in, EulerAngleUnitType& val)
+{
+  return readUInt(in, val);
+}
+}  // namespace pcc
+
+namespace pcc {
+static std::istream&
 operator>>(std::istream& in, AxisOrder& val)
 {
   return readUInt(in, val);
@@ -409,6 +433,58 @@ operator<<(std::ostream& out, const ColourMatrix& val)
   case ColourMatrix::kBt2020Cl: out << "10 (Bt2020Cl)"; break;
   case ColourMatrix::kSmpte2085: out << "11 (Smpte2085)"; break;
   default: out << "Unknown"; break;
+  }
+  return out;
+}
+}  // namespace pcc
+
+
+namespace pcc {
+static std::ostream&
+operator<<(std::ostream& out, const SHCoefficientLabel& val)
+{
+  switch (val) {
+  case SHCoefficientLabel::kBand0_Order0:  out << "0 (DC: 0, 0)"; break;
+  case SHCoefficientLabel::kBand1_OrderM1: out << "1 (AC: 1,-1)"; break;
+  case SHCoefficientLabel::kBand1_Order0:  out << "2 (AC: 1, 0)"; break;
+  case SHCoefficientLabel::kBand1_Order1:  out << "3 (AC: 1, 1)"; break;
+  case SHCoefficientLabel::kBand2_OrderM2: out << "4 (AC: 2,-2)"; break;
+  case SHCoefficientLabel::kBand2_OrderM1: out << "5 (AC: 2,-1)"; break;
+  case SHCoefficientLabel::kBand2_Order0:  out << "6 (AC: 2, 0)"; break;
+  case SHCoefficientLabel::kBand2_Order1:  out << "7 (AC: 2, 1)"; break;
+  case SHCoefficientLabel::kBand2_Order2:  out << "8 (AC: 2, 2)"; break;
+  case SHCoefficientLabel::kBand3_OrderM3: out << "9 (AC: 3,-3)"; break;
+  case SHCoefficientLabel::kBand3_OrderM2: out << "10 (AC: 3,-2)"; break;
+  case SHCoefficientLabel::kBand3_OrderM1: out << "11 (AC: 3,-1)"; break;
+  case SHCoefficientLabel::kBand3_Order0:  out << "12 (AC: 3, 0)"; break;
+  case SHCoefficientLabel::kBand3_Order1:  out << "13 (AC: 3, 1)"; break;
+  case SHCoefficientLabel::kBand3_Order2:  out << "14 (AC: 3, 2)"; break;
+  case SHCoefficientLabel::kBand3_Order3:  out << "15 (AC: 3, 3)"; break;
+  }
+  return out;
+}
+}  // namespace pcc
+
+namespace pcc {
+static std::ostream&
+operator<<(std::ostream& out, const RotationLabel& val)
+{
+  switch (val) {
+  case RotationLabel::kQuaternion: out << "0 (Quaternion)"; break;
+  case RotationLabel::kEuler: out << "1 (Euler)"; break;
+  }
+  return out;
+}
+}  // namespace pcc
+
+
+namespace pcc {
+static std::ostream&
+operator<<(std::ostream& out, const EulerAngleUnitType& val)
+{
+  switch (val) {
+  case EulerAngleUnitType::kRadian: out << "0 (Radian)"; break;
+  case EulerAngleUnitType::kDegree: out << "1 (Degree)"; break;
   }
   return out;
 }
@@ -1045,30 +1121,36 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 		"number of SH coefficient bands.")
 
   ("shCoefficientLabel",
-    params_attr.desc.params.sh_coefficient_label_temp, (int)SHCoefficientLabel::kBand0_Order0,
+    params_attr.desc.params.sh_coefficient_label, SHCoefficientLabel::kBand0_Order0,
     "SH coefficients label \n"
-	"  0 : DC (band 0, order 0)\n"
-	"  1 : AC (1, -1)\t"
-	"  2 : AC (1, 0)\t"
-	"  3 : AC (1, 1)\n"
-	"  4 : AC (2, -2)\t"
-	"  5 : AC (2, -1)\t"
-	"  6 : AC (2, 0)\t"
-	"  7 : AC (2, 1)\t"
-	"  8 : AC (2, 2)\n"
-	"  9 : AC (3, -3)\t"
-	"  10 : AC (3, -2)\t"
-	"  11 : AC (3, -1)\t"
-	"  12 : AC (3, 0)\t"
-	"  13 : AC (3, 1)\t"
-	"  14 : AC (3, 2)\t"
-	"  15 : AC (3, 3)")
+    " 0 : DC (band 0, order 0)\n"
+    " 1 : AC (1,-1)"
+    "  2 : AC (1, 0)"
+    "  3 : AC (1, 1)\n"
+    " 4 : AC (2,-2)"
+    "  5 : AC (2,-1)"
+    "  6 : AC (2, 0)"
+    "  7 : AC (2, 1)"
+    "  8 : AC (2, 2)\n"
+    " 9 : AC (3,-3)"
+    " 10 : AC (3,-2)"
+    " 11 : AC (3,-1)"
+    " 12 : AC (3, 0)"
+    " 13 : AC (3, 1)"
+    " 14 : AC (3, 2)"
+    " 15 : AC (3, 3)")
 
-  ("rotationComponentLabel",
-    params_attr.desc.params.rotation_component_label_temp, (int)RotationComponentLabel::kRotation_XYZ,
-    "Rotation component label\n"
-	"  0: xyz\n"
-	"  1: w")
+	("rotationLabel",
+		params_attr.desc.params.rotation_label, RotationLabel::kQuaternion,
+		"Rotation label\n"
+		"  0: Quaternion\n"
+		"  1: Euler")
+
+	("eulerAngleUnitType",
+		params_attr.desc.params.euler_angle_unit_type, EulerAngleUnitType::kRadian,
+		"Rotation angle \n"
+		"  0: Radian \n"
+		"  1: Degree")
 
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
@@ -1077,8 +1159,8 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  1: Hierarchical neighbourhood prediction\n"
     "  2: Hierarchical neighbourhood prediction as lifting transform")
 
-  ("rahtPrecision",
-    params_attr.aps.raht_fixed_point_precision, 20,
+  ("rahtPrecisionMinus15",
+    params_attr.aps.raht_fixed_point_precision_minus15, 5,
     "Number of fractional bits in fixed point representation")
 
   ("rahtPredictionEnabled",
@@ -1472,7 +1554,7 @@ sanitizeEncoderOpts(
     attrMeta.cicp_video_full_range_flag = true;
     attrMeta.cicpParametersPresent = false;
 		attrMeta.shCoefficientParameterPresent = false;
-		attrMeta.rotationComponentParameterPresent = false;
+		attrMeta.rotationParameterPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
@@ -1513,19 +1595,22 @@ sanitizeEncoderOpts(
 
 		if (!it.first.compare(0, 8, "rotation")) {
 			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
-			attrMeta.rotation_component_label = (RotationComponentLabel)attrMeta.rotation_component_label_temp;
-			if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_XYZ)
-				attr_sps.attr_num_dimensions_minus1 = 2;
-			else if (attrMeta.rotation_component_label == RotationComponentLabel::kRotation_W)
-				attr_sps.attr_num_dimensions_minus1 = 0;
+      attr_sps.attr_num_dimensions_minus1 = 2;
+
+      if (!it.first.compare(0, 9, "rotationW")) {
+        attr_sps.attr_num_dimensions_minus1 = 0;
+      }
+      
+      if (attrMeta.rotation_label == RotationLabel::kEuler && attr_sps.attr_num_dimensions_minus1 == 0) {
+        err.error() << "when rotation_label == kEuler, 'rotationW' must not be configured.\n";
+      }
+
 			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-			attrMeta.rotationComponentParameterPresent = true;
+			attrMeta.rotationParameterPresent = true;
 		}
 
 		if (!it.first.compare(0, 13, "SHCoefficient")) {
 			attr_sps.attr_num_dimensions_minus1 = 2;
-			attrMeta.sh_coefficient_label =
-				(SHCoefficientLabel)attrMeta.sh_coefficient_label_temp;
 			attr_sps.attributeLabel = KnownAttributeLabel::kSH_coefficients;
 			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
 				attrMeta.sh_dc_coefficient_flag = true;

@@ -173,7 +173,7 @@ namespace ply {
     std::vector<AttributeDescription>& attrDescs, std::vector<PropertyInfo>& properties);
 
   bool
-  canonicalizeRotationAndScale (
+  convertRotationAndScale (
     int pointCount,
     std::vector<double>& inputAttrBuf,
     std::vector<AttributeDescription>& attrDescs, 

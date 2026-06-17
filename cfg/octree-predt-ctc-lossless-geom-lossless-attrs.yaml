@@ -224,7 +224,7 @@ categories:
        - "# Rotation ---------"
        - qp: 4
        - qpChromaOffset: 0
-       - rotationComponentLabel: 0
+       - rotationLabel: 0
        - attribute: rotationXYZ
 
     decflags:

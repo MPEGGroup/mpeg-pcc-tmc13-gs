@@ -180,11 +180,9 @@ operator<<(std::ostream& os, const AttributeDescription& desc)
     // Gaussian Splat Compression
   case KnownAttributeLabel::kScale: os << "scale"; break;
   case KnownAttributeLabel::kRotation: 
-		if (desc.params.rotation_component_label == RotationComponentLabel::kRotation_XYZ)
+		if (desc.attr_num_dimensions_minus1 == 2)
       os << "rotations_XYZ";
-    else if (
-      desc.params.rotation_component_label
-      == RotationComponentLabel::kRotation_W)
+    else if (desc.attr_num_dimensions_minus1 == 0)
       os << "rotations_W"; 		
 		break;
   case KnownAttributeLabel::kSH_coefficients: 
@@ -348,7 +346,10 @@ template<typename Bs>
 void
 writeAttrParamRotationLabel(Bs& bs, const AttributeParameters& param)
 {
-  bs.writeUn(2, param.rotation_component_label);
+  bs.write(bool(param.rotation_label));
+  if (param.rotation_label == RotationLabel::kEuler) {
+    bs.write(bool(param.euler_angle_unit_type));
+  }
   bs.byteAlign();
 }
 
@@ -358,7 +359,10 @@ template<typename Bs>
 void
 parseAttrParamRotationLabel(Bs& bs, AttributeParameters* param)
 {
-  bs.readUn(2, &param->rotation_component_label);
+  bs.read(&param->rotation_label);
+  if (param->rotation_label == RotationLabel::kEuler) {
+    bs.read(&param->euler_angle_unit_type);
+  }
   bs.byteAlign();
 }
 
@@ -471,7 +475,7 @@ writeAttributeParameters(
     writeAttrParamSHCoefficientLabel(bs, params);
   }
 
-  if (params.rotationComponentParameterPresent) {
+  if (params.rotationParameterPresent) {
     int attr_param_len = 0;
     auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
     writeAttrParamRotationLabel(bsCounter, params);
@@ -518,7 +522,7 @@ parseAttributeParameter(
     break;
   case Type::kRotationLabel:
     parseAttrParamRotationLabel(bs, &params);
-    params.rotationComponentParameterPresent = true;
+    params.rotationParameterPresent = true;
     break;
 
   case Type::kItuT35:
@@ -1108,7 +1112,7 @@ write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
     bs.write(aps_gs_extension_present_flag);    
     bs.writeUn(7, aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
-      bs.writeUe(aps.raht_fixed_point_precision);
+      bs.writeUe(aps.raht_fixed_point_precision_minus15);
     }
   }
   if (aps_gs_extension_present_flag) {
@@ -1228,7 +1232,7 @@ parseAps(const PayloadBuffer& buf)
     aps_gs_extension_present_flag = bs.read();    
     bs.readUn(7, &aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
-      bs.readUe(&aps.raht_fixed_point_precision);
+      bs.readUe(&aps.raht_fixed_point_precision_minus15);
     }
   }
   if (aps_gs_extension_present_flag) {

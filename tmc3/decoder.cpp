@@ -427,12 +427,10 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
       auto& attrs = _currentPointCloud.getScale();
       std::fill(attrs.begin(), attrs.end(), defAttrVal);
     } else if (desc.attributeLabel == KnownAttributeLabel::kRotation)    {
-      if (desc.params.rotation_component_label
-        == RotationComponentLabel::kRotation_XYZ) {
+      if (desc.attr_num_dimensions_minus1 == 2) {
         auto& attrs = _currentPointCloud.getRotationVec();
         std::fill(attrs.begin(), attrs.end(), defAttrVal);
-      } else if (desc.params.rotation_component_label
-        == RotationComponentLabel::kRotation_W) {
+      } else if (desc.attr_num_dimensions_minus1 == 0) {
         auto& attrs = _currentPointCloud.getRotationScalar();
         std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
       }
@@ -686,17 +684,13 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
   }
 
   if (label == KnownAttributeLabel::kRotation) {
-    if (
-      attrDesc.params.rotation_component_label
-      == RotationComponentLabel::kRotation_XYZ) {
+    if (attrDesc.attr_num_dimensions_minus1 == 2) {
       Vec3<attr_t> defAttrVal;
       for (int k = 0; k < 3; k++)
         defAttrVal[k] = cadu.constattr_default_value[k];
       for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
         _currentPointCloud.setRotationVec(i, defAttrVal);
-    } else if (
-      attrDesc.params.rotation_component_label
-      == RotationComponentLabel::kRotation_W) {
+    } else if (attrDesc.attr_num_dimensions_minus1 == 0) {
       attr_t defAttrVal = cadu.constattr_default_value[0];
       for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
         _currentPointCloud.setRotationScalar(i, defAttrVal);
