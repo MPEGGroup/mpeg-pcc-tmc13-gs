@@ -1112,7 +1112,7 @@ write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
     bs.write(aps_gs_extension_present_flag);    
     bs.writeUn(7, aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
-      bs.writeUe(aps.raht_fixed_point_precision);
+      bs.writeUe(aps.raht_fixed_point_precision_minus15);
     }
   }
   if (aps_gs_extension_present_flag) {
@@ -1232,7 +1232,7 @@ parseAps(const PayloadBuffer& buf)
     aps_gs_extension_present_flag = bs.read();    
     bs.readUn(7, &aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
-      bs.readUe(&aps.raht_fixed_point_precision);
+      bs.readUe(&aps.raht_fixed_point_precision_minus15);
     }
   }
   if (aps_gs_extension_present_flag) {

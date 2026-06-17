@@ -1159,8 +1159,8 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  1: Hierarchical neighbourhood prediction\n"
     "  2: Hierarchical neighbourhood prediction as lifting transform")
 
-  ("rahtPrecision",
-    params_attr.aps.raht_fixed_point_precision, 20,
+  ("rahtPrecisionMinus15",
+    params_attr.aps.raht_fixed_point_precision_minus15, 5,
     "Number of fractional bits in fixed point representation")
 
   ("rahtPredictionEnabled",
