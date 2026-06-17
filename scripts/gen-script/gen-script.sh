@@ -53,7 +53,12 @@ CFG_DIR=cfg
 AUTO_RUN=2              # 0:off, 1:run_local, 2:run_slurm 
 FLAG_1F=1               # 0:NF, 1:1F
 RUN_MODE=0              # 0 = anchor(octree-hybrid), 1 = alternative
-INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
+
+# Whether to sample viewpoints for library sequence.
+# 0:off, 1:on (set VIEW_PERIOD=40 for library sequence)
+# If you use the latest version of the library sequence, set to 0 because the cameras are already sampled with a period of 40.
+# If you use the older version of the library sequence, set to 1 to sample viewpoints with a period of 40.
+SAMPLE_VIEWS_FOR_LIBRARY=0
 
 ## Dataset path
 DATASET_PATH=/path/to/CTC/dataset
@@ -65,6 +70,7 @@ BASE_OUTPUT="/path/to/output"
 ## Binary and Configuration Paths
 TMC13_DIR="/path/to/tmc13-GS"
 TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3"
+INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
 CFG_PATH="$TMC13_DIR/$CFG_DIR" 
 METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
 GSCTOOL="/path/to/mpeg-gsc-tools/"
@@ -115,6 +121,20 @@ ADD_SEQ() {
     
     PATHs["$seq"]="$DATASET_PATH/$seq/$PLYS_SUBFOLDER/"
     REND_RESs["$seq"]="$width $height"
+
+    if [[ "$seq" == "library" ]]; then
+        # Check if the camerapos.ply file exists for the library sequence
+        if [ -f "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" ]; then
+            camera_count=$(grep -v "camera_position" "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" | wc -l)
+            if [ "$camera_count" -gt 100 ]; then
+                echo "[WARN] Please update the library dataset from 4,000 views to the 100-sampled COLMAP version on the content server. The viewpoint subsampling feature will be deprecated soon."
+                if [ "$SAMPLE_VIEWS_FOR_LIBRARY" -eq 0 ]; then
+                    echo "[ERROR] If you are using an older version of the library (with 4000 views), please set SAMPLE_VIEWS_FOR_LIBRARY=1."
+                    exit 1
+                fi
+            fi
+        fi
+    fi
 }
 
 if [ "$FLAG_1F" -eq 1 ]; then
@@ -214,7 +234,8 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
         
         # set the start frame, the number of frames, viewpoints sampling period
         if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
-        if [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi  
+        # For only the old version of library sequence (SAMPLE_VIEWS_FOR_LIBRARY=1), we sample viewpoints with a period of 40. 
+        if [ $SAMPLE_VIEWS_FOR_LIBRARY == 1 ] && [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi
 
         SelFILEs=("${files[@]:0:$NUM_FRAMES}")
         if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
@@ -224,7 +245,7 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
         fi
         for CFG in "${CFG_DIRs[@]}"; do
             if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
-                RATE="r06"   # dummy rate name for CSV and Excel
+                RATE="lossless"   
                 RESULT_DIR="$OUT/results/$TOOL/$MODE/$SEQ"
                 MKDIRCK "$RESULT_DIR"
             else
@@ -245,6 +266,7 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                     echo "#SBATCH --ntasks-per-node=1"
                     echo "#SBATCH --nodes=1"
                     echo "#SBATCH --mem-per-cpu=8G"
+                    echo "set -euo pipefail"
                     SRC_PLY="${FILE/.camerapos/}"
                     if [ $FLAG_EXT_PP == 1 ]; then
                         echo "$PYTHON ${PRE_SCRIPT} -i \"$SRC_PLY\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.pre.ply\""
@@ -253,7 +275,7 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                     else
                         echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\""
                     fi
-                    echo "touch $OUT/jobs/done/gpcc/\$SLURM_JOB_ID"
+                    echo "touch $OUT/jobs/done/gpcc/\${SLURM_JOB_ID:-UNDEFINED}"
                 } > "$JOBFILE"
                 chmod +x "$JOBFILE"
                 echo "$JOBFILE" >> "$RUN_GPCC"
@@ -267,8 +289,9 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                         echo "#SBATCH --ntasks-per-node=1"
                         echo "#SBATCH --nodes=1"
                         echo "#SBATCH --mem-per-cpu=8G"
-                        echo "$METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeSsim=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
-                        echo "touch $OUT/jobs/done/metric/\$SLURM_JOB_ID"
+                        echo "set -euo pipefail"
+                        echo "$METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeSsim=0 --computeOm=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
+                        echo "touch $OUT/jobs/done/metric/\${SLURM_JOB_ID:-UNDEFINED}"
                     } > "$JOBFILE_MET"
                     chmod +x "$JOBFILE_MET"
                     echo "$JOBFILE_MET" >> "$RUN_METRIC"
@@ -319,6 +342,7 @@ fi
 # Function to run jobs in parallel with progress display
 run_with_progress() {
     local jobfile="$1"
+    local nproc="${2:-$(nproc)}"
     local total
     total=$(wc -l < "$jobfile")
     local count=0
@@ -326,7 +350,7 @@ run_with_progress() {
     echo "Total jobs: $total"
 
     # Run jobs in parallel, emit "DONE" after each job finishes
-    cat "$jobfile" | xargs -P "$(nproc)" -I {} bash -c '{} >/dev/null 2>&1; echo DONE' |
+    cat "$jobfile" | xargs -P "${nproc}" -I {} bash -c '{} >/dev/null 2>&1; echo DONE' |
     while read -r signal; do
         count=$((count+1))
         percent=$((count*100/total))
