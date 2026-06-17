@@ -60,19 +60,19 @@ run () {
 #         --pruner.prune-ratio 0.0
 # )
 
-# Proposal: Pruning with or without fine-tuning.
 prune_ratio=0.3
-for prune_mode in "gscm" "gsplat" ; do
-    # Pruning + fine-tuning.
-    (
-        run "finetune-with-prune_pr-${prune_ratio}_pm-${prune_mode}" True \
-            --trainer.max-steps 10_000 \
-            --pruner.prune-ratio "$prune_ratio" --pruner.mode "$prune_mode"
-    )
-    # Pruning only (no fine-tuning).
-    (
-        run "prune-only_pr-${prune_ratio}_pm-${prune_mode}" True \
-            --trainer.max-steps 0 \
-            --pruner.prune-ratio "$prune_ratio" --pruner.mode "$prune_mode"
-    )
-done
+prune_mode="gscm"  # "gscm" "gsplat"
+
+# # Pruning only (no fine-tuning).
+# (
+#     run "prune-only_pr-${prune_ratio}_pm-${prune_mode}" True \
+#         --trainer.max-steps 0 \
+#         --pruner.prune-ratio "$prune_ratio" --pruner.mode "$prune_mode"
+# )
+
+# Pruning + fine-tuning.
+(
+    run "finetune-with-prune_pr-${prune_ratio}_pm-${prune_mode}" True \
+        --trainer.max-steps 10_000 \
+        --pruner.prune-ratio "$prune_ratio" --pruner.mode "$prune_mode"
+)
