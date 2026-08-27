@@ -11,12 +11,9 @@ ADD_SEQ cinema_semitracked      1920 1080
 ADD_SEQ breakfast_tracked       1920 1080
 ADD_SEQ breakfast_semitracked   1920 1080
 ADD_SEQ breakfast_untracked     1920 1080
-if [ "${FLAG_1F:-0}" -eq 1 ]; then
-    # 1F sequences
-    ADD_SEQ trio                1920 1080
-    ADD_SEQ makeup              1920 1080
-    ADD_SEQ musical             1920 1080
-fi
+ADD_SEQ trio                1920 1080
+ADD_SEQ makeup              1920 1080
+ADD_SEQ musical             1920 1080
 
 # Object centric
 ADD_SEQ manwithfruit_tracked    3840 2160
@@ -33,4 +30,5 @@ if [ "${FLAG_1F:-0}" -eq 1 ]; then
     ADD_SEQ library             3793 2131
     ADD_SEQ flowerdance         2456 2054
     ADD_SEQ gymnast             2456 2054
+    ADD_SEQ corsair             2000 1294
 fi

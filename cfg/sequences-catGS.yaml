@@ -88,3 +88,7 @@ sequences:
     group: catGS
     has_colour: 0
     has_refl: 0
+  corsair:
+    group: catGS
+    has_colour: 0
+    has_refl: 0
