@@ -844,8 +844,11 @@ struct AttributeParameterSet {
   bool raw_attr_variable_len_flag;
 
   bool aps_extension_flag;
-
+  
   bool raht_attr_offset_enabled;
+
+  // Whether to use Morton Code Scaling feature
+  bool raht_adaptive_block_size_enabled = false;
 };
 
 //============================================================================
@@ -924,6 +927,8 @@ struct AttributeBrickHeader {
   int32_t attr_dist2_delta;
 
   std::vector<int> raht_attr_offset;
+  
+  int32_t raht_block_size_log2;
 };
 
 //============================================================================

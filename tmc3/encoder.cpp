@@ -735,6 +735,15 @@ PCCTMC3Encoder3::compressPartition(
   if (params->adjustQPLayerOffsetsEnabled) 
     adjustQPLayerOffsets(pointCloud, params->refImageWidth, params->refImageHeight, qpLayers);
 
+  int raht_block_size_log2 = 0; 
+  for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
+    const auto& attr_aps = *_aps[attrIdx];
+    if (attr_aps.raht_adaptive_block_size_enabled) {
+      raht_block_size_log2 = estimateDist2(pointCloud, 100, 128, 0.85f);
+      break;
+    }
+  }
+
   // for each attribute
   for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
@@ -821,6 +830,11 @@ PCCTMC3Encoder3::compressPartition(
       auto dist2 =
         estimateDist2(pointCloud, 100, 128, attr_enc.dist2PercentileEstimate);
       abh.attr_dist2_delta = dist2 - attr_aps.dist2;
+    }
+    
+    abh.raht_block_size_log2 = 0; 
+    if (attr_aps.raht_adaptive_block_size_enabled) {
+      abh.raht_block_size_log2 = raht_block_size_log2;
     }
 
     if (params->maxAttributeNumberPerGroup > 1 && bufferRahtCoefficients.empty())

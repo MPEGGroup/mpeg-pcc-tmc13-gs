@@ -1271,6 +1271,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.aps.scalable_lifting_enabled_flag, false,
     "Enable scalable attritube coding")
 
+  ("raht_adaptive_block_size_enabled",
+    params_attr.aps.raht_adaptive_block_size_enabled, false,
+    "Enable adaptive block size for RAHT")
+
   ("max_neigh_range",
     // NB: this is adjusted by minus 1 after the arguments are parsed
     params_attr.aps.max_neigh_range_minus1, 5,
@@ -1706,6 +1710,7 @@ sanitizeEncoderOpts(
       attr_aps.adaptive_prediction_threshold = 0;
     } else {
       attr_aps.raht_attr_offset_enabled = false;
+      attr_aps.raht_adaptive_block_size_enabled = false;
     }
 
     if (!params.encoder.gps.geom_angular_mode_enabled_flag) {

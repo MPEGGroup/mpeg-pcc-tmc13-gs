@@ -1111,6 +1111,7 @@ write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
     bs.writeUn(7, aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       bs.writeUe(aps.raht_fixed_point_precision_minus15);
+      bs.write(aps.raht_adaptive_block_size_enabled);
       bs.write(aps.raht_attr_offset_enabled);
     }
   }
@@ -1233,6 +1234,7 @@ parseAps(const PayloadBuffer& buf)
     bs.readUn(7, &aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       bs.readUe(&aps.raht_fixed_point_precision_minus15);
+      bs.read(&aps.raht_adaptive_block_size_enabled);
       bs.read(&aps.raht_attr_offset_enabled);
     }
   }
@@ -1547,6 +1549,7 @@ write(
   if (aps.aps_slice_dist2_deltas_present_flag)
     bs.writeSe(abh.attr_dist2_delta);
 
+
   assert(abh.attr_sps_attr_idx < sps.attributeSets.size());
   if (abh.lcpPresent(sps.attributeSets[abh.attr_sps_attr_idx], aps)) {
     assert(abh.attrLcpCoeffs.size() == aps.maxNumDetailLevels());
@@ -1616,8 +1619,10 @@ write(
       bs.writeSe(region.attr_region_qp_offset[1]);
   }
 
-  if (aps.raht_attr_offset_enabled)
-  {
+  if (aps.raht_adaptive_block_size_enabled)
+    bs.writeUe(abh.raht_block_size_log2);
+
+  if (aps.raht_attr_offset_enabled) {
     auto& attr_desc = sps.attributeSets[abh.attr_sps_attr_idx];
     int bitdepth = attr_desc.bitdepth;
     int numCh = attr_desc.attr_num_dimensions_minus1;
@@ -1673,6 +1678,8 @@ parseAbh(
   bs.readUe(&abh.attr_geom_slice_id);
 
   abh.attr_dist2_delta = 0;
+  abh.raht_block_size_log2 = 0;
+
   if (aps.aps_slice_dist2_deltas_present_flag)
     bs.readSe(&abh.attr_dist2_delta);
 
@@ -1753,8 +1760,10 @@ parseAbh(
       bs.readSe(&region.attr_region_qp_offset[1]);
   }
 
-  if (aps.raht_attr_offset_enabled)
-  {
+  if (aps.raht_adaptive_block_size_enabled)
+    bs.readUe(&abh.raht_block_size_log2);
+
+  if (aps.raht_attr_offset_enabled) {
     auto& attr_desc = sps.attributeSets[abh.attr_sps_attr_idx];
     int bitdepth = attr_desc.bitdepth;
     int attrDim = attr_desc.attr_num_dimensions_minus1+1;

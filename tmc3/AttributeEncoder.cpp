@@ -1051,10 +1051,20 @@ AttributeEncoder::encodeAttributeTransformRaht(
   if (_sortedMortonCode.size() == 0)
   {
     std::vector<MortonCodeWithIndex> packedVoxel(voxelCount);
-    for (int n = 0; n < voxelCount; n++) {
-      packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
-      packedVoxel[n].index = n;
+    if (aps.raht_adaptive_block_size_enabled) {
+      const auto shift = _abh->raht_block_size_log2;
+      for (int n = 0; n < voxelCount; n++) {
+        packedVoxel[n].mortonCode = mortonAddr(pointCloud[n] >> shift);
+        packedVoxel[n].index = n;
+      }
+    } 
+    else {
+      for (int n = 0; n < voxelCount; n++) {
+        packedVoxel[n].mortonCode = mortonAddr(pointCloud[n]);
+        packedVoxel[n].index = n;
+      }
     }
+
     sort(packedVoxel.begin(), packedVoxel.end());
     _sortedMortonCode.resize(voxelCount);
     _sortedIndex.resize(voxelCount);
