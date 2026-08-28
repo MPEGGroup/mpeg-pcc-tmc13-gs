@@ -1101,18 +1101,17 @@ write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
     }
   }
 
-  bool aps_extension_flag = false;
-  aps_extension_flag = true; // changed for GS extension
+  aps.aps_extension_flag = true; 
   bool aps_gs_extension_present_flag = false;
   aps_gs_extension_present_flag = true; // changed for GS extension
   int aps_extension_7bits = 0; // fixed to 0
-  bs.write(aps_extension_flag);
-  if (aps_extension_flag){
-    // assert(!aps_extension_flag);
+  bs.write(aps.aps_extension_flag);
+  if (aps.aps_extension_flag){
     bs.write(aps_gs_extension_present_flag);    
     bs.writeUn(7, aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       bs.writeUe(aps.raht_fixed_point_precision_minus15);
+      bs.write(aps.raht_attr_offset_enabled);
     }
   }
   if (aps_gs_extension_present_flag) {
@@ -1225,14 +1224,16 @@ parseAps(const PayloadBuffer& buf)
     }
   }
 
-  bool aps_extension_flag = bs.read();
+  aps.aps_extension_flag = bs.read();
   bool aps_gs_extension_present_flag = false;
   int aps_extension_7bits = 0;
-  if (aps_extension_flag) {
+  aps.raht_attr_offset_enabled = false;
+  if (aps.aps_extension_flag) {
     aps_gs_extension_present_flag = bs.read();    
     bs.readUn(7, &aps_extension_7bits);
     if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       bs.readUe(&aps.raht_fixed_point_precision_minus15);
+      bs.read(&aps.raht_attr_offset_enabled);
     }
   }
   if (aps_gs_extension_present_flag) {
@@ -1615,6 +1616,15 @@ write(
       bs.writeSe(region.attr_region_qp_offset[1]);
   }
 
+  if (aps.raht_attr_offset_enabled)
+  {
+    auto& attr_desc = sps.attributeSets[abh.attr_sps_attr_idx];
+    int bitdepth = attr_desc.bitdepth;
+    int numCh = attr_desc.attr_num_dimensions_minus1;
+    for (int c = 0 ; c <= numCh ; c++)
+      bs.writeUn(bitdepth, abh.raht_attr_offset[c]);
+  }
+
   bs.byteAlign();
 }
 
@@ -1741,6 +1751,16 @@ parseAbh(
     bs.readSe(&region.attr_region_qp_offset[0]);
     if (sps.attributeSets[abh.attr_sps_attr_idx].attr_num_dimensions_minus1)
       bs.readSe(&region.attr_region_qp_offset[1]);
+  }
+
+  if (aps.raht_attr_offset_enabled)
+  {
+    auto& attr_desc = sps.attributeSets[abh.attr_sps_attr_idx];
+    int bitdepth = attr_desc.bitdepth;
+    int attrDim = attr_desc.attr_num_dimensions_minus1+1;
+    abh.raht_attr_offset.resize(attrDim);
+    for (int c = 0 ; c < attrDim ; c++)
+      bs.readUn(bitdepth, &abh.raht_attr_offset[c]);
   }
 
   bs.byteAlign();

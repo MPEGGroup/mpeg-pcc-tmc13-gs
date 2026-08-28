@@ -270,5 +270,62 @@ setAttribute(
 }
 
 //============================================================================
+std::vector<int> deriveDcShiftValues(
+  const std::vector<int>& attr, 
+  const int voxelCount, 
+  const int attrDim) 
+{
+  const int totalElements = voxelCount * attrDim;
+  assert(totalElements == attr.size());
+
+  std::vector<int64_t> attrSums(attrDim, 0);
+  const int* attrPtr = attr.data(); 
+
+  for (int n = 0; n < totalElements; n += attrDim) {
+    for (int d = 0; d < attrDim; ++d) {
+      attrSums[d] += attrPtr[n + d];
+    }
+  }
+
+  std::vector<int> dcShiftValues(attrDim);
+  for (int d = 0; d < attrDim; ++d) {
+    dcShiftValues[d] = divApprox(attrSums[d], voxelCount, 0);
+  }
+
+  return dcShiftValues;
+}
+
+void fwdDcShift(
+  std::vector<int>& attr, 
+  const std::vector<int>& dcShiftValues, 
+  const int voxelCount, 
+  const int attrDim) 
+{
+  const int totalElements = voxelCount * attrDim;
+  assert(totalElements == attr.size());
+  
+  int* attrPtr = attr.data();
+
+  if (attrDim == 3) {
+    const int val0 = dcShiftValues[0];
+    const int val1 = dcShiftValues[1];
+    const int val2 = dcShiftValues[2];
+    
+    for (int i = 0; i < voxelCount; ++i) {
+      attrPtr[0] -= val0;
+      attrPtr[1] -= val1;
+      attrPtr[2] -= val2;
+      attrPtr += 3; 
+    }
+  } else {
+    for (int n = 0; n < totalElements; n += attrDim) {
+      for (int d = 0; d < attrDim; ++d) {
+        attrPtr[n + d] -= dcShiftValues[d];
+      }
+    }
+  }
+}
+
+//============================================================================
 
 }  // namespace pcc

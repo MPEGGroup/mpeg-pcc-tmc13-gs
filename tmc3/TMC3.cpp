@@ -1289,6 +1289,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.aps.aps_slice_qp_deltas_present_flag, false,
     "Enable signalling of per-slice QP values")
 
+  ("rahtAttrOffsetEnabled",
+    params_attr.aps.raht_attr_offset_enabled, false,
+    "Enable attribute offset for RAHT")
+
   ("qpLayerOffsetsLuma",
     params_attr.encoder.abh.attr_layer_qp_delta_luma, {},
       "Attribute's per layer luma QP offsets")
@@ -1700,6 +1704,8 @@ sanitizeEncoderOpts(
     if (attr_aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       attr_aps.num_detail_levels_minus1 = 0;
       attr_aps.adaptive_prediction_threshold = 0;
+    } else {
+      attr_aps.raht_attr_offset_enabled = false;
     }
 
     if (!params.encoder.gps.geom_angular_mode_enabled_flag) {

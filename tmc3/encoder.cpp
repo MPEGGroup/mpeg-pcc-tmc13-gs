@@ -960,7 +960,7 @@ PCCTMC3Encoder3::encodeGeometryBrick(
     gbh.rootNodeSizeLog2 = gbh.maxRootNodeDimLog2;
 
   // todo(df): remove estimate when arithmetic codec is replaced
-  int maxAcBufLen = int(pointCloud.getPointCount()) * 3 * 4 + 1024;
+  int maxAcBufLen = int(pointCloud.getPointCount()) * 56 * 2 + 1024;
 
   // allocate entropy streams
   std::vector<std::unique_ptr<EntropyEncoder>> arithmeticEncoders;

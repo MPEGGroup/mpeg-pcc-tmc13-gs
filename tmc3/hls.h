@@ -842,6 +842,10 @@ struct AttributeParameterSet {
 
   // Whether raw attribute are coded as fixed width or variable length.
   bool raw_attr_variable_len_flag;
+
+  bool aps_extension_flag;
+
+  bool raht_attr_offset_enabled;
 };
 
 //============================================================================
@@ -918,6 +922,8 @@ struct AttributeBrickHeader {
   int attr_region_bits_minus1;
 
   int32_t attr_dist2_delta;
+
+  std::vector<int> raht_attr_offset;
 };
 
 //============================================================================

@@ -106,7 +106,7 @@ void
 PCCResidualsEncoder::start(const SequenceParameterSet& sps, int pointCount)
 {
   // todo(df): remove estimate when arithmetic codec is replaced
-  int maxAcBufLen = pointCount * 3 * 2 + 1024;
+  int maxAcBufLen = pointCount * 56 * 2 + 1024;
   arithmeticEncoder.setBuffer(maxAcBufLen, nullptr);
   arithmeticEncoder.enableBypassStream(sps.cabac_bypass_stream_enabled_flag);
   arithmeticEncoder.start();
@@ -533,7 +533,7 @@ AttributeEncoder::encode(
   switch (attr_aps.attr_encoding) {
   case AttributeEncoding::kRAHTransform:
     encodeAttributeTransformRaht(
-      desc, attr_aps, qpSet, pointCloud, encoder, bufferRahtCoefficients);
+      desc, attr_aps, abh, qpSet, pointCloud, encoder, bufferRahtCoefficients);
     break;
 
   case AttributeEncoding::kPredictingTransform:
@@ -1041,6 +1041,7 @@ void
 AttributeEncoder::encodeAttributeTransformRaht(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
+  AttributeBrickHeader& abh,
   const QpSet& qpSet,
   PCCPointSet3& pointCloud,
   PCCResidualsEncoder& encoder,
@@ -1104,6 +1105,12 @@ AttributeEncoder::encodeAttributeTransformRaht(
     pointQpOffsets[n] = qpSet.regionQpOffset(pointCloud[index]);
   }
 
+  if (aps.raht_attr_offset_enabled) {
+    abh.raht_attr_offset.resize(attribCount);
+    abh.raht_attr_offset = deriveDcShiftValues(attributes, voxelCount, attribCount);
+    fwdDcShift(attributes, abh.raht_attr_offset, voxelCount, attribCount);
+  }
+
   const int rahtPredThreshold[2] = {aps.raht_prediction_threshold0,
                                     aps.raht_prediction_threshold1};
 
@@ -1135,16 +1142,22 @@ AttributeEncoder::encodeAttributeTransformRaht(
   if (zeroRun)
     encoder.encodeRunLength(zeroRun);
 
-  int64_t clipMax = (1ll << desc.bitdepth) - 1;
+  const int64_t clipMax = (1 << desc.bitdepth) - 1;
+  const bool raht_attr_offset_enabled = aps.raht_attr_offset_enabled;
+  const int* const raht_attr_offset = abh.raht_attr_offset.data();
   for (int n = 0; n < voxelCount; ++n) {
-    auto index = _sortedIndex[n];
+    const uint32_t sortedIndex = _sortedIndex[n];
     Vec3<attr_t> attribute(0);
+    const int* const attrRow = &attributes[attribCount * n];
     for (int d = 0; d < attribCount; ++d) {
-      int value = attributes[attribCount * n + d];
-      attribute[d] = attr_t(PCCClip(value, 0, clipMax));
+      int value = attrRow[d];
+      int shift = raht_attr_offset_enabled ? raht_attr_offset[d] : 0;
+      value += shift;
+      int64_t clampedValue = std::max<int64_t>(0, std::min<int64_t>(value, clipMax));
+      attribute[d] = attr_t(clampedValue);
     }
 
-    setAttribute(desc, pointCloud, index, attribute);
+    setAttribute(desc, pointCloud, sortedIndex, attribute);
   }
 }
 

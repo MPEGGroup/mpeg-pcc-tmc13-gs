@@ -106,6 +106,7 @@ protected:
   void decodeAttributeRaht(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
+    const AttributeBrickHeader& abh,
     const QpSet& qpSet,
     PCCResidualsDecoder& decoder,
     PCCPointSet3& pointCloud,

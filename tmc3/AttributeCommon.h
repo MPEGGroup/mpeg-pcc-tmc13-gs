@@ -127,4 +127,15 @@ void setAttribute(
 
 //============================================================================
 
+std::vector<int> deriveDcShiftValues(
+  const std::vector<int>& attr, 
+  const int voxelCount, 
+  const int attrDim);
+
+void fwdDcShift(
+  std::vector<int>& attr, 
+  const std::vector<int>& dcShiftValues, 
+  const int voxelCount, 
+  const int attrDim);
+
 }  // namespace pcc

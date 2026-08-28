@@ -86,10 +86,7 @@ FixedPoint::round()
 inline void
 FixedPoint::operator=(int64_t val)
 {
-  if (val > 0)
-    this->val = val << kFracBits;
-  else
-    this->val = -((-val) << kFracBits);
+  this->val = (val > 0) ? (val << kFracBits) : -((-val) << kFracBits);
 }
 
 //----------------------------------------------------------------------------
@@ -115,10 +112,9 @@ FixedPoint::operator*=(const FixedPoint& that)
 {
   this->val *= that.val;
 
-  if (this->val < 0)
-    this->val = -((kOneHalf - this->val) >> kFracBits);
-  else
-    this->val = +((kOneHalf + this->val) >> kFracBits);
+  int64_t shiftedUp = (kOneHalf + this->val) >> kFracBits;
+  int64_t shiftedDown = -((kOneHalf - this->val) >> kFracBits);
+  this->val = (this->val < 0) ? shiftedDown : shiftedUp;
 }
 
 //============================================================================

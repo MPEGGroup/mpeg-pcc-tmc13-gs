@@ -231,7 +231,7 @@ AttributeDecoder::decode(
 
   switch (attr_aps.attr_encoding) {
   case AttributeEncoding::kRAHTransform:
-    decodeAttributeRaht(attr_desc, attr_aps, qpSet, decoder, pointCloud, rahtMaxAttributeGroupNum, bufferRahtCoefficients);
+    decodeAttributeRaht(attr_desc, attr_aps, abh, qpSet, decoder, pointCloud, rahtMaxAttributeGroupNum, bufferRahtCoefficients);
     break;
 
   case AttributeEncoding::kPredictingTransform:
@@ -448,6 +448,7 @@ void
 AttributeDecoder::decodeAttributeRaht(
   const AttributeDescription& desc,
   const AttributeParameterSet& aps,
+  const AttributeBrickHeader& abh,
   const QpSet& qpSet,
   PCCResidualsDecoder& decoder,
   PCCPointSet3& pointCloud,
@@ -515,12 +516,18 @@ AttributeDecoder::decodeAttributeRaht(
     voxelCount, coefficients.data());
 
   const int64_t clipMax = (1 << desc.bitdepth) - 1;
+  const bool raht_attr_offset_enabled = aps.raht_attr_offset_enabled;
+  const int* const raht_attr_offset = abh.raht_attr_offset.data();
   for (int n = 0; n < voxelCount; ++n) {
     const uint32_t sortedIndex = _sortedIndex[n];
     Vec3<attr_t> attribute(0);
+    const int* const attrRow = &attributes[attribCount * n];
     for (int d = 0; d < attribCount; ++d) {
-      int value = attributes[attribCount * n + d];
-      attribute[d] = attr_t(PCCClip(value, 0, clipMax));
+      int value = attrRow[d];
+      int shift = raht_attr_offset_enabled ? raht_attr_offset[d] : 0;
+      value += shift;
+      int64_t clampedValue = std::max<int64_t>(0, std::min<int64_t>(value, clipMax));
+      attribute[d] = attr_t(clampedValue);
     }
 
     setAttribute(desc, pointCloud, sortedIndex, attribute);

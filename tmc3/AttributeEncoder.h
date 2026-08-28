@@ -100,6 +100,7 @@ protected:
   void encodeAttributeTransformRaht(
     const AttributeDescription& desc,
     const AttributeParameterSet& aps,
+    AttributeBrickHeader& abh,
     const QpSet& qpSet,
     PCCPointSet3& pointCloud,
     PCCResidualsEncoder& encoder,
