@@ -141,7 +141,7 @@ PCCTMC3Encoder3::compress(
       int64_t seqMaxGlobal = std::max({maxX, maxY, maxZ});  
       int64_t seqSizeGlobal = (seqMaxGlobal - seqOriginGlobal);
 
-      params->codedGeomScale = (double)std::pow(2, 18) / (inputscale*(double)seqSizeGlobal);
+      params->codedGeomScale = (double)std::pow(2, params->geomMinMaxBitDepth ) / (inputscale*(double)seqSizeGlobal);
       params->sps.globalScale = Rational(params->seqGeomScale / params->codedGeomScale);
 
       

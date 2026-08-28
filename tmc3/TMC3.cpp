@@ -767,6 +767,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  0: Use srcUnitLength\n"
     " >0: Relative to inputScale")
 
+  ("geomMinMaxBitDepth",
+    params.encoder.geomMinMaxBitDepth, 21,
+    "Bitdepth used to geometry min-max quantization.\n")
+
   (po::Section("Decoder"))
 
   ("skipOctreeLayers",
