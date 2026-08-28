@@ -592,6 +592,7 @@ write(const SequenceParameterSet& sps)
   bs.writeUn(sps.global_scale_fp_bits(), sps.global_scale_rem());
 
   int num_attribute_sets = int(sps.attributeSets.size());
+  int numShCoefDegreesMinus1 = -1;
   bs.writeUe(num_attribute_sets);
   for (const auto& attr : sps.attributeSets) {
     bs.writeUe(attr.attr_num_dimensions_minus1);
@@ -608,14 +609,27 @@ write(const SequenceParameterSet& sps)
       writeOid(bs, label.oid);
 
     writeAttributeParameters(attr, bs, attr.params);
+
+    if (attr.params.shCoefficientParameterPresent)
+      numShCoefDegreesMinus1 = attr.params.num_sh_coefficient_degrees_minus1;
   }
 
   bs.writeUn(3, sps.geometry_axis_order);
   bs.write(sps.cabac_bypass_stream_enabled_flag);
   bs.write(sps.entropy_continuation_enabled_flag);
 
-  bool sps_extension_flag = false;
+  bool sps_extension_flag = true;
+  bool sps_gs_extension_flag = true;
   bs.write(sps_extension_flag);
+  if(sps_extension_flag)
+  {
+    bs.write(sps_gs_extension_flag);
+  }
+
+  if(sps_gs_extension_flag)
+  {
+    bs.write(sps.gs_sh_remap_enabled_flag);
+  }
   bs.byteAlign();
 
   return buf;
@@ -688,6 +702,7 @@ parseSps(const PayloadBuffer& buf)
 
   int value = -1;
   int num_attribute_sets = int(bs.readUe());
+  int numShCoefDegreesMinus1 = -1;
   for (int i = 0; i < num_attribute_sets; i++) {
     sps.attributeSets.emplace_back();
     auto& attr = sps.attributeSets.back();
@@ -721,6 +736,9 @@ parseSps(const PayloadBuffer& buf)
     if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients 
 			&& attr.params.sh_dc_coefficient_flag)  // SH_dc
       value = attr.params.num_sh_coefficient_degrees_minus1;
+    
+    if (attr.params.shCoefficientParameterPresent)
+      numShCoefDegreesMinus1 = attr.params.num_sh_coefficient_degrees_minus1;
   }
 
   bs.readUn(3, &sps.geometry_axis_order);
@@ -732,10 +750,16 @@ parseSps(const PayloadBuffer& buf)
     assert(sps.profile.slice_reordering_constraint_flag);
 
   bool sps_extension_flag = bs.read();
-  if (sps_extension_flag) {
-    // todo(df): sps_extension_data;
-    assert(!sps_extension_flag);
+  bool sps_gs_extension_flag = false;
+  if (sps_extension_flag)
+  {
+    sps_gs_extension_flag = bs.read();
   }
+
+  if (sps_gs_extension_flag) {
+    bs.read(&sps.gs_sh_remap_enabled_flag);
+  }
+
   bs.byteAlign();
 
   return sps;

@@ -555,6 +555,8 @@ struct SequenceParameterSet {
 
   // Indicates that context state may be propagated between slices.
   bool entropy_continuation_enabled_flag;
+  
+  bool gs_sh_remap_enabled_flag = false;
 };
 
 //============================================================================

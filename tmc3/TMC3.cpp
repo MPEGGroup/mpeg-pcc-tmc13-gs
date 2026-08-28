@@ -853,6 +853,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.sps.entropy_continuation_enabled_flag, false,
     "Propagate context state between slices")
 
+  ("gsShRemapEnabled",
+    params.encoder.sps.gs_sh_remap_enabled_flag, false,
+    "Controls Remapping of Spherical Harmonics Coefficients.")
+
   ("disableAttributeCoding",
     params.disableAttributeCoding, false,
     "Ignore attribute coding configuration")
@@ -1950,6 +1954,39 @@ sanitizeEncoderOpts(
   }
   
 }
+//============================================================================
+
+inline void filterInvalidShRemapPairs(
+  SequenceParameterSet& sps,
+  std::vector<std::pair<int, int>>& pairs, 
+  const int numShCoeffs)
+{
+  pairs.erase(std::remove_if(pairs.begin(), pairs.end(), [numShCoeffs](const std::pair<int, int>& p) {
+      return (p.first & 15) >= numShCoeffs || (p.second & 15) >= numShCoeffs; 
+  }), pairs.end());
+}
+
+inline void applyGsShRemap(
+  PCCPointSet3& pointCloud, 
+  std::vector<std::pair<int, int>>& pairs)
+{
+  const size_t voxelCount = pointCloud.getPointCount();
+  const int numSHCoeffs = pointCloud.getNumSHCoeffs();
+  for(const auto& p: pairs)
+  {
+    const int c0 = p.first >> 4;
+    const int m0 = p.first & 15;
+    const int c1 = p.second >> 4;
+    const int m1 = p.second & 15;
+
+    auto& sh0 = pointCloud.getSHCoefficient(m0);
+    auto& sh1 = pointCloud.getSHCoefficient(m1);
+
+    for (size_t n = 0; n < voxelCount; ++n) {
+      std::swap(sh0[n][c0], sh1[n][c1]);
+    }
+  }
+}
 
 //============================================================================
 
@@ -2064,6 +2101,17 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
 
+  if (params->encoder.sps.gs_sh_remap_enabled_flag) {
+    const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
+    std::vector<std::pair<int, int>> gs_sh_remap_pairs =
+      {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 
+       {11, 33}, {12, 34}, {13, 35}, {14, 24}, {15, 40},
+       {26, 41}, {27, 37}, {28, 38}, {29, 39}, {31, 46}};
+
+    filterInvalidShRemapPairs(params->encoder.sps, gs_sh_remap_pairs, numShCoeffs);
+    applyGsShRemap(pointCloud, gs_sh_remap_pairs); 
+  }
+
   // The reconstructed point cloud
   CloudFrame recon;
   auto* reconPtr = params->reconstructedDataPath.empty() ? nullptr : &recon;
@@ -2166,10 +2214,22 @@ SequenceDecoder::decompress(Stopwatch* clock)
 void
 SequenceDecoder::onOutputCloud(const CloudFrame& frame)
 {
-  clock->stop();
-
   // copy the point cloud in order to modify it according to the output options
   PCCPointSet3 pointCloud(frame.cloud);
+
+  if (frame.gs_sh_remap_enabled_flag) {
+    const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
+    std::vector<std::pair<int, int>> gs_sh_remap_pairs =
+      {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 
+       {11, 33}, {12, 34}, {13, 35}, {14, 24}, {15, 40},
+       {26, 41}, {27, 37}, {28, 38}, {29, 39}, {31, 46}};
+
+    filterInvalidShRemapPairs(params->encoder.sps, gs_sh_remap_pairs, numShCoeffs);
+    applyGsShRemap(pointCloud, gs_sh_remap_pairs); 
+  }
+  
+  clock->stop();
+  
   writeOutputFrame(
     params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud, params->encoder.externalPrePost);
 
