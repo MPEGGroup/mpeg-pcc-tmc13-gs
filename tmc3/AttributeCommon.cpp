@@ -104,7 +104,7 @@ AttributeLods::isReusable(
     return false;
 
   // until this feature is stable, always generate LoDs.
-  if (_aps.scalable_lifting_enabled_flag || aps.scalable_lifting_enabled_flag)
+  if (_aps.scalable_lifting_enabled_flag != aps.scalable_lifting_enabled_flag)
     return false;
 
   if (_aps.lod_decimation_type != aps.lod_decimation_type)
@@ -132,6 +132,58 @@ AttributeLods::isReusable(
   return true;
 }
 
+//============================================================================
+void AttributeLods::outputPartialPoints(PCCPointSet3& pointCloud, PCCPointSet3& accumPointCloud)
+{
+  // Create a deep copy to automatically inherit all attribute flags and memory allocations.
+  // This avoids the need to manually call initialization methods like addColors() or resize().
+  PCCPointSet3 partialCloud = pointCloud;
+  const size_t pointCount = indexes.size();
+  int shCount = pointCloud.getNumSHCoeffs();
+  partialCloud.resize(numPoints);
+
+  // Reorder the points and their corresponding attributes using getter and setter methods.
+  size_t t = pointCount-1;
+  for (size_t i = 0; i < numPoints; ++i) {
+    const size_t origIdx = indexes[t--];
+    //const size_t origIdx = indexes[i];
+
+    // Set position using the overloaded operator[].
+    partialCloud[i] = pointCloud[origIdx];
+
+    // Set attributes using their respective getter and setter methods.
+    // Replace 'hasColors()' with your actual boolean getter if the name differs.
+    if (pointCloud.hasColors())
+      partialCloud.setColor(i, pointCloud.getColor(origIdx));
+
+    if (pointCloud.hasReflectances())
+      partialCloud.setReflectance(i, pointCloud.getReflectance(origIdx));
+
+    if (pointCloud.hasFrameIndex())
+      partialCloud.setFrameIndex(i, pointCloud.getFrameIndex(origIdx));
+
+    if (pointCloud.hasOpacities())
+      partialCloud.setOpacity(i, pointCloud.getOpacity(origIdx));
+
+    if (pointCloud.hasScales())
+      partialCloud.setScale(i, pointCloud.getScale(origIdx));
+
+    if (pointCloud.hasRotations()) {
+      // Adjust this part if your class uses separate setters for rotation vector and scalar.
+      partialCloud.setRotationVec(i, pointCloud.getRotationVec(origIdx));
+      partialCloud.setRotationScalar(i, pointCloud.getRotationScalar(origIdx));
+    }
+
+    if (pointCloud.hasSHCoefficients()) {
+      for (size_t k=0; k < shCount; k++) {
+        partialCloud.setSHCoefficient(k, i, pointCloud.getSHCoefficient(k, origIdx));
+      }
+    }
+  }
+  // Swap the contents of the original point cloud with the partial one.
+  // This efficiently updates the original object with the newly ordered data.
+	accumPointCloud.append(partialCloud);
+}
 //============================================================================
 
 bool

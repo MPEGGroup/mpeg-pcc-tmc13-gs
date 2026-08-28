@@ -206,6 +206,7 @@ AttributeDecoder::decode(
   const AttributeBrickHeader& abh,
   int geom_num_points_minus1,
   int minGeomNodeSizeLog2,
+  int minGeomNodeSizeLog2forSH,
   const char* payload,
   size_t payloadLen,
   AttributeContexts& ctxtMem,
@@ -241,7 +242,7 @@ AttributeDecoder::decode(
   case AttributeEncoding::kLiftingTransform:
     decodeAttributeLift(
       attr_desc, attr_aps, abh, qpSet, geom_num_points_minus1,
-      minGeomNodeSizeLog2, decoder, pointCloud);
+      minGeomNodeSizeLog2, minGeomNodeSizeLog2forSH, decoder, pointCloud);
     break;
 
   case AttributeEncoding::kRaw:
@@ -264,6 +265,12 @@ AttributeDecoder::isReusable(
   return _lods.isReusable(aps, abh);
 }
 
+//----------------------------------------------------------------------------
+void 
+AttributeDecoder::outputPartialPoints(PCCPointSet3& pointCloud, PCCPointSet3& accumPointCloud)
+{
+	_lods.outputPartialPoints(pointCloud, accumPointCloud);
+}
 //----------------------------------------------------------------------------
 
 void
@@ -702,6 +709,7 @@ AttributeDecoder::decodeAttributeLift(
   const QpSet& qpSet,
   int geom_num_points_minus1,
   int minGeomNodeSizeLog2,
+  int minGeomNodeSizeLog2forSH,
   PCCResidualsDecoder& decoder,
   PCCPointSet3& pointCloud)
 {
@@ -723,7 +731,12 @@ AttributeDecoder::decodeAttributeLift(
   // decompress
   int zeroRunRem = 0;
   const size_t lodCount = _lods.numPointsInLod.size();
-  for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
+  int lodlimit = lodCount;
+  if (aps.scalable_lifting_enabled_flag) {
+    lodlimit = lodCount - minGeomNodeSizeLog2forSH;
+  } 
+  for (auto lod : LodOrder::CoarsestToFinest(lodlimit)) {
+
     int quantLayer = std::min(int(qpSet.layers.size()) - 1, int(lod));
 
     const bool lcpEnabled = aps.last_component_prediction_enabled_flag && attribCount == 3;
@@ -759,7 +772,7 @@ AttributeDecoder::decodeAttributeLift(
   }
 
   // reconstruct
-  for (auto lod : LodOrder::CoarsestToFinest(lodCount)) {
+  for (auto lod : LodOrder::CoarsestToFinest(lodlimit)) {
     if (lod == 0 /* coarsest */)
       continue;
 
@@ -767,6 +780,8 @@ AttributeDecoder::decodeAttributeLift(
     PCCLiftUpdate (_lods.predictors, weights, coeffRange, false, attributes);
     PCCLiftPredict(_lods.predictors, coeffRange, false, attributes);
   }
+
+  _lods.numPoints = _lods.numPointsInLod[lodlimit-1];
 
   int64_t clipMax = (1 << desc.bitdepth) - 1;
   for (size_t f = 0; f < pointCount; ++f) {

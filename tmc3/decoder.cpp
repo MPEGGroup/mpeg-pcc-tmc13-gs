@@ -184,7 +184,11 @@ PCCTMC3Decoder3::decompress(
       for (size_t i = 0; i < numPoints; i++)
         for (int k = 0; k < 3; k++)
           _currentPointCloud[i][k] += _sliceOrigin[k];
-      _accumCloud.append(_currentPointCloud);
+
+      if(_params.minGeomNodeSizeLog2forSH > 0) 
+        _attrDecoder->outputPartialPoints(_currentPointCloud, _accumCloud);
+      else 
+        _accumCloud.append(_currentPointCloud);
     }
   }
 
@@ -583,7 +587,7 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
 
   _attrDecoder->decode(
     *_sps, attr_sps, attr_aps, abh, _gbh.footer.geom_num_points_minus1,
-    _params.minGeomNodeSizeLog2, buf.data() + abhSize, buf.size() - abhSize,
+    _params.minGeomNodeSizeLog2, _params.minGeomNodeSizeLog2forSH, buf.data() + abhSize, buf.size() - abhSize,
     ctxtMemAttr, _currentPointCloud, _params.maxAttributeNumberPerGroup,
     &bufferRahtCoefficients);
 

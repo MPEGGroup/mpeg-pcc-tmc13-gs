@@ -61,6 +61,7 @@ public:
     const AttributeBrickHeader& abh,
     int geom_num_points_minus1,
     int minGeomNodeSizeLog2,
+    int minGeomNodeSizeLog2forSH,
     const char* payload,
     size_t payloadLen,
     AttributeContexts& ctxtMem,
@@ -82,6 +83,8 @@ public:
     const AttributeParameterSet& aps,
     const AttributeBrickHeader& abh) const override;
 
+  void outputPartialPoints(PCCPointSet3& pointCloud, PCCPointSet3& accumPointCloud) override;
+
 protected:
   // todo(df): consider alternative encapsulation
 
@@ -92,6 +95,7 @@ protected:
     const QpSet& qpSet,
     int geom_num_points_minus1,
     int minGeomNodeSizeLog2,
+    int minGeomNodeSizeLog2forSH,
     PCCResidualsDecoder& decoder,
     PCCPointSet3& pointCloud);
 

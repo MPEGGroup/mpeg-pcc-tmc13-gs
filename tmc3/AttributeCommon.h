@@ -75,6 +75,8 @@ struct AttributeLods {
 
   bool empty() const { return numPointsInLod.empty(); };
 
+  void outputPartialPoints(PCCPointSet3& pointCloud, PCCPointSet3& accumPointCloud);
+
   void generate(
     const AttributeParameterSet& aps,
     const AttributeBrickHeader& abh,
@@ -85,6 +87,8 @@ struct AttributeLods {
   std::vector<PCCPredictor> predictors;
   std::vector<uint32_t> numPointsInLod;
   std::vector<uint32_t> indexes;
+
+  uint32_t numPoints;
 
 private:
   // This is the aps that was used to generate the LoDs.  It is used to check

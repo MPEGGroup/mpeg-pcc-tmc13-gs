@@ -775,6 +775,12 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     " 0   : Full decode\n"
     " N>0 : Skip the bottom N layers in decoding process")
 
+  ("skipOctreeLayersforSH",
+    params.decoder.minGeomNodeSizeLog2forSH, 0,
+    "Partial decoding of SH attributes based octree\n"
+    " 0   : Full decode\n"
+    " N>0 : Skip the bottom N layers in decoding process")
+
   ("decodeMaxPoints",
     params.decoder.decodeMaxPoints, 0,
     "Partially decode up to N points")
