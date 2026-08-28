@@ -443,24 +443,18 @@ namespace pcc {
 static std::ostream&
 operator<<(std::ostream& out, const SHCoefficientLabel& val)
 {
-  switch (val) {
-  case SHCoefficientLabel::kBand0_Order0:  out << "0 (DC: 0, 0)"; break;
-  case SHCoefficientLabel::kBand1_OrderM1: out << "1 (AC: 1,-1)"; break;
-  case SHCoefficientLabel::kBand1_Order0:  out << "2 (AC: 1, 0)"; break;
-  case SHCoefficientLabel::kBand1_Order1:  out << "3 (AC: 1, 1)"; break;
-  case SHCoefficientLabel::kBand2_OrderM2: out << "4 (AC: 2,-2)"; break;
-  case SHCoefficientLabel::kBand2_OrderM1: out << "5 (AC: 2,-1)"; break;
-  case SHCoefficientLabel::kBand2_Order0:  out << "6 (AC: 2, 0)"; break;
-  case SHCoefficientLabel::kBand2_Order1:  out << "7 (AC: 2, 1)"; break;
-  case SHCoefficientLabel::kBand2_Order2:  out << "8 (AC: 2, 2)"; break;
-  case SHCoefficientLabel::kBand3_OrderM3: out << "9 (AC: 3,-3)"; break;
-  case SHCoefficientLabel::kBand3_OrderM2: out << "10 (AC: 3,-2)"; break;
-  case SHCoefficientLabel::kBand3_OrderM1: out << "11 (AC: 3,-1)"; break;
-  case SHCoefficientLabel::kBand3_Order0:  out << "12 (AC: 3, 0)"; break;
-  case SHCoefficientLabel::kBand3_Order1:  out << "13 (AC: 3, 1)"; break;
-  case SHCoefficientLabel::kBand3_Order2:  out << "14 (AC: 3, 2)"; break;
-  case SHCoefficientLabel::kBand3_Order3:  out << "15 (AC: 3, 3)"; break;
+  uint32_t idx = static_cast<uint32_t>(val);
+  if (idx > 288) {
+      return out << idx << " (Unknown)";
   }
+  
+  uint32_t l = getShDegree(idx); 
+  int32_t m = static_cast<int32_t>(idx) - static_cast<int32_t>(l * l + l);
+
+  std::string shType = (l == 0) ? "DC" : "AC";
+  
+  out << idx << " (" << shType << ": " << l << "," << (m >= 0 ? " " : "") << m << ")";
+  
   return out;
 }
 }  // namespace pcc
@@ -1130,8 +1124,8 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 		params_attr.desc.params.num_sh_coefficient_degrees_minus1, 3,
     "number of SH coefficient bands.\n"
     "   <0: Clipped to 0.\n"
-    "  0-3: Force coding up to the specified degree.\n"
-    "   >3: Clipped to 3.\n"
+    " 0-16: Force coding up to the specified degree.\n"
+    "  >16: Clipped to 16.\n"
     )
 
   ("shCoefficientLabel",
@@ -1642,8 +1636,8 @@ sanitizeEncoderOpts(
 			attrMeta.shCoefficientParameterPresent = true;
 		  
       int numShBandMinus1 = attrMeta.num_sh_coefficient_degrees_minus1;
-      if (numShBandMinus1 > 3)
-        attrMeta.num_sh_coefficient_degrees_minus1 = 3;
+      if (numShBandMinus1 > 16)
+        attrMeta.num_sh_coefficient_degrees_minus1 = 16;
       else if (numShBandMinus1 < 0)
         attrMeta.num_sh_coefficient_degrees_minus1 = 0;
       

@@ -260,7 +260,29 @@ enum class SHCoefficientLabel : uint32_t
 	kBand3_Order1 = 13,
 	kBand3_Order2 = 14,
 	kBand3_Order3 = 15,
+
+  kCount = 289
 };
+
+static inline uint32_t getShDegree(uint32_t idx) {
+    if (idx < 1)   return 0;
+    if (idx < 4)   return 1;
+    if (idx < 9)   return 2;
+    if (idx < 16)  return 3;
+    if (idx < 25)  return 4;
+    if (idx < 36)  return 5;
+    if (idx < 49)  return 6;
+    if (idx < 64)  return 7;
+    if (idx < 81)  return 8;
+    if (idx < 100) return 9;
+    if (idx < 121) return 10;
+    if (idx < 144) return 11;
+    if (idx < 169) return 12;
+    if (idx < 196) return 13;
+    if (idx < 225) return 14;
+    if (idx < 256) return 15;
+    return 16;
+}
 
 //============================================================================
 

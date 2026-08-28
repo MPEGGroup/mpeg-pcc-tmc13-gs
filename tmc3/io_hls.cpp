@@ -298,7 +298,7 @@ writeAttrParamSHCoefficientLabel(Bs& bs, const AttributeParameters& param)
   if (param.sh_dc_coefficient_flag) {
     bs.write(param.dc_only_flag);
     if (param.dc_only_flag == 0)
-	    bs.writeUn(2, param.num_sh_coefficient_degrees_minus1);
+	    bs.writeUe(param.num_sh_coefficient_degrees_minus1);
   } else {
     int numSHCoeff = 0;
     for (int i = 0; i <= param.num_sh_coefficient_degrees_minus1; i++)
@@ -321,7 +321,7 @@ parseAttrParamSHCoeffieicientLabel(Bs& bs, AttributeParameters* param)
   if (param->sh_dc_coefficient_flag) {
     bs.read(&param->dc_only_flag);
     if (param->dc_only_flag == 0)
-      bs.readUn(2, &param->num_sh_coefficient_degrees_minus1);
+      bs.readUe(&param->num_sh_coefficient_degrees_minus1);
     else
       param->num_sh_coefficient_degrees_minus1 = 0;
 		param->sh_coefficient_label = SHCoefficientLabel::kBand0_Order0;		
