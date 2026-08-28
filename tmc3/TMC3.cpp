@@ -783,6 +783,13 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.decoder.decodeMaxPoints, 0,
     "Partially decode up to N points")
 
+  ("targetSHDegree",
+    params.decoder.targetSHDegree, -1,
+    "Gaussian Splat: highest spherical harmonics degree to decode\n"
+    " -1 : decode all SH coefficients\n"
+    " N>=0 : decode SH coefficients with degree <= N,\n"
+    "        higher-degree SH coefficients are set to 0 without decoding")
+
   (po::Section("Encoder"))
 
   ("sortInputByAzimuth",

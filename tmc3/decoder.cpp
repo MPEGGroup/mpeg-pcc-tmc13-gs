@@ -553,17 +553,31 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
 
   auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
 
+  // Gaussian Splat Compression: partial SH decoding.
+  // SH coefficients whose degree exceeds the requested targetSHDegree are not
+  // decoded; their values are set to zero instead. When targetSHDegree is -1
+  // all SH coefficients are decoded.
+  bool skipSHCoefficient = false;
+  if (
+    attr_sps.attributeLabel == KnownAttributeLabel::kSH_coefficients
+    && _params.targetSHDegree >= 0) {
+    int shDegree = getShDegree((int)attr_sps.params.sh_coefficient_label);
+    skipSHCoefficient = shDegree > _params.targetSHDegree;
+  }
+
   receive_attr_num++;
   if (attr_sps.attr_num_dimensions_minus1 == 2
     && attr_aps.attr_encoding == AttributeEncoding::kRAHTransform)
     _allAttrAbh.push_back(abh);
 
 
-  _attrDecoder->decode(
-    *_sps, attr_sps, attr_aps, abh, _gbh.footer.geom_num_points_minus1,
-    _params.minGeomNodeSizeLog2, _params.minGeomNodeSizeLog2forSH, buf.data() + abhSize, buf.size() - abhSize,
-    ctxtMemAttr, _currentPointCloud, _params.maxAttributeNumberPerGroup,
-    &bufferRahtCoefficients);
+  if (!skipSHCoefficient) {
+    _attrDecoder->decode(
+      *_sps, attr_sps, attr_aps, abh, _gbh.footer.geom_num_points_minus1,
+      _params.minGeomNodeSizeLog2, _params.minGeomNodeSizeLog2forSH, buf.data() + abhSize, buf.size() - abhSize,
+      ctxtMemAttr, _currentPointCloud, _params.maxAttributeNumberPerGroup,
+      &bufferRahtCoefficients);
+  }
 
   if (
     receive_attr_num == _sps->attributeSets.size()&& _params.maxAttributeNumberPerGroup > 1) {
