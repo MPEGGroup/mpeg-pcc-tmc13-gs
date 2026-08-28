@@ -1974,7 +1974,7 @@ encodeGeometryOctree(
   if (pointCloud.hasSHCoefficients())
     pointCloud2.setNumSHCoeffs(pointCloud.getNumSHCoeffs());
   pointCloud2.addRemoveAttributes(pointCloud.hasColors(), pointCloud.hasReflectances(),
-	  pointCloud.hasOpacities(), pointCloud.hasScales(), pointCloud.hasRotations(),
+	  pointCloud.hasOpacities(), pointCloud.hasScales(), pointCloud.hasScalarRotations(), pointCloud.hasRotations(),
 	  pointCloud.hasSHCoefficients());
   pointCloud2.resize(pointCloud.getPointCount());
 
@@ -1997,10 +1997,10 @@ encodeGeometryOctree(
 			pointCloud2.setOpacity(dstIdx, pointCloud.getOpacity(i));
 		if (pointCloud.hasScales())
 			pointCloud2.setScale(dstIdx, pointCloud.getScale(i));
-    if (pointCloud.hasRotations()) {
-      pointCloud2.setRotationVec(dstIdx, pointCloud.getRotationVec(i));
+    if (pointCloud.hasScalarRotations())
       pointCloud2.setRotationScalar(dstIdx, pointCloud.getRotationScalar(i));
-    }
+    if (pointCloud.hasRotations())
+      pointCloud2.setRotationVec(dstIdx, pointCloud.getRotationVec(i));
 		if (pointCloud.hasSHCoefficients())
 			for (int k = 0; k < pointCloud.getNumSHCoeffs(); k++)
 				pointCloud2.setSHCoefficient(k, dstIdx, pointCloud.getSHCoefficient(k, i));

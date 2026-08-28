@@ -376,11 +376,14 @@ ply::write(
 	  fout << "property float f_dc_1" << std::endl;
 	  fout << "property float f_dc_2" << std::endl;
 
-	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++) {
-		  fout << "property float f_rest_" << 3 * i << std::endl;
-		  fout << "property float f_rest_" << 3 * i + 1 << std::endl;
-		  fout << "property float f_rest_" << 3 * i + 2 << std::endl;
-	  }
+	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
+		  fout << "property float f_rest_" << i << std::endl;
+
+	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
+		  fout << "property float f_rest_" << 15 + i << std::endl;
+
+	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
+		  fout << "property float f_rest_" << 30 + i << std::endl;
   }
   if (cloud.hasOpacities()) {
 	  fout << "property float opacity" << std::endl;
@@ -390,7 +393,7 @@ ply::write(
 	  fout << "property float scale_1" << std::endl;
 	  fout << "property float scale_2" << std::endl;
   }
-  if (cloud.hasRotations()) {
+  if (cloud.hasScalarRotations() || cloud.hasRotations()) {
 	  fout << "property float rot_0" << std::endl;
 	  fout << "property float rot_1" << std::endl;
 	  fout << "property float rot_2" << std::endl;
@@ -441,7 +444,7 @@ ply::write(
 					<< " " << scale[1]
 					<< " " << scale[2];
 			}
-			if (cloud.hasRotations()) {
+			if (cloud.hasScalarRotations() || cloud.hasRotations()) {
 				const pcc::Vec3<attr_t>& rotation_xyz = cloud.getRotationVec(i);
         fout << " " << cloud.getRotationScalar(i)
 					<< " " << rotation_xyz[0]
@@ -501,11 +504,6 @@ ply::write(
       }
 
       //for GS descs
-      int shcoeffidx = (int)cloud.hasSHCoefficients(); 
-      int opacityidx = cloud.getNumSHCoeffs() - 1 + (int)cloud.hasOpacities();
-      int scaleidx = opacityidx + (int)cloud.hasScales();
-      int rotationidx = scaleidx + (int)cloud.hasRotations();
-
 			if (cloud.hasSHCoefficients()) {
 				// SH DC
         double shdc[3];
@@ -573,7 +571,7 @@ ply::write(
 				Vec3<float> val32b{ float(scale[0])/GS_PROPERTY_SCALE, float(scale[1])/GS_PROPERTY_SCALE, float(scale[2])/GS_PROPERTY_SCALE };
 				fout.write(reinterpret_cast<char*>(&val32b), sizeof(float) * 3);
 			}
-			if (cloud.hasRotations()) {
+			if (cloud.hasScalarRotations() || cloud.hasRotations()) {
         double rot[4] = {1.0, 0.0, 0.0, 0.0};
         {
           auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kRotation, 0);
@@ -624,7 +622,7 @@ ply::write(
 
 //============================================================================
 
-void ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx) 
+bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx) 
 {
   if (propName == "x")
     channelIdx = 0;
@@ -691,11 +689,17 @@ void ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAtt
     kAttrLabel = KnownAttributeLabel::kSH_coefficients;
     channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
     channelIdx = 16 * (channelIdx / 15)  + (channelIdx % 15) + 1;
+    if (channelIdx > 47) {
+      std::cerr << "Error: can not support (" << propName << ")" << std::endl;
+      return false;
+    }
   } 
   else {
     kAttrLabel = KnownAttributeLabel::kOid;
     channelIdx = 0;
   }
+
+  return true;
 }
 
 bool ply::parseHeader(
@@ -729,10 +733,10 @@ bool ply::parseHeader(
       
       KnownAttributeLabel attrLabel;
       int channel;
-      stringToAttributeLabelAndChannel(nameStr, attrLabel, channel);
+      if (!stringToAttributeLabelAndChannel(nameStr, attrLabel, channel)) {
+        return false;
+      }
       properties.push_back({nameStr, attrLabel, channel, stringToPlyType(typeStr)});
-      if (nameStr != "x" && nameStr != "y" && nameStr != "z")
-        cloud.setAttribute(attrLabel);
     }
     else if (token == "end_header") {
       cloud.resize(vertexCount);
@@ -808,6 +812,8 @@ std::vector<int> getAttrIndices(const AttributeDescription& desc, const std::vec
 
     if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
     {
+      if (prop.attr_idx < 0) continue;
+
       if (int(desc.params.sh_coefficient_label) == (prop.channel % 16)) {
         target_idx = prop.channel / 16;
       }

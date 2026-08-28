@@ -764,7 +764,7 @@ encodePredictiveGeometry(
   if (cloud.hasSHCoefficients())
     outCloud.setNumSHCoeffs(cloud.getNumSHCoeffs());
   outCloud.addRemoveAttributes(cloud.hasColors(), cloud.hasReflectances()
-	  , cloud.hasOpacities(), cloud.hasScales(), cloud.hasRotations(), cloud.hasSHCoefficients());
+	  , cloud.hasOpacities(), cloud.hasScales(), cloud.hasScalarRotations(), cloud.hasRotations(), cloud.hasSHCoefficients());
   outCloud.resize(numPoints);
 
   // storage for spherical point co-ordinates determined in angular mode
@@ -877,10 +877,10 @@ encodePredictiveGeometry(
         outCloud.setOpacity(i, cloud.getOpacity(srcIdx));
       if (cloud.hasScales())
         outCloud.setScale(i, cloud.getScale(srcIdx));
-      if (cloud.hasRotations()) {
-        outCloud.setRotationVec(i, cloud.getRotationVec(srcIdx));
+      if (cloud.hasScalarRotations())
         outCloud.setRotationScalar(i, cloud.getRotationScalar(srcIdx));
-      }
+      if (cloud.hasRotations())
+        outCloud.setRotationVec(i, cloud.getRotationVec(srcIdx));
       if (cloud.hasSHCoefficients()) {
         for (int k = 0; k < cloud.getNumSHCoeffs(); k++)
           outCloud.setSHCoefficient(k, i, cloud.getSHCoefficient(k, srcIdx));

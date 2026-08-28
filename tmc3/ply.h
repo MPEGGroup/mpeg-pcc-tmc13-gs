@@ -155,7 +155,7 @@ namespace ply {
     int attr_idx;
   };
 
-  void stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx);
+  bool stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx);
 
   bool parseHeader(std::ifstream& ifs, PCCPointSet3& cloud, Format& format, std::vector<PropertyInfo>& properties);
 

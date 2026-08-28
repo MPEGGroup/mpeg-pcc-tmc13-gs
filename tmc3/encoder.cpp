@@ -1100,7 +1100,7 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 	  dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(
     src.hasColors(), src.hasReflectances(), src.hasOpacities(),
-    src.hasScales(), src.hasRotations(), src.hasSHCoefficients());		
+    src.hasScales(), src.hasScalarRotations(), src.hasRotations(), src.hasSHCoefficients());		
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -1121,9 +1121,12 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 		if (src.hasScales())
 			dst.setScale(i, src.getScale(inputIdx));
 
+    if (src.hasScalarRotations()) {
+			dst.setRotationScalar(i, src.getRotationScalar(inputIdx));
+    }
+
 		if (src.hasRotations()) {
 			dst.setRotationVec(i, src.getRotationVec(inputIdx));
-			dst.setRotationScalar(i, src.getRotationScalar(inputIdx));
 		}
 
 		if (src.hasSHCoefficients()) {
@@ -1164,7 +1167,7 @@ getPartition(
   if (src.hasSHCoefficients())
     dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
-	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+	  src.hasOpacities(), src.hasScales(), src.hasScalarRotations(), src.hasRotations(), src.hasSHCoefficients());
   dst.resize(size);
 
   int dstIdx = 0;
@@ -1185,10 +1188,11 @@ getPartition(
 			if (src.hasScales())
 				dst.setScale(dstIdx, src.getScale(srcIdx));
 
-			if (src.hasRotations()) {
-				dst.setRotationVec(dstIdx, src.getRotationVec(srcIdx));
+			if (src.hasScalarRotations()) 
 				dst.setRotationScalar(dstIdx, src.getRotationScalar(srcIdx));
-			}
+
+			if (src.hasRotations()) 
+				dst.setRotationVec(dstIdx, src.getRotationVec(srcIdx));
 
 			if (src.hasSHCoefficients()) {
 				for (int k = 0; k < src.getNumSHCoeffs(); k++)

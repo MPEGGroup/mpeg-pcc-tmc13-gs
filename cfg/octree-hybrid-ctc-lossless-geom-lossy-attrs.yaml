@@ -140,6 +140,7 @@ categories:
        - calcQPLayerOffsetsEnabled: 0
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 
+       - numSHCoeffBandsMinus1: 3
        - ""
        - "# SH coefficients : band 0 (DC) ----------"
        - qp:

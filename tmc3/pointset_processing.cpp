@@ -95,7 +95,7 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
   if (src.hasSHCoefficients())
     dst.cloud.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
-	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+	  src.hasOpacities(), src.hasScales(), src.hasScalarRotations(), src.hasRotations(), src.hasSHCoefficients());
   return dst;
 }
 
@@ -183,7 +183,7 @@ quantizePositions(
     if (src.hasSHCoefficients())
       dst->setNumSHCoeffs(src.getNumSHCoeffs());
 		dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
-		src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+		src.hasScales(), src.hasScalarRotations(), src.hasRotations(), src.hasSHCoefficients());
     dst->resize(numSrcPoints);
   }
 
@@ -220,10 +220,15 @@ quantizePositions(
 		  dst->setScale(i, src.getScale(i));
   }
 
+  if (src.hasScalarRotations()) {
+    for (int i = 0; i < numSrcPoints; ++i) {
+      dst->setRotationScalar(i, src.getRotationScalar(i));
+    }
+  }
+
   if (src.hasRotations()) {
     for (int i = 0; i < numSrcPoints; ++i) {
       dst->setRotationVec(i, src.getRotationVec(i));
-      dst->setRotationScalar(i, src.getRotationScalar(i));
     }
   }
 

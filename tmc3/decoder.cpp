@@ -357,36 +357,10 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kGeometryBrick);
   std::cout << "positions bitstream size " << buf.size() << " B\n";
 	
-  bool hasColour = false;
-  bool hasReflectance = false;
-  bool hasOpacity = false;
-  bool hasScale = false;
-  bool hasRotation = false;
-  bool hasSHCoefficient = false;
-
-  for (auto attrSet : _sps->attributeSets) {
-    if (attrSet.attributeLabel == KnownAttributeLabel::kColour)
-      hasColour |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kReflectance)
-      hasReflectance |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kOpacity)
-      hasOpacity |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kScale)
-      hasScale |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kRotation)
-      hasRotation |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-      hasSHCoefficient |= true;						
-      assert(attrSet.params.num_sh_coefficient_degrees_minus1 >= 0);
-      int numSHBandsMinus1 = attrSet.params.num_sh_coefficient_degrees_minus1;
-      _currentPointCloud.setNumSHCoeffsWithNumBandsMinus1(numSHBandsMinus1);
-		}
-	}
-
 	_currentPointCloud.clear();
-  _currentPointCloud.addRemoveAttributes(
-    hasColour, hasReflectance, hasOpacity, hasScale, hasRotation,
-    hasSHCoefficient);
+  for (auto& attrSet : _sps->attributeSets) {
+    _currentPointCloud.activateAttribute(attrSet);
+	}
 
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
   clock_user.start();

@@ -134,7 +134,8 @@ categories:
        - bitdepth: 12
        - calcQPLayerOffsetsEnabled: 0
        - refResolutionWidth: '${width}' 
-       - refResolutionHeight: '${height}'        
+       - refResolutionHeight: '${height}'    
+       - numSHCoeffBandsMinus1: 3
        - ""
        - "# SH coefficients : band 0 (DC) ----------"
        - qp: 4

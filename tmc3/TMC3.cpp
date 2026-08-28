@@ -1128,7 +1128,11 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 
 	("numSHCoeffBandsMinus1", 
 		params_attr.desc.params.num_sh_coefficient_degrees_minus1, 3,
-		"number of SH coefficient bands.")
+    "number of SH coefficient bands.\n"
+    "   <0: Clipped to 0.\n"
+    "  0-3: Force coding up to the specified degree.\n"
+    "   >3: Clipped to 3.\n"
+    )
 
   ("shCoefficientLabel",
     params_attr.desc.params.sh_coefficient_label, SHCoefficientLabel::kBand0_Order0,
@@ -1636,11 +1640,19 @@ sanitizeEncoderOpts(
 				attrMeta.sh_dc_coefficient_flag = false;
 			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
 			attrMeta.shCoefficientParameterPresent = true;
-		      
-			if (attrMeta.num_sh_coefficient_degrees_minus1 > 3)
-				attrMeta.num_sh_coefficient_degrees_minus1 = 3;
-			else if (attrMeta.num_sh_coefficient_degrees_minus1 < 0)
-				attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+		  
+      int numShBandMinus1 = attrMeta.num_sh_coefficient_degrees_minus1;
+      if (numShBandMinus1 > 3)
+        attrMeta.num_sh_coefficient_degrees_minus1 = 3;
+      else if (numShBandMinus1 < 0)
+        attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+      
+      int numShCoefficients = ((numShBandMinus1+1) * (numShBandMinus1+1));
+      if (int(attrMeta.sh_coefficient_label) >= numShCoefficients)
+      {
+        const auto& SH_label = attr_sps.params.sh_coefficient_label;
+        err.error() << "Invalid numSHCoeffBandsMinus1 ("<< attrMeta.num_sh_coefficient_degrees_minus1 <<") for " << attr_sps << "s_" << (int)SH_label <<".\n";
+      }
 		}
 
     // Assume that YCgCo is actually YCgCoR for now
@@ -1987,16 +1999,9 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   std::string srcName{expandNum(params->uncompressedDataPath, frameNum)};
   PCCPointSet3 pointCloud;
 
-	int numBandsMinus1 = 3;
-	for (int i = 0; i < params->encoder.sps.attributeSets.size(); i++) {
-    auto tmp = params->encoder.sps.attributeSets[i];
-    if (tmp.attributeLabel.known_attribute_label
-      == KnownAttributeLabel::kSH_coefficients
-			&& tmp.params.sh_dc_coefficient_flag) {
-      numBandsMinus1 = tmp.params.num_sh_coefficient_degrees_minus1;
-		}
+	for (auto& desc: params->encoder.sps.attributeSets) {
+    pointCloud.activateAttribute(desc);
 	}
-  pointCloud.setNumSHCoeffsWithNumBandsMinus1(numBandsMinus1);
 
   if (
     !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->encoder.externalPrePost)
@@ -2036,6 +2041,12 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (!codeOpacity)
 	  pointCloud.removeOpacities();
   assert(codeOpacity == pointCloud.hasOpacities());
+
+  bool codeRotationW = hasAttr("rotationW");
+  if (!codeRotationW) {
+	  pointCloud.removeScalarRotations();
+  }
+  assert(codeRotationW == pointCloud.hasScalarRotations());
 
   bool codeRotation = hasAttr("rotationXYZ");
   if (!codeRotation) {
