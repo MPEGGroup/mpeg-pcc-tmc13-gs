@@ -145,6 +145,7 @@ file(GLOB PROJECT_CPP_FILES
   "pcc_chrono.cpp"
   "ply.cpp"
   "pointset_processing.cpp"
+  "transform.cpp"
   "quantization.cpp"
   "tables.cpp"
   "../dependencies/program-options-lite/*.cpp"

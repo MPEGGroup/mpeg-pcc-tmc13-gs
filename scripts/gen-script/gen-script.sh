@@ -48,6 +48,9 @@ MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 ## Experiment name
 JOBNAME="TM13-GS-v2"
 
+## Encoder flags
+enc_flags=""
+
 ## Experiment settings
 CFG_DIR=cfg
 AUTO_RUN=2              # 0:off, 1:run_local, 2:run_slurm 
@@ -270,10 +273,10 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                     SRC_PLY="${FILE/.camerapos/}"
                     if [ $FLAG_EXT_PP == 1 ]; then
                         echo "$PYTHON ${PRE_SCRIPT} -i \"$SRC_PLY\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.pre.ply\""
-                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$RESULT_DIR/$FRAME.pre.ply\""
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$RESULT_DIR/$FRAME.pre.ply\" ENCFLAGS=\"${enc_flags}\""
                         echo "$PYTHON \"$POST_SCRIPT\" -i \"$RESULT_DIR/$FRAME.pre.ply.bin.decoded.ply\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\""
                     else
-                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\""
+                        echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$SRC_PLY\" ENCFLAGS=\"${enc_flags}\""
                     fi
                     echo "touch $OUT/jobs/done/gpcc/\${SLURM_JOB_ID:-UNDEFINED}"
                 } > "$JOBFILE"

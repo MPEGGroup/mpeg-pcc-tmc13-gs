@@ -42,6 +42,115 @@
 #include "hls.h"
 
 namespace pcc {
+
+//============================================================================
+// Supports both double and fixed-point data paths
+class SHBufferView {
+public:
+    // Layout: for each band l and channel ch, buffer[l*3 + ch] points to array of pointCount doubles
+    SHBufferView(double** buffers, int numBands, size_t pointCount)
+        : buffers_(buffers), numBands_(numBands), pointCount_(pointCount) {}
+
+    // Construct with fixed-point buffers for full FXP support
+    SHBufferView(double** buffers, int64_t** fxpBuffers, int* fxpScale, int numBands, size_t pointCount)
+        : buffers_(buffers), fxpBuffers_(fxpBuffers), fxpScale_(fxpScale), numBands_(numBands), pointCount_(pointCount) {}
+
+    // Access SH coefficient at (point, band, channel) - non-const version (double)
+    inline double& sh(size_t pointIdx, int band, int channel) {
+        return buffers_[band * 3 + channel][pointIdx];
+    }
+
+    // Access SH coefficient at (point, band, channel) - const version (double)
+    inline const double& sh(size_t pointIdx, int band, int channel) const {
+        return buffers_[band * 3 + channel][pointIdx];
+    }
+
+    // Access for fixed-point data
+    inline int64_t& shFxp(size_t pointIdx, int band, int channel) {
+        return fxpBuffers_[band * 3 + channel][pointIdx];
+    }
+    inline const int64_t& shFxp(size_t pointIdx, int band, int channel) const {
+        return fxpBuffers_[band * 3 + channel][pointIdx];
+    }
+
+    // Access/modify fixed-point scale for a band
+    inline int& fxpScale(int band) { return fxpScale_[band]; }
+    inline int fxpScale(int band) const { return fxpScale_[band]; }
+
+    // Set fixed-point buffer pointers
+    void setFxpBuffers(int64_t** fxpBuffers, int* fxpScale) {
+        fxpBuffers_ = fxpBuffers;
+        fxpScale_ = fxpScale;
+    }
+
+    // Check if fixed-point buffers are available
+    bool hasFxpBuffers() const { return fxpBuffers_ != nullptr && fxpScale_ != nullptr; }
+
+    size_t pointCount() const { return pointCount_; }
+    int numBands() const { return numBands_; }
+
+    // Get raw buffer pointer for a specific band and channel
+    double* getBuffer(int band, int channel) { return buffers_[band * 3 + channel]; }
+    const double* getBuffer(int band, int channel) const { return buffers_[band * 3 + channel]; }
+    int64_t* getFxpBuffer(int band, int channel) { return fxpBuffers_[band * 3 + channel]; }
+    const int64_t* getFxpBuffer(int band, int channel) const { return fxpBuffers_[band * 3 + channel]; }
+
+private:
+    double** buffers_;      // Array of (numBands * 3) buffer pointers
+    int64_t** fxpBuffers_ = nullptr;  // Optional fixed-point buffers
+    int* fxpScale_ = nullptr;         // Optional fixed-point scales per band
+    int numBands_;
+    size_t pointCount_;
+};
+
+//============================================================================
+// GSPoint: unified SH coefficient storage for 2D transform / NQ pipeline
+
+struct GSPoint {
+    double sh[16][3] = {};
+    int64_t shFxp[16][3] = {};
+    int8_t fxpScale[16] = {};
+};
+
+//============================================================================
+// ShQuantRegion: per-region parameters for non-uniform quantization
+
+struct ShQuantRegion {
+    std::vector<double> region_start_real;
+    std::vector<int> tp_int;
+    double min_offset;
+    std::vector<int64_t> region_start_real_fxp;
+    int64_t min_offset_fxp;
+};
+
+//============================================================================
+// SH 2D transform and NQ functions (implemented in transform.cpp / ply.cpp)
+
+void initializeShTransformParams(AttributeParameters& params);
+
+// Original GSPoint-based interface (kept for NQ pipeline compatibility)
+bool sphericalHarmonicsTransform(bool withSHCoefficients, std::vector<GSPoint>& gsBuf,
+    size_t pointCount, AttributeParameters& params);
+
+bool sphericalHarmonicsInvTransform(bool withSHCoefficients, std::vector<GSPoint>& gsBuf,
+    size_t pointCount, AttributeParameters& params);
+
+// Zero-copy SHBufferView interface (Option 3 - avoids gsBuf construction overhead)
+bool sphericalHarmonicsTransform(bool withSHCoefficients, SHBufferView& shView,
+    size_t pointCount, AttributeParameters& params);
+
+bool sphericalHarmonicsInvTransform(bool withSHCoefficients, SHBufferView& shView,
+    size_t pointCount, AttributeParameters& params);
+
+// Original GSPoint-based interface (deprecated, kept for backward compatibility)
+bool extractSHQuantRegions(bool withSHCoefficients, const std::vector<GSPoint>& gsBuf,
+    size_t pointCount, std::vector<AttributeDescription>& attrDescs,
+    const double dc_min, const double dc_max, const double ac_min, const double ac_max);
+
+// Zero-copy SHBufferView interface (preferred)
+bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
+    size_t pointCount, std::vector<AttributeDescription>& attrDescs);
+
 namespace ply {
 
   //============================================================================

@@ -316,6 +316,28 @@ struct OpaqueAttributeParameter {
 };
 
 //============================================================================
+// SH Transform and Quantization scale constants
+
+constexpr int DCT_SCALE = 8;
+constexpr int SH_SCALE = 16;
+constexpr int KLT_SCALE = 10;
+constexpr int KLT_SIGMA_SCALE = 16;
+constexpr int KLT_MEAN_SCALE = SH_SCALE;
+constexpr int SS_SCALE = 12;
+
+//============================================================================
+// KLT parameters for each SH group
+
+struct PCCKltParameters {
+    std::vector<std::vector<double>> eigvec;
+    std::vector<double>              mean;
+    std::vector<double>              sigma;
+    std::vector<std::vector<int64_t>> eigvecFxp;
+    std::vector<int64_t>              meanFxp;
+    std::vector<int64_t>              sigmaFxp;
+};
+
+//============================================================================
 
 struct AttributeParameters {
   // indicates if the cicp attribute parameter is valid
@@ -348,6 +370,29 @@ struct AttributeParameters {
   RotationLabel rotation_label;
   EulerAngleUnitType euler_angle_unit_type;
 
+  // SH 2D Transform
+  bool gsdTransform2dPresentFlag_ = false;
+  bool dataAdaptiveShTransformEnabled_ = true;
+  /// DC PCA Flag
+  bool gsdPcaDcFlag_ = false;
+  std::vector<int> shTrTypeCol_;
+  std::vector<std::vector<int>> shTrGrpRow_;
+  std::vector<int> shTrTypeRow_;
+  std::vector<int> shKltFlag_;
+  std::vector<PCCKltParameters> shKltParams_;
+
+  // SH Non-Uniform Quantization
+  bool enableShNonUniformQuantization_ = false;
+  bool shAdaptiveTpOptEnabled_ = false;
+  int shNqRangeMode_ = 0;  // 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band
+  std::vector<int> shNumRegionsMinus1_;
+  std::vector<int> shTransitionPoints_;
+  std::vector<double> shStepSizes_;
+  std::vector<int64_t> shStepSizesFxp_;
+  int64_t min_offset_fxp[3] = {};
+  double min_offset[3] = {};
+  std::vector<int> shNumBitsForTransitionPoint_;
+
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;
 
@@ -368,6 +413,23 @@ struct AttributeParameters {
     opaqueParameters.clear();
 		shCoefficientParameterPresent = false;
 		rotationParameterPresent = false;
+
+    gsdTransform2dPresentFlag_ = false;
+    dataAdaptiveShTransformEnabled_ = false;
+    gsdPcaDcFlag_ = false;
+    shTrTypeCol_.clear();
+    shTrGrpRow_.clear();
+    shTrTypeRow_.clear();
+    shKltFlag_.clear();
+    shKltParams_.clear();
+    enableShNonUniformQuantization_ = false;
+    shAdaptiveTpOptEnabled_ = false;
+    shNqRangeMode_ = 0;
+    shNumRegionsMinus1_.clear();
+    shNumBitsForTransitionPoint_.clear();
+    shTransitionPoints_.clear();
+    shStepSizes_.clear();
+    shStepSizesFxp_.clear();
   }
 };
 

@@ -53,7 +53,7 @@ namespace pcc {
 
 //============================================================================
 
-void RGB2YUV(double (&src)[3])
+static void RGB2YUV(double (&src)[3])
 {
   double R = src[0];
   double G = src[1];
@@ -61,9 +61,9 @@ void RGB2YUV(double (&src)[3])
   src[0] = +0.2126 * R + 0.7152 * G + 0.0722 * B;
   src[1] = -0.1146 * R - 0.3854 * G + 0.5 * B;
   src[2] = +0.5 * R - 0.4542 * G - 0.0458 * B;
-  
+
 }
-void YUV2RGB(double (&src)[3])  
+static void YUV2RGB(double (&src)[3])
 {
   double Y = src[0];
   double U = src[1];
@@ -71,7 +71,216 @@ void YUV2RGB(double (&src)[3])
   src[0] = Y + 1.5748 * V;
   src[1] = Y - 0.1873 * U - 0.4681 * V;
   src[2] = Y + 1.8556 * U;
-  
+
+}
+
+//============================================================================
+
+int64_t adjust_frac_bits(int64_t val, int curr_frac_bits, int final_frac_bits)
+{
+    if (curr_frac_bits < final_frac_bits) {
+        int shift = final_frac_bits - curr_frac_bits;
+        val = val << shift;
+    }
+    else {
+        int shift = curr_frac_bits - final_frac_bits;
+        val = val >> shift;
+    }
+    return val;
+}
+
+//============================================================================
+static double computeShAcTop10Correlation(SHBufferView& shView, size_t pointCount) {
+  int numSHCoeffs = shView.numBands();
+  if (pointCount == 0 || numSHCoeffs <= 1) return 0.0;
+
+  const int acCount = numSHCoeffs - 1;  // bands 1..15
+  std::vector<double> acMean(acCount, 0.0);
+  for (size_t p = 0; p < pointCount; ++p) {
+    for (int l = 0; l < acCount; ++l) {
+      acMean[l] += (shView.sh(p, l + 1, 0) + shView.sh(p, l + 1, 1) + shView.sh(p, l + 1, 2)) / 3.0;
+    }
+  }
+  for (int l = 0; l < acCount; ++l) acMean[l] /= (double)pointCount;
+
+  std::vector<double> var(acCount, 0.0);
+  std::vector<double> cov(acCount * acCount, 0.0);
+  for (size_t p = 0; p < pointCount; ++p) {
+    std::vector<double> centered(acCount);
+    for (int l = 0; l < acCount; ++l) {
+      centered[l] = (shView.sh(p, l + 1, 0) + shView.sh(p, l + 1, 1) + shView.sh(p, l + 1, 2)) / 3.0 - acMean[l];
+    }
+    for (int r = 0; r < acCount; ++r) {
+      var[r] += centered[r] * centered[r];
+      for (int c = r + 1; c < acCount; ++c) cov[r * acCount + c] += centered[r] * centered[c];
+    }
+  }
+  for (int r = 0; r < acCount; ++r) {
+    var[r] /= (double)(pointCount > 1 ? pointCount - 1 : 1);
+    for (int c = r + 1; c < acCount; ++c)
+      cov[r * acCount + c] /= (double)(pointCount > 1 ? pointCount - 1 : 1);
+  }
+
+  std::vector<double> absCorrs;
+  for (int r = 0; r < acCount; ++r) {
+    for (int c = r + 1; c < acCount; ++c) {
+      double denom = std::sqrt(std::max(1e-20, var[r] * var[c]));
+      absCorrs.push_back(std::abs(cov[r * acCount + c] / denom));
+    }
+  }
+  std::sort(absCorrs.rbegin(), absCorrs.rend());
+  int topN = std::min(10, (int)absCorrs.size());
+  double sum = 0.0;
+  for (int i = 0; i < topN; ++i) sum += absCorrs[i];
+  return topN > 0 ? sum / topN : 0.0;
+}
+
+//============================================================================
+bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
+    size_t pointCount, std::vector<AttributeDescription>& attrDescs) {  if (pointCount == 0 || !withSHCoefficients) return false;
+
+  int numSHCoeffs = shView.numBands();
+  const uint32_t bitDepth = attrDescs[0].bitdepth;
+  const uint32_t max_quant_val = (1u << bitDepth) - 1;
+
+  const bool useAdaptiveThresholds = attrDescs[0].params.shAdaptiveTpOptEnabled_
+                                   && attrDescs[0].params.dataAdaptiveShTransformEnabled_;
+
+  int thresh1 = 15, thresh2 = 30, thresh3 = 40, thresh4 = 5, thresh5 = 10;
+  const int idx3_arr[3] = { 11, 13, 12 };
+  const int idx2_arr[3] = { 10, 14, 15 };
+
+  if (useAdaptiveThresholds) {
+    double sum1 = 0.0, sumSq1 = 0.0;
+    double sum3 = 0.0, sumSq3 = 0.0;
+    const size_t count1 = pointCount * 9 * 3;
+    const size_t count3 = pointCount * 3 * 3;
+
+    for (size_t p = 0; p < pointCount; ++p) {
+      for (size_t l = 1; l <= 9; ++l) {
+        for (int ch = 0; ch < 3; ++ch) {
+          double val = shView.sh(p, l, ch);
+          sum1 += val;
+          sumSq1 += val * val;
+        }
+      }
+      for (int i = 0; i < 3; ++i) {
+        size_t l = idx3_arr[i];
+        for (int ch = 0; ch < 3; ++ch) {
+          double val = shView.sh(p, l, ch);
+          sum3 += val;
+          sumSq3 += val * val;
+        }
+      }
+    }
+
+    double mean1 = sum1 / count1;
+    double mean3 = sum3 / count3;
+    double var1 = (sumSq1 / count1) - (mean1 * mean1);
+    double var3 = (sumSq3 / count3) - (mean3 * mean3);
+    double std1 = std::sqrt(std::max(0.0, var1));
+    double std3 = std::sqrt(std::max(0.0, var3));
+
+    double stdRatio = std3 > 1e-10 ? std1 / std3 : 0.0;
+    if (stdRatio > 2.0 && stdRatio < 10.0) {
+      thresh1 = 10; thresh2 = 15; thresh3 = 20; thresh4 = 25; thresh5 = 30;
+    }
+  }
+
+  for (size_t l = 0; l < std::min(numSHCoeffs, 16); ++l) {
+    auto& params = attrDescs[l].params;
+    params.shNumRegionsMinus1_.assign(3, 2);
+    params.shTransitionPoints_.clear();
+    params.shStepSizes_.clear();
+    params.shStepSizesFxp_.clear();
+    params.shNumBitsForTransitionPoint_.assign(3, bitDepth);
+
+    for (int ch = 0; ch < 3; ++ch) {
+      std::vector<double> values;
+      values.reserve(pointCount);
+      for (size_t p = 0; p < pointCount; ++p) {
+        values.push_back(shView.sh(p, l, ch));
+      }
+
+      double tp_low, tp_high;
+
+      if (useAdaptiveThresholds) {
+        double perc_low, perc_high;
+        if ( l == 0 ) {
+          if ( ch == 0 ) {
+            perc_low  = thresh4;
+            perc_high = 100 - thresh4;
+          } else {
+            perc_low  = thresh5;
+            perc_high = 100 - thresh5;
+          }
+        } else if ( l >= 1 && l <= 9 ) {
+          perc_low  = thresh1;
+          perc_high = 100 - thresh1;
+        } else if ( l == static_cast<size_t>( idx2_arr[0] ) || l == static_cast<size_t>( idx2_arr[1] ) ||
+                    l == static_cast<size_t>( idx2_arr[2] ) ) {
+          perc_low  = thresh2;
+          perc_high = 100 - thresh2;
+        } else if ( l == static_cast<size_t>( idx3_arr[0] ) || l == static_cast<size_t>( idx3_arr[1] ) ||
+                    l == static_cast<size_t>( idx3_arr[2] ) ) {
+          perc_low  = thresh3;
+          perc_high = 100 - thresh3;
+        } else {
+          perc_low  = 25.0;
+          perc_high = 75.0;
+        }
+
+        size_t lowIdx  = static_cast<size_t>( std::round( perc_low / 100.0 * pointCount ) );
+        size_t highIdx = static_cast<size_t>( std::round( perc_high / 100.0 * pointCount ) );
+        lowIdx  = std::min( lowIdx, pointCount > 0 ? pointCount - 1 : 0 );
+        highIdx = std::min( highIdx, pointCount > 0 ? pointCount - 1 : 0 );
+
+        std::nth_element( values.begin(), values.begin() + lowIdx, values.end() );
+        tp_low = values[lowIdx];
+
+        std::nth_element( values.begin(), values.begin() + highIdx, values.end() );
+        tp_high = values[highIdx];
+      } else {
+        double ratio = 0.25;
+        size_t first_transition_index = size_t(pointCount * ratio);
+        size_t second_transition_index = size_t (pointCount * (1 - ratio));
+        std::nth_element( values.begin(), values.begin() + first_transition_index, values.end() );
+        tp_low = values[first_transition_index];
+
+        std::nth_element( values.begin(), values.begin() + second_transition_index, values.end() );
+        tp_high = values[second_transition_index];
+      }
+
+      double minLim = params.attr_offset;
+      double maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
+      double Range = maxLim - minLim;
+      double d_code = std::round(Range * (1 << bitDepth) / (double)(1ull << params.attr_frac_bits));
+
+      double s_fine = d_code / (double)(max_quant_val+1);
+      double s_coarse = d_code / (double)((max_quant_val + 1) / 2);
+
+      int tp_low_quant  = static_cast<int>( std::round( ( tp_low - minLim ) / d_code * max_quant_val ) );
+      int tp_high_quant = static_cast<int>( std::round( ( tp_high - minLim ) / d_code * max_quant_val ) );
+
+      params.shTransitionPoints_.push_back( std::max( 0, std::min( static_cast<int>( max_quant_val - 1 ), tp_low_quant ) ) );
+      params.shTransitionPoints_.push_back( std::max( tp_low_quant + 1, std::min( static_cast<int>( max_quant_val ), tp_high_quant ) ) );
+
+      params.shStepSizes_.push_back(s_coarse);
+      params.shStepSizes_.push_back(s_fine);
+      params.shStepSizes_.push_back(s_coarse);
+      const double ss_scale = pow(2.0, SS_SCALE);
+      int64_t s_coarseFxp = (int64_t)round(s_coarse * ss_scale);
+      int64_t s_fineFxp = (int64_t)round(s_fine * ss_scale);
+      if (s_fineFxp == 0) s_fineFxp = 1;
+      if (s_coarseFxp == 0) s_coarseFxp = 1;
+      params.shStepSizesFxp_.push_back(s_coarseFxp);
+      params.shStepSizesFxp_.push_back(s_fineFxp);
+      params.shStepSizesFxp_.push_back(s_coarseFxp);
+
+    }
+  }
+
+  return true;
 }
 
 static void
@@ -290,7 +499,30 @@ static void eulerToQuat(double rot[4])
 }
 
 const AttributeDescription& getAttributeDescription(
-  const std::vector<AttributeDescription>& attrDescs, 
+  const std::vector<AttributeDescription>& attrDescs,
+  KnownAttributeLabel attributeLabel, int index)
+{
+  for(auto& desc: attrDescs) {
+    if (desc.attributeLabel == attributeLabel)
+    {
+      if(desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+        if (int(desc.params.sh_coefficient_label) == index) return desc;
+      }
+      else if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
+        if (index == 0 && desc.attr_num_dimensions_minus1 == 2) return desc;
+        else if (index == 1 && desc.attr_num_dimensions_minus1 == 0) return desc;
+      }
+      else {
+        return desc;
+      }
+    }
+  }
+  assert(0);
+  return attrDescs[0];
+}
+
+AttributeDescription& getAttributeDescription(
+  std::vector<AttributeDescription>& attrDescs,
   KnownAttributeLabel attributeLabel, int index)
 {
   for(auto& desc: attrDescs) {
@@ -474,7 +706,110 @@ ply::write(
       }
     }
     
+
+    // PCA/NQ: inverse transform (streaming via chunked GSPoint buffer)
+    bool useGsdTransform2d = false;
+    bool useShNQ = false;
+    if (cloud.hasSHCoefficients()) {
+      auto param_sh = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0).params;
+      useGsdTransform2d = param_sh.gsdTransform2dPresentFlag_;
+      useShNQ = param_sh.enableShNonUniformQuantization_;
+    }
+
+    int numSHCoeffs = 0;
+    for (auto& desc : attrDescs) {
+      if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
+        numSHCoeffs++;
+    }
+
+    const AttributeDescription& desc_sh = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
+    AttributeParameters param_sh{};
+    if (cloud.hasSHCoefficients()) {
+      param_sh = desc_sh.params;
+    }
+    const uint32_t bitDepth_sh = desc_sh.bitdepth;
+
+    std::array<ShQuantRegion, 48> shRegions;
+    std::array<int, 48>           ssBaseOffsets;
+
+    if (useShNQ) {
+      for (int l = 0; l < numSHCoeffs; ++l) {
+        auto& params = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l).params;
+        int64_t minLim = params.attr_offset;
+        int64_t maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
+        int tpOffset = 0;
+        int ssOffset = 0;
+        for (int ch = 0; ch < 3; ++ch) {
+          int idx = l * 3 + ch;
+          int M = params.shNumRegionsMinus1_[ch];
+          ssBaseOffsets[idx] = ssOffset;
+
+          if (M > 0) {
+            int64_t d_code_fxp = ((maxLim - minLim) * (1 << bitDepth_sh) + ((1ull << params.attr_frac_bits) >> 1)) / (1ull << params.attr_frac_bits);
+            shRegions[idx].tp_int.resize(M);
+            shRegions[idx].region_start_real_fxp.resize(M + 1);
+            shRegions[idx].region_start_real_fxp[0] = minLim << SH_SCALE;
+
+            for (int m = 0; m < M; ++m) {
+              int tp_val = params.shTransitionPoints_[tpOffset + m];
+              shRegions[idx].tp_int[m] = tp_val;
+              int64_t buf = (tp_val * d_code_fxp) + (minLim << bitDepth_sh);
+              shRegions[idx].region_start_real_fxp[m + 1] =
+                  adjust_frac_bits(buf, bitDepth_sh, SH_SCALE);
+            }
+            shRegions[idx].min_offset_fxp = params.min_offset_fxp[ch];
+          }
+          tpOffset += M;
+          ssOffset += M + 1;
+        }
+      }
+    }
+
+    constexpr size_t kShChunkSize = 10000;
+    std::vector<GSPoint> gsChunk;
+    if (useGsdTransform2d || useShNQ) {
+      gsChunk.resize(kShChunkSize);
+    }
+
+    auto dequantShChunk = [&](size_t chunkStart, size_t chunkCount) {
+      for (size_t i = 0; i < chunkCount; ++i) {
+        size_t pt = chunkStart + i;
+        GSPoint& g = gsChunk[i];
+        for (int m = 0; m < numSHCoeffs; m++) {
+          g.fxpScale[m] = SH_SCALE;
+          auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
+          auto offset = desc.params.attr_offset;
+          auto attr_frac_bits = desc.params.attr_frac_bits;
+          auto attr_scale = desc.params.attr_scale_minus1 + 1;
+          for (int k = 0; k < 3; k++) {
+            int32_t attr = int32_t(cloud.getSHCoefficient(m, pt)[k]);
+            if (useShNQ && desc.params.shNumRegionsMinus1_[k] > 0) {
+              int idx = m * 3 + k;
+              int M = desc.params.shNumRegionsMinus1_[k];
+              const auto& reg = shRegions[idx];
+              int region_idx = 0;
+              while (region_idx < M && attr > reg.tp_int[region_idx]) { region_idx++; }
+              int64_t prev_idx_fxp = (region_idx > 0) ? (reg.tp_int[region_idx - 1] << SH_SCALE) : reg.min_offset_fxp;
+              int64_t step_vec_fxp = desc.params.shStepSizesFxp_[ssBaseOffsets[idx] + region_idx];
+              int64_t base_real_fxp = reg.region_start_real_fxp[region_idx] << SS_SCALE;
+              int64_t attr_fxp = attr << SH_SCALE;
+              int64_t val_fxp = base_real_fxp + (attr_fxp - prev_idx_fxp) * step_vec_fxp;
+              g.shFxp[m][k] = val_fxp >> SS_SCALE;
+            } else {
+              int64_t val = attr * attr_scale + (offset << attr_frac_bits);
+              g.shFxp[m][k] = adjust_frac_bits(val, attr_frac_bits, SH_SCALE);
+            }
+          }
+        }
+      }
+      sphericalHarmonicsInvTransform(true, gsChunk, chunkCount, param_sh);
+    };
+
     for (size_t i = 0; i < pointCount; ++i) {
+      if ((useGsdTransform2d || useShNQ) && (i % kShChunkSize == 0)) {
+        size_t chunkCount = std::min(kShChunkSize, pointCount - i);
+        dequantShChunk(i, chunkCount);
+      }
       Vec3<double> position = cloud[i] * positionScale + positionOffset;
       if (!asConformance) {
         Vec3<float> positionFloat;
@@ -484,10 +819,10 @@ ply::write(
         fout.write(
           reinterpret_cast<const char* const>(&positionFloat), sizeof(float) * 3);
       }
-      else 
+      else
         fout.write(
           reinterpret_cast<const char* const>(&position), sizeof(double) * 3);
-      
+
       if (cloud.hasColors()) {
         const Vec3<attr_t>& c = cloud.getColor(i);
         Vec3<uint8_t> val8b{uint8_t(c[0]), uint8_t(c[1]), uint8_t(c[2])};
@@ -505,45 +840,58 @@ ply::write(
 
       //for GS descs
 			if (cloud.hasSHCoefficients()) {
-				// SH DC
-        double shdc[3];
+				if (useGsdTransform2d || useShNQ) {
+					const size_t ci = i % kShChunkSize;
+					GSPoint& g = gsChunk[ci];
+					const float shScale = float(1 << SH_SCALE) * GS_PROPERTY_SCALE;
+					Vec3<float> val32b_dc{ float(g.shFxp[0][0])/shScale, float(g.shFxp[0][1])/shScale, float(g.shFxp[0][2])/shScale };
+					fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
+					for (int k = 0; k < 3; k++) {
+						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
+							float val32b_ac = float(g.shFxp[m][k])/shScale;
+							fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
+						}
+					}
+				} else {
+					double shdc[3];
         auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
         auto offset = desc.params.attr_offset;
         auto attr_frac_bits = desc.params.attr_frac_bits;
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
         for (int k = 0; k < 3; k++) {
           int32_t attr = int32_t(cloud.getSHCoefficient(0, i)[k]);
-          double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
+          double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
           shdc[k]= buf;
         }
 
         if (!externalPrePost)
           YUV2RGB(shdc);
 
-				Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
-				fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
+					Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
+					fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
 
-				// SH AC
+					// SH AC
         double shac[15][3];
-				for (int k = 0; k < 3; k++) {
-					for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
+					for (int k = 0; k < 3; k++) {
+						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
             desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
             offset = desc.params.attr_offset;
             attr_frac_bits = desc.params.attr_frac_bits;
             attr_scale     = desc.params.attr_scale_minus1 + 1;
             int32_t attr = int32_t(cloud.getSHCoefficient(m, i)[k]);
-            double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
+            double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
             shac[m-1][k] = buf;
+						}
 					}
-				}
         if (!externalPrePost)
           for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
             YUV2RGB(shac[m]);
 
         for (int k = 0; k < 3; k++) {
-					for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
-						float val32b_ac = float(shac[m-1][k])/GS_PROPERTY_SCALE;
-						fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
+						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
+							float val32b_ac = float(shac[m-1][k])/GS_PROPERTY_SCALE;
+							fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
+						}
 					}
 				}
 			}
@@ -565,7 +913,7 @@ ply::write(
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
         for (int k = 0; k < 3; k++) {
           int32_t attr = int32_t(cloud.getScale(i)[k]);
-          double buf = double(attr) * attr_scale / (1<<attr_frac_bits) + offset;
+          double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
           scale[k]= buf;
         }
 				Vec3<float> val32b{ float(scale[0])/GS_PROPERTY_SCALE, float(scale[1])/GS_PROPERTY_SCALE, float(scale[2])/GS_PROPERTY_SCALE };
@@ -865,13 +1213,17 @@ bool
 ply::convertColor (
   int pointCount,
   std::vector<double>& inputAttrBuf,
-  std::vector<AttributeDescription>& attrDescs, 
-  std::vector<PropertyInfo>& properties) 
+  std::vector<AttributeDescription>& attrDescs,
+  std::vector<PropertyInfo>& properties)
 {
   for (auto& desc : attrDescs)
   {
-    if (desc.attr_num_dimensions_minus1 == 2 
+    if (desc.attr_num_dimensions_minus1 == 2
         && desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+
+      // Skip SH color conversion when 2D transform is enabled — it handles its own column transform
+      if (desc.params.gsdTransform2dPresentFlag_)
+        continue;
 
       double* buf[3];
       std::vector<int> indices = getAttrIndices(desc, properties);
@@ -1096,10 +1448,20 @@ ply::read(
 
   std::vector<double> inputAttrBuf;
   readVertices(ifs, cloud, attrDescs, positionScale, format, properties, inputAttrBuf);
-  
+
+  // Check if any SH desc has 2D transform enabled
+  bool gsdTransform2dPresentFlag = false;
+  bool enableShNonUniformQuantization = false;
+  for (auto& desc : attrDescs) {
+    if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      if (desc.params.gsdTransform2dPresentFlag_) gsdTransform2dPresentFlag = true;
+      if (desc.params.enableShNonUniformQuantization_) enableShNonUniformQuantization = true;
+    }
+  }
+
   if (!externalPrePost)
   {
-    // Color conversion
+    // Color conversion (skips SH when gsdTransform2dPresentFlag)
     convertColor(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
 
     // Rotation and Scale conversion
@@ -1109,8 +1471,237 @@ ply::read(
     analyzeMinMax(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
   }
 
-  // Attributes Linear Quantization   
-  quantizationLinear(cloud, inputAttrBuf, attrDescs, properties);
+  if (gsdTransform2dPresentFlag || enableShNonUniformQuantization) {
+    int pointCount = cloud.getPointCount();
+
+    int numSHCoeffs = 0;
+    for (auto& desc : attrDescs) {
+      if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
+        numSHCoeffs++;
+    }
+
+    bool witSHCoefficients = (numSHCoeffs > 0);
+    auto& shParams = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0).params;
+
+    std::vector<double*> shBuffers(numSHCoeffs * 3);
+    std::vector<std::vector<int>> shIndices(numSHCoeffs);
+    for (int l = 0; l < numSHCoeffs; ++l) {
+      auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l);
+      shIndices[l] = getAttrIndices(desc, properties);
+      for (int ch = 0; ch < 3; ++ch) {
+        shBuffers[l * 3 + ch] = &inputAttrBuf[shIndices[l][ch] * pointCount];
+      }
+    }
+
+    SHBufferView shView(shBuffers.data(), numSHCoeffs, pointCount);
+
+    if (gsdTransform2dPresentFlag) {
+      bool useSharedAc;
+      if (shParams.shNqRangeMode_ == 1) {
+        useSharedAc = true;
+      } else if (shParams.shNqRangeMode_ == 2) {
+        useSharedAc = false;
+      } else {
+        double top10corr = computeShAcTop10Correlation(shView, pointCount);
+        useSharedAc = (top10corr > 0.5);
+      }
+
+      initializeShTransformParams(shParams);
+      sphericalHarmonicsTransform(witSHCoefficients, shView, pointCount, shParams);
+
+      if (useSharedAc) {
+        // Shared AC + lround: one DC range (band 0) + one AC range (bands 1-15)
+        Stats dcStat, acStat;
+        for (auto& desc : attrDescs) {
+          if (desc.attributeLabel != KnownAttributeLabel::kSH_coefficients)
+            continue;
+          Stats* target = (int(desc.params.sh_coefficient_label) == 0) ? &dcStat : &acStat;
+          std::vector<int> indices = getAttrIndices(desc, properties);
+          for (int c = 0; c < indices.size(); c++) {
+            double* buf = &inputAttrBuf[indices[c] * pointCount];
+            for (int i = 0; i < pointCount; i++) {
+              target->update(buf[i]);
+            }
+          }
+        }
+        auto applyStats = [](Stats& stat, AttributeParameters& params, int bitdepth) {
+          int rounded_min = static_cast<int>(std::lround(stat.min));
+          int rounded_max = static_cast<int>(std::lround(stat.max));
+          if (rounded_min == 0) rounded_min = -1;
+          if (rounded_max == 0) rounded_max = 1;
+          int64_t attr_frac_bits_scale = 1ll << params.attr_frac_bits;
+          int64_t bit_depth_scale = (1ll << bitdepth) - 1ll;
+          int64_t d_code = int64_t(rounded_max) - int64_t(rounded_min);
+          int64_t attr_scale = (d_code * attr_frac_bits_scale + (bit_depth_scale>>1)) / bit_depth_scale;
+          if (attr_scale <= 0) attr_scale = 1;
+          params.attr_offset = rounded_min;
+          params.attr_scale_minus1 = attr_scale - 1;
+        };
+        for (auto& desc : attrDescs) {
+          if (desc.attributeLabel != KnownAttributeLabel::kSH_coefficients)
+            continue;
+          if (int(desc.params.sh_coefficient_label) == 0) {
+            applyStats(dcStat, desc.params, desc.bitdepth);
+          } else {
+            applyStats(acStat, desc.params, desc.bitdepth);
+          }
+        }
+      } else {
+        // Per-band + floor/ceil: each band gets its own range
+        for (auto& desc : attrDescs) {
+          if (desc.attributeLabel != KnownAttributeLabel::kSH_coefficients)
+            continue;
+          Stats stat;
+          std::vector<int> indices = getAttrIndices(desc, properties);
+          for (int c = 0; c < indices.size(); c++) {
+            double* buf = &inputAttrBuf[indices[c] * pointCount];
+            for (int i = 0; i < pointCount; i++) stat.update(buf[i]);
+          }
+          int rounded_min = static_cast<int>(std::floor(stat.min));
+          int rounded_max = static_cast<int>(std::ceil(stat.max));
+          int64_t attr_frac_bits_scale = 1ll << desc.params.attr_frac_bits;
+          int64_t bit_depth_scale = (1ll << desc.bitdepth) - 1ll;
+          int64_t d_code = int64_t(rounded_max) - int64_t(rounded_min);
+          int64_t attr_scale = (d_code * attr_frac_bits_scale + (bit_depth_scale>>1)) / bit_depth_scale;
+          if (attr_scale <= 0) attr_scale = 1;
+          desc.params.attr_offset = rounded_min;
+          desc.params.attr_scale_minus1 = attr_scale - 1;
+        }
+      }
+    }
+
+    if (enableShNonUniformQuantization) {
+      extractSHQuantRegions(witSHCoefficients, shView, pointCount, attrDescs);
+
+      std::array<ShQuantRegion, 48> shRegions;
+      std::array<int, 48>           ssBaseOffsets;
+      const uint32_t bitDepth_sh = attrDescs[0].bitdepth;
+      const uint32_t max_index_sh = 1u << bitDepth_sh;
+
+      for (int l = 0; l < numSHCoeffs; ++l) {
+        auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l);
+        auto& params = desc.params;
+        int tpOffset = 0;
+        int ssOffset = 0;
+        for (int ch = 0; ch < 3; ++ch) {
+          int idx = l * 3 + ch;
+          int M = params.shNumRegionsMinus1_[ch];
+          double minLim = params.attr_offset;
+          double maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
+          double Range = maxLim - minLim;
+          double d_code = std::round(Range * (1 << bitDepth_sh) / (double)(1ull << params.attr_frac_bits));
+          ssBaseOffsets[idx] = ssOffset;
+
+          if (M > 0) {
+            shRegions[idx].tp_int.resize(M);
+            shRegions[idx].region_start_real.resize(M + 1);
+            shRegions[idx].region_start_real[0] = minLim;
+
+            for (int m = 0; m < M; ++m) {
+              int tp_val = params.shTransitionPoints_[tpOffset + m];
+              shRegions[idx].tp_int[m] = tp_val;
+              shRegions[idx].region_start_real[m + 1] = tp_val * d_code / static_cast<double>(max_index_sh) + minLim;
+            }
+            shRegions[idx].min_offset =
+                shRegions[idx].tp_int[0] - (shRegions[idx].region_start_real[1] - minLim) / params.shStepSizes_[ssOffset];
+            const double sh_scale = (1 << SH_SCALE);
+            params.min_offset_fxp[ch] = (int64_t)round(shRegions[idx].min_offset * sh_scale);
+            params.min_offset[ch] = shRegions[idx].min_offset;
+          }
+          tpOffset += M;
+          ssOffset += M + 1;
+        }
+      }
+
+      const int64_t clip_max = (1ll << 16) - 1;
+      for (int l = 0; l < numSHCoeffs; ++l) {
+        auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l);
+        auto& params = desc.params;
+        auto attr_frac_bits_scale = 1ll << params.attr_frac_bits;
+        int64_t offset = params.attr_offset;
+        int64_t attr_scale = params.attr_scale_minus1 + 1;
+
+        for (int ch = 0; ch < 3; ++ch) {
+          double* src = &inputAttrBuf[getAttrIndices(desc, properties)[ch] * pointCount];
+          auto& dst = cloud.getAttrVec(desc);
+
+          for (int i = 0; i < pointCount; i++) {
+            double attr = src[i];
+            int idx = l * 3 + ch;
+            int M = params.shNumRegionsMinus1_[ch];
+            if (M == 0) {
+              dst[i][ch] = attr_t(PCCClip(
+                  std::llround((attr - offset) * attr_frac_bits_scale / attr_scale),
+                  0, clip_max));
+            } else {
+              const auto& reg = shRegions[idx];
+              int region_idx = 0;
+              while (region_idx < M && attr > reg.region_start_real[region_idx + 1]) { region_idx++; }
+              double prev_idx = (region_idx > 0) ? reg.tp_int[region_idx - 1] : reg.min_offset;
+              double step_vec = params.shStepSizes_[ssBaseOffsets[idx] + region_idx];
+              double base_real = reg.region_start_real[region_idx];
+              double q_vals = std::round((attr - base_real) / step_vec + prev_idx);
+              dst[i][ch] = attr_t(PCCClip(static_cast<int64_t>(q_vals), int64_t(0), clip_max));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (!enableShNonUniformQuantization) {
+    quantizationLinear(cloud, inputAttrBuf, attrDescs, properties);
+  } else {
+    int pointCount = cloud.getPointCount();
+    for (auto& desc : attrDescs)
+    {
+      if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
+        continue;  // SH already quantized by NQ above
+
+      const int64_t offset = desc.params.attr_offset;
+      const int64_t attr_scale = desc.params.attr_scale_minus1 + 1;
+      const int64_t attr_frac_bits_scale = 1ll << desc.params.attr_frac_bits;
+      const int64_t clip_max = (1ll << desc.bitdepth) - 1ll;
+
+      if (desc.attr_num_dimensions_minus1 == 0) {
+        double* src;
+        std::vector<int> indices = getAttrIndices(desc, properties);
+        src = &inputAttrBuf[indices[0]*pointCount];
+
+        auto& dst = cloud.getAttrScalar(desc);
+        for (int i = 0; i < pointCount; i++) {
+          dst[i] = attr_t(PCCClip(
+                  std::llround((src[i] - offset) * attr_frac_bits_scale / attr_scale),
+                  0, clip_max));
+        }
+      } else {
+        double* src[3];
+        std::vector<int> indices = getAttrIndices(desc, properties);
+        src[0] = &inputAttrBuf[indices[0]*pointCount];
+        src[1] = &inputAttrBuf[indices[1]*pointCount];
+        src[2] = &inputAttrBuf[indices[2]*pointCount];
+
+        auto& dst = cloud.getAttrVec(desc);
+
+        for (int c = 0; c < 3; c++) {
+          for (int i = 0; i < pointCount; i++) {
+            dst[i][c] = attr_t(PCCClip(
+                  std::llround((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
+                  0, clip_max));
+          }
+        }
+      }
+
+      if (!desc.params.input_attr_default_value.empty()) {
+        for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
+          desc.params.attr_default_value[c] =
+            attr_t(PCCClip(
+              std::llround((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
+              0, clip_max));
+        }
+      }
+    }
+  }
 
   return true;
 }

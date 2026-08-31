@@ -1171,6 +1171,30 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 		"  0: Radian \n"
 		"  1: Degree")
 
+  ("gsdTransform2dPresentFlag",
+    params_attr.desc.params.gsdTransform2dPresentFlag_, false,
+    "Enable 2D transform for SH coefficients (0: simple RGB->YUV, 1: 2D KLT/DCT)")
+
+  ("dataAdaptiveShTransform",
+    params_attr.desc.params.dataAdaptiveShTransformEnabled_, false,
+    "Enable data-adaptive SH transform (KLT)")
+
+  ("enableGsdPcaDc",
+    params_attr.desc.params.gsdPcaDcFlag_, false,
+    "Enable PCA for DC component of SH")
+
+  ("enableShNonUniformQuantization",
+    params_attr.desc.params.enableShNonUniformQuantization_, false,
+    "Enable non-uniform quantization for SH coefficients")
+
+  ("shNqRangeMode",
+    params_attr.desc.params.shNqRangeMode_, 0,
+    "NQ range mode for SH: 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band")
+
+  ("shAdaptiveTpOpt",
+    params_attr.desc.params.shAdaptiveTpOptEnabled_, false,
+    "Enable adaptive transition point optimization")
+
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
     "Coding method to use for attribute:\n"
