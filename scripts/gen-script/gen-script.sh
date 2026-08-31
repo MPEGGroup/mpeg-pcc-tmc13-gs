@@ -46,7 +46,7 @@ WRITE() { echo "$2" >> "$1"; }
 MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 
 ## Experiment name
-JOBNAME="TM13-GS-v2"
+JOBNAME="TM13-GS-v3.0-rc1"
 
 ## Encoder flags
 enc_flags=""
@@ -76,7 +76,7 @@ TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3"
 INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
 CFG_PATH="$TMC13_DIR/$CFG_DIR" 
 METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
-GSCTOOL="/path/to/mpeg-gsc-tools/"
+GSCTOOL="/path/to/mpeg-gsc-tools/build/bin/gsTools"
 PYTHON="python3"
 
 ## External Pre-Post processing
@@ -87,7 +87,7 @@ POST_SCRIPT="/path/to/gs_post_process.py"
 # Initial checks
 ENSURE_DIR "$DATASET_PATH"
 ENSURE_DIR "$TMC13_DIR"
-ENSURE_DIR "$GSCTOOL"
+ENSURE_EXEC "$GSCTOOL"
 ENSURE_EXEC "$TMC13_BIN"
 ENSURE_EXEC "$METRIC"
 ENSURE_FILE "$INPUT_SEQUENCES_CFG"
@@ -293,7 +293,7 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                         echo "#SBATCH --nodes=1"
                         echo "#SBATCH --mem-per-cpu=8G"
                         echo "set -euo pipefail"
-                        echo "$METRIC -v 1 --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeSsim=0 --computeOm=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
+                        echo "$METRIC --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeOm=0 --computeSsim=0 --computeIvssim=0 --computeQmiv=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
                         echo "touch $OUT/jobs/done/metric/\${SLURM_JOB_ID:-UNDEFINED}"
                     } > "$JOBFILE_MET"
                     chmod +x "$JOBFILE_MET"
@@ -314,7 +314,7 @@ if [[ $RUN_MODE -eq 0 ]]; then
     csv_CW="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
 
     echo "$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f $FLAG_1F \
-        -t \"$SCRIPT_DIR/templates/WG04N0826_template.xlsm\" \
+        -t \"$SCRIPT_DIR/templates/WG05N0420_template.xlsm\" \
         -x \"$OUT/metrics/${PREFIX}_CTC_$JOBNAME.xlsm\" \
         --aC1 \"$SCRIPT_DIR/anchor_results/${PREFIX}_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv\" \
         --pC1 \"$csv_C1\" \
@@ -327,7 +327,7 @@ else
         csv_file="$OUT/metrics/${PREFIX}_TMC13-GS-$TOOL-$MODE-$JOBNAME.csv"
         
         CMD_BASE="$PYTHON $SCRIPT_DIR/gsc_csv2excel.py -f $FLAG_1F \
-            -t \"$SCRIPT_DIR/templates/WG04N0826_template.xlsm\" \
+            -t \"$SCRIPT_DIR/templates/WG05N0420_template.xlsm\" \
             -x \"$OUT/metrics/${PREFIX}_CTC_$JOBNAME.xlsm\""
 
         if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
