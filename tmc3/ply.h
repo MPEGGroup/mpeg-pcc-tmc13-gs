@@ -41,6 +41,8 @@
 #include "PCCPointSet.h"
 #include "hls.h"
 
+#include "TMC3.h"
+
 namespace pcc {
 
 //============================================================================
@@ -177,6 +179,7 @@ namespace ply {
   // @param fileName  output filename.
   // @param asAscii  PLY writing format (true => ascii, false => binary).
   bool write(
+    Stopwatch* clock,
     const PCCPointSet3& pointCloud,
     const PropertyNameMap& propertyNames,
     double positionScale,
@@ -198,7 +201,8 @@ namespace ply {
     double positionScale,
     PCCPointSet3& cloud,
     std::vector<AttributeDescription>& attrDescs,
-    bool externalPrePost
+    bool externalPrePost,
+    Stopwatch* clock
   );
   
   enum class Format { ASCII, BINARY };

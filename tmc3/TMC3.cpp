@@ -132,6 +132,7 @@ public:
   // Perform conversions and write output point cloud
   //  \params cloud  a mutable copy of reconFrame.cloud
   void writeOutputFrame(
+    Stopwatch* clock,
     const std::string& postInvScalePath,
     const std::string& preInvScalePath,
     const CloudFrame& reconFrame,
@@ -2058,6 +2059,8 @@ SequenceEncoder::compress(Stopwatch* clock)
 int
 SequenceEncoder::compressOneFrame(Stopwatch* clock)
 {
+  clock->start();
+
   std::string srcName{expandNum(params->uncompressedDataPath, frameNum)};
   PCCPointSet3 pointCloud;
 
@@ -2066,7 +2069,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
 	}
 
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->encoder.externalPrePost)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->encoder.externalPrePost, clock)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
@@ -2126,8 +2129,6 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
 	  pointCloud.removeSHCoefficients();
   assert(codeSHCoefficient == pointCloud.hasSHCoefficients());
 
-  clock->start();
-
   if (params->convertColourspace)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
@@ -2159,10 +2160,14 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   int frameLen = bytestreamLenFrameEnd - bytestreamLenFrameStart;
   std::cout << "Total frame size " << frameLen << " B" << std::endl;
 
-  clock->stop();
 
   if (reconPtr)
-    writeOutputFrame(params->reconstructedDataPath, {}, recon, recon.cloud, params->encoder.externalPrePost);
+  {
+    pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
+    writeOutputFrame(&clock_unused, params->reconstructedDataPath, {}, recon, recon.cloud, params->encoder.externalPrePost);
+  }
+
+  clock->stop();
 
   return 0;
 }
@@ -2191,7 +2196,8 @@ SequenceEncoder::onPostRecolour(const PCCPointSet3& cloud)
   frame.cloud = cloud;
   frame.frameNum = frameNum - params->firstFrameNum;
 
-  writeOutputFrame(params->postRecolorPath, {}, frame, tmpCloud, params->encoder.externalPrePost);
+  pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
+  writeOutputFrame(&clock_unused, params->postRecolorPath, {}, frame, tmpCloud, params->encoder.externalPrePost);
 }
 
 //============================================================================
@@ -2259,12 +2265,9 @@ SequenceDecoder::onOutputCloud(const CloudFrame& frame)
     applyGsShRemap(pointCloud, gs_sh_remap_pairs); 
   }
   
-  clock->stop();
-  
   writeOutputFrame(
+    clock,
     params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud, params->encoder.externalPrePost);
-
-  clock->start();
 }
 
 //============================================================================
@@ -2298,6 +2301,7 @@ SequenceCodec::outputOrigin(const CloudFrame& frame) const
 
 void
 SequenceCodec::writeOutputFrame(
+  Stopwatch* clock,
   const std::string& postInvScalePath,
   const std::string& preInvScalePath,
   const CloudFrame& frame,
@@ -2325,15 +2329,16 @@ SequenceCodec::writeOutputFrame(
 
   // Dump the decoded colour using the pre inverse scaled geometry
   if (!preInvScalePath.empty()) {
+    pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->encoder.externalPrePost);
+    ply::write(&clock_unused, cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->encoder.externalPrePost);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
   auto plyOrigin = outputOrigin(frame);
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
-        cloud, attrNames, plyScale, plyOrigin, decName,
+        clock, cloud, attrNames, plyScale, plyOrigin, decName,
         !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, externalPrePost)) {
     cout << "Error: can't open output file!" << endl;
   }

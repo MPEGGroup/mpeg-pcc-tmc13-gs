@@ -546,6 +546,7 @@ AttributeDescription& getAttributeDescription(
 
 bool
 ply::write(
+  Stopwatch* clock,
   const PCCPointSet3& cloud,
   const PropertyNameMap& attributeNames,
   double positionScale,
@@ -556,6 +557,7 @@ ply::write(
   bool asConformance,
   bool externalPrePost=true)
 {
+  clock->stop();
   std::ofstream fout(fileName, std::ofstream::out);
   if (!fout.is_open()) {
     return false;
@@ -636,7 +638,10 @@ ply::write(
     fout << "property list uint8 int32 vertex_index" << std::endl;
   }
   fout << "end_header" << std::endl;
+  clock->start();
+
   if (asAscii) {
+    clock->stop();
     //      fout << std::setprecision(std::numeric_limits<double>::max_digits10);
     fout << std::fixed << std::setprecision(5);
     for (size_t i = 0; i < pointCount; ++i) {
@@ -684,6 +689,7 @@ ply::write(
 					<< " " << rotation_xyz[2];
 			}
       fout << std::endl;
+      clock->start();
     }
   } else {
     fout.clear();
@@ -816,26 +822,36 @@ ply::write(
         positionFloat[0] = static_cast<float>(position[0]);
         positionFloat[1] = static_cast<float>(position[1]);
         positionFloat[2] = static_cast<float>(position[2]);
+        clock->stop();
         fout.write(
           reinterpret_cast<const char* const>(&positionFloat), sizeof(float) * 3);
-      }
-      else
+        clock->start();
+      } else {
+        clock->stop();
         fout.write(
           reinterpret_cast<const char* const>(&position), sizeof(double) * 3);
+        clock->start();
+      }
 
       if (cloud.hasColors()) {
         const Vec3<attr_t>& c = cloud.getColor(i);
         Vec3<uint8_t> val8b{uint8_t(c[0]), uint8_t(c[1]), uint8_t(c[2])};
+        clock->stop();
         fout.write(reinterpret_cast<const char*>(&val8b), sizeof(uint8_t) * 3);
+        clock->start();
       }
       if (cloud.hasReflectances()) {
         const attr_t& reflectance = cloud.getReflectance(i);
+        clock->stop();
         fout.write(
           reinterpret_cast<const char*>(&reflectance), sizeof(uint16_t));
+        clock->start();
       }
       if (cloud.hasFrameIndex()) {
         const uint16_t& findex = cloud.getFrameIndex(i);
+        clock->stop();
         fout.write(reinterpret_cast<const char*>(&findex), sizeof(uint16_t));
+        clock->start();
       }
 
       //for GS descs
@@ -845,35 +861,41 @@ ply::write(
 					GSPoint& g = gsChunk[ci];
 					const float shScale = float(1 << SH_SCALE) * GS_PROPERTY_SCALE;
 					Vec3<float> val32b_dc{ float(g.shFxp[0][0])/shScale, float(g.shFxp[0][1])/shScale, float(g.shFxp[0][2])/shScale };
+          clock->stop();
 					fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
+          clock->start();
 					for (int k = 0; k < 3; k++) {
 						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
 							float val32b_ac = float(g.shFxp[m][k])/shScale;
+              clock->stop();
 							fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
+              clock->start();
 						}
 					}
 				} else {
 					double shdc[3];
-        auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
-        auto offset = desc.params.attr_offset;
-        auto attr_frac_bits = desc.params.attr_frac_bits;
-        auto attr_scale     = desc.params.attr_scale_minus1 + 1;
-        for (int k = 0; k < 3; k++) {
-          int32_t attr = int32_t(cloud.getSHCoefficient(0, i)[k]);
-          double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
-          shdc[k]= buf;
-        }
+          auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
+          auto offset = desc.params.attr_offset;
+          auto attr_frac_bits = desc.params.attr_frac_bits;
+          auto attr_scale     = desc.params.attr_scale_minus1 + 1;
+          for (int k = 0; k < 3; k++) {
+            int32_t attr = int32_t(cloud.getSHCoefficient(0, i)[k]);
+            double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
+            shdc[k]= buf;
+          }
 
-        if (!externalPrePost)
-          YUV2RGB(shdc);
+          if (!externalPrePost)
+            YUV2RGB(shdc);
 
-					Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
-					fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
+          Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
+          clock->stop();
+          fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
+          clock->start();
 
 					// SH AC
-        double shac[15][3];
-					for (int k = 0; k < 3; k++) {
-						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
+          double shac[15][3];
+          for (int k = 0; k < 3; k++) {
+            for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
             desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
             offset = desc.params.attr_offset;
             attr_frac_bits = desc.params.attr_frac_bits;
@@ -881,16 +903,19 @@ ply::write(
             int32_t attr = int32_t(cloud.getSHCoefficient(m, i)[k]);
             double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
             shac[m-1][k] = buf;
-						}
-					}
-        if (!externalPrePost)
-          for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
-            YUV2RGB(shac[m]);
+            }
+          }
+          
+          if (!externalPrePost)
+            for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
+              YUV2RGB(shac[m]);
 
-        for (int k = 0; k < 3; k++) {
+          for (int k = 0; k < 3; k++) {
 						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
 							float val32b_ac = float(shac[m-1][k])/GS_PROPERTY_SCALE;
+              clock->stop();
 							fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
+              clock->start();
 						}
 					}
 				}
@@ -903,7 +928,9 @@ ply::write(
 				const int32_t& opacity = cloud.getOpacity(i);
         double _opacity = double(opacity) * attr_scale / (1<<attr_frac_bits) + offset;
 				float buf = (float)_opacity/GS_PROPERTY_SCALE;
+        clock->stop();
 				fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
+        clock->start();
 			}
 			if (cloud.hasScales()) {
         float scale[3];
@@ -917,7 +944,9 @@ ply::write(
           scale[k]= buf;
         }
 				Vec3<float> val32b{ float(scale[0])/GS_PROPERTY_SCALE, float(scale[1])/GS_PROPERTY_SCALE, float(scale[2])/GS_PROPERTY_SCALE };
+        clock->stop();
 				fout.write(reinterpret_cast<char*>(&val32b), sizeof(float) * 3);
+        clock->start();
 			}
 			if (cloud.hasScalarRotations() || cloud.hasRotations()) {
         double rot[4] = {1.0, 0.0, 0.0, 0.0};
@@ -957,10 +986,14 @@ ply::write(
 
 				const auto rotation_w = rot[0];
 				float _buf = (float)rotation_w/GS_PROPERTY_SCALE;
+        clock->stop();
 				fout.write(reinterpret_cast<char*>(&_buf), sizeof(float));
+        clock->start();
 
 				Vec3<float> val32b{ float(rot[1])/GS_PROPERTY_SCALE, float(rot[2])/GS_PROPERTY_SCALE, float(rot[3])/GS_PROPERTY_SCALE };
+        clock->stop();
 				fout.write(reinterpret_cast<char*>(&val32b), sizeof(float) * 3);
+        clock->start();
 			}
     }
   }
@@ -1431,7 +1464,9 @@ ply::read(
   const PropertyNameMap& attributeNames,
   double positionScale,
   PCCPointSet3& cloud,
-  std::vector<AttributeDescription>& attrDescs, bool externalPrePost)
+  std::vector<AttributeDescription>& attrDescs,
+  bool externalPrePost,
+  Stopwatch* clock)
 {
   std::ifstream ifs(fileName,std::ifstream::in | std::ios::binary);
   if (!ifs.is_open()) {
@@ -1442,12 +1477,14 @@ ply::read(
   Format format;
   std::vector<PropertyInfo> properties;
 
+  clock->stop();
   if (!parseHeader(ifs, cloud, format, properties)) {
     return false;
   }
 
   std::vector<double> inputAttrBuf;
   readVertices(ifs, cloud, attrDescs, positionScale, format, properties, inputAttrBuf);
+  clock->start();
 
   // Check if any SH desc has 2D transform enabled
   bool gsdTransform2dPresentFlag = false;
@@ -1702,6 +1739,8 @@ ply::read(
       }
     }
   }
+  
+  clock->stop();
 
   return true;
 }
