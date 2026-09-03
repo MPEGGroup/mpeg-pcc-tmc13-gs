@@ -848,9 +848,9 @@ ply::write(
         clock->start();
       }
       if (cloud.hasFrameIndex()) {
-        const uint16_t& findex = cloud.getFrameIndex(i);
+        const uint8_t findex = uint8_t(cloud.getFrameIndex(i));
         clock->stop();
-        fout.write(reinterpret_cast<const char*>(&findex), sizeof(uint16_t));
+        fout.write(reinterpret_cast<const char*>(&findex), sizeof(uint8_t));
         clock->start();
       }
 
@@ -1031,7 +1031,7 @@ bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAtt
     kAttrLabel = KnownAttributeLabel::kOpacity;
     channelIdx = 0;
   } 
-  else if (propName == "frame_index") {
+  else if (propName == "frame_index" || propName == "frameindex") {
     kAttrLabel = KnownAttributeLabel::kFrameIndex;
     channelIdx = 0;
   } 
@@ -1377,6 +1377,15 @@ ply::analyzeMinMax (
   for (int d = 0; d < attrDescs.size(); d++)
   {
     AttributeDescription& desc = attrDescs[d];
+
+    if (desc.attributeLabel == KnownAttributeLabel::kFrameIndex) {
+      // Keep frame_index in raw integer domain: disable linear scale/offset.
+      desc.params.attr_offset = 0;
+      desc.params.attr_scale_minus1 = 0;
+      desc.params.attr_frac_bits = 0;
+      continue;
+    }
+
     Stats stat;
     
     std::vector<int> indices = getAttrIndices(desc, properties);

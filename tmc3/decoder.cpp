@@ -398,6 +398,9 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
     } else if (desc.attributeLabel == KnownAttributeLabel::kReflectance)    {
       auto& attrs = _currentPointCloud.getReflectance();
       std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kFrameIndex) {
+      auto& attrs = _currentPointCloud.getFrameIndex();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
     } else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)    {
       auto& attrs = _currentPointCloud.getOpacity();
       std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
@@ -659,6 +662,12 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
     attr_t defAttrVal = cadu.constattr_default_value[0];
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setReflectance(i, defAttrVal);
+  }
+
+  if (label == KnownAttributeLabel::kFrameIndex) {
+    attr_t defAttrVal = cadu.constattr_default_value[0];
+    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+      _currentPointCloud.setFrameIndex(i, defAttrVal);
   }
 
   if (label == KnownAttributeLabel::kOpacity) {

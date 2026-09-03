@@ -12,6 +12,7 @@ attr="predlift"
 src_cfg_dir=""
 mode="pointcloud"
 gs_set=""
+frame_id=""
 
 while (( $# )); do
 	case $1 in
@@ -24,6 +25,8 @@ while (( $# )); do
 	--all) all=1 ;;
 	--pointcloud) mode="pointcloud" ;;
 	--gaussiansplat) mode="gaussiansplat" ;;
+	# Carry a per-frame id as a uint16 reflectance attribute (ConcatGPCC).
+	--frame-id) frame_id=1 ;;
 	--1F)
 		[[ -z "$gs_set" || "$gs_set" == "1F" ]] || { echo "error: cannot combine --1F and --NF" >&2; exit 1; }
 		gs_set="1F"
@@ -37,7 +40,7 @@ while (( $# )); do
 	--help|*)
 		echo -e "usage:\n $0\n" \
 			"    [[--octree|--predgeom|--trisoup] [--raht|--pred-lift|--hybrid] | --all]\n" \
-			"    [--pointcloud|--gaussiansplat [--1F|--NF]]\n" \
+			"    [--pointcloud|--gaussiansplat [--1F|--NF] [--frame-id]]\n" \
 			"    [--cfgdir=<dir>]"
 		exit 1
 	esac
@@ -88,6 +91,18 @@ cfg_trisoup_predlift=(
 cfg_trisoup_raht=(
 	trisoup-raht-ctc-lossy-geom-lossy-attrs.yaml
 )
+
+# ConcatGPCC: with --frame-id, use the config variants that add a uint16
+# reflectance attribute carrying the per-frame id.  Only the two CTC GS
+# configs (octree-hybrid C1, octree-predlift CW) are needed for that pipeline.
+if [[ -n "$frame_id" ]]; then
+	cfg_octree_hybrid=(
+		octree-hybrid-ctc-lossless-geom-lossy-attrs-frameid.yaml
+	)
+	cfg_octree_predlift=(
+		octree-predt-ctc-lossless-geom-lossless-attrs-frameid.yaml
+	)
+fi
 
 do_one_cfgset() {
 	local geom=$1
@@ -143,7 +158,7 @@ do_one_cfgset() {
 			filtered_sequences=()
 			for s in "${gaussian_sequences[@]}"; do
 				case "$s" in
-					bartender_*|cinema_*|breakfast_*|manwithfruit_*|breakdance_*)
+					bartender_*|cinema_*|breakfast_*|manwithfruit_*|breakdance_*|trio*|makeup*|musical*)
 						filtered_sequences+=("$s")
 						;;
 				esac

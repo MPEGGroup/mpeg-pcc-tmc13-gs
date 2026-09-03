@@ -95,7 +95,8 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
   if (src.hasSHCoefficients())
     dst.cloud.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
-	  src.hasOpacities(), src.hasScales(), src.hasScalarRotations(), src.hasRotations(), src.hasSHCoefficients());
+	  src.hasOpacities(), src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
+    src.hasSHCoefficients(), src.hasFrameIndex());
   return dst;
 }
 
@@ -182,8 +183,10 @@ quantizePositions(
     dst->clear();
     if (src.hasSHCoefficients())
       dst->setNumSHCoeffs(src.getNumSHCoeffs());
-		dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
-		src.hasScales(), src.hasScalarRotations(), src.hasRotations(), src.hasSHCoefficients());
+		dst->addRemoveAttributes(
+      src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
+		  src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
+      src.hasSHCoefficients(), src.hasFrameIndex());
     dst->resize(numSrcPoints);
   }
 
@@ -208,6 +211,11 @@ quantizePositions(
   if (src.hasReflectances()) {
     for (int i = 0; i < numSrcPoints; ++i)
       dst->setReflectance(i, src.getReflectance(i));
+  }
+
+  if (src.hasFrameIndex()) {
+    for (int i = 0; i < numSrcPoints; ++i)
+      dst->setFrameIndex(i, src.getFrameIndex(i));
   }
 
   if (src.hasOpacities()) {

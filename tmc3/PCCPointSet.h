@@ -510,22 +510,24 @@ public:
 
   int getNumSHCoeffs() const { return numSHCoeffs; }
 
-  uint8_t getFrameIndex(const size_t index) const
+  attr_t getFrameIndex(const size_t index) const
   {
     assert(index < frameidx.size() && withFrameIndex);
     return frameidx[index];
   }
 
-  uint8_t& getFrameIndex(const size_t index)
+  attr_t& getFrameIndex(const size_t index)
   {
     assert(index < frameidx.size() && withFrameIndex);
     return frameidx[index];
   }
 
-  void setFrameIndex(const size_t index, const uint8_t frameindex)
+  std::vector<attr_t>& getFrameIndex() { return frameidx; }
+
+  void setFrameIndex(const size_t index, const attr_t frameindex)
   {
     assert(index < frameidx.size() && withFrameIndex);
-    frameidx[index] = frameindex;
+    frameidx[index] = attr_t(PCCClip(int(frameindex), 0, 255));
   }
 
   bool hasFrameIndex() const { return withFrameIndex; }
@@ -559,7 +561,8 @@ public:
     bool withScales = false,
     bool withScalarRotations = false,
     bool withRotations = false,
-    bool withSHCoefficients = false)
+    bool withSHCoefficients = false,
+    bool withFrameIndices = false)
   {
     if (withColors)
       addColors();
@@ -570,6 +573,11 @@ public:
       addReflectances();
     else
       removeReflectances();
+
+    if (withFrameIndices)
+      addFrameIndex();
+    else
+      removeFrameIndex();
 
     // Gaussian splat compression
     if (withOpacities)
@@ -705,7 +713,7 @@ public:
       addRemoveAttributes(
         src.hasColors(), src.hasReflectances(), src.hasOpacities(),
         src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
-        src.hasSHCoefficients());
+        src.hasSHCoefficients(), src.hasFrameIndex());
     }
 
     int dstEnd = positions.size();
@@ -725,6 +733,11 @@ public:
       std::copy(
         src.reflectances.begin(), src.reflectances.end(),
         std::next(reflectances.begin(), dstEnd));
+
+    if (hasFrameIndex() && src.hasFrameIndex())
+      std::copy(
+        src.frameidx.begin(), src.frameidx.end(),
+        std::next(frameidx.begin(), dstEnd));
 
     // Gaussian splat compression
     if (hasOpacities() && src.hasOpacities())
@@ -768,6 +781,9 @@ public:
     }
     if (hasReflectances()) {
       std::swap(getReflectance(index1), getReflectance(index2));
+    }
+    if (hasFrameIndex()) {
+      std::swap(getFrameIndex(index1), getFrameIndex(index2));
     }
     // Gaussian splat compression
     if (hasOpacities()) {
@@ -843,7 +859,11 @@ public:
       case KnownAttributeLabel::kReflectance:
         withReflectances = true;
         return;
-          
+      
+      case KnownAttributeLabel::kFrameIndex:
+        withFrameIndex = true;
+        return;
+
       case KnownAttributeLabel::kOpacity:
         withOpacities = true;
         return;
@@ -889,6 +909,8 @@ public:
   std::vector<attr_t>& getAttrScalar(AttributeDescription& desc) {
     if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
       return getReflectance();
+    else if (desc.attributeLabel == KnownAttributeLabel::kFrameIndex)
+      return getFrameIndex();
     else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
       return getOpacity();
     else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
@@ -904,7 +926,7 @@ private:
   std::vector<PointType> positions;
   std::vector<Vec3<attr_t>> colors;
   std::vector<attr_t> reflectances;
-  std::vector<uint8_t> frameidx;
+  std::vector<attr_t> frameidx;
   bool withColors;
   bool withReflectances;
   bool withFrameIndex;

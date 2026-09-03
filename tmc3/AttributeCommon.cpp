@@ -274,6 +274,9 @@ getAttribute(
   else if (desc.attributeLabel == KnownAttributeLabel::kReflectance) {
     attribute[0] = pointCloud.getReflectance(pointIndex);
   }
+  else if (desc.attributeLabel == KnownAttributeLabel::kFrameIndex) {
+    attribute[0] = pointCloud.getFrameIndex(pointIndex);
+  }
   else if (desc.attributeLabel == KnownAttributeLabel::kOpacity) {
     attribute[0] = pointCloud.getOpacity(pointIndex);
   }
@@ -309,6 +312,10 @@ setAttribute(
   else if (desc.attributeLabel ==
            KnownAttributeLabel::kReflectance) {
     pointCloud.setReflectance(pointIndex, attribute[0]);
+  }
+  else if (desc.attributeLabel ==
+           KnownAttributeLabel::kFrameIndex) {
+    pointCloud.setFrameIndex(pointIndex, attribute[0]);
   }
   else if (desc.attributeLabel ==
            KnownAttributeLabel::kOpacity) {

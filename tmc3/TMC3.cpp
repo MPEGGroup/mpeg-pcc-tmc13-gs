@@ -1626,6 +1626,24 @@ sanitizeEncoderOpts(
       attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
     }
 
+    if (it.first == "frame_index") {
+      if (params.encoder.gps.geom_unique_points_flag || params.encoder.gps.trisoup_enabled_flag){
+        err.error() 
+        << "when geom_unique_points_flag == true or "
+        "trisoup_enabled_flag == true, "
+        "frame_index cannot be encoded.\n";
+      }
+
+      // Avoid wasting bits signalling chroma quant step size for frame index
+      attr_aps.aps_chroma_qp_offset = 0;
+      attr_enc.abh.attr_layer_qp_delta_chroma.clear();
+
+      // There is no matrix for frame index
+      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+      attr_sps.attr_num_dimensions_minus1 = 0;
+      attr_sps.attributeLabel = KnownAttributeLabel::kFrameIndex;
+    }
+
     if (it.first == "color") {
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kColour;
@@ -2101,6 +2119,11 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (!codeReflectance)
     pointCloud.removeReflectances();
   assert(codeReflectance == pointCloud.hasReflectances());
+
+  bool codeFrameIndex = hasAttr("frame_index");
+  if (!codeFrameIndex)
+    pointCloud.removeFrameIndex();
+  assert(codeFrameIndex == pointCloud.hasFrameIndex());
 
   bool codeOpacity = hasAttr("opacity");
   if (!codeOpacity)

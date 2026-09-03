@@ -1975,7 +1975,7 @@ encodeGeometryOctree(
     pointCloud2.setNumSHCoeffs(pointCloud.getNumSHCoeffs());
   pointCloud2.addRemoveAttributes(pointCloud.hasColors(), pointCloud.hasReflectances(),
 	  pointCloud.hasOpacities(), pointCloud.hasScales(), pointCloud.hasScalarRotations(), pointCloud.hasRotations(),
-	  pointCloud.hasSHCoefficients());
+	  pointCloud.hasSHCoefficients(), pointCloud.hasFrameIndex());
   pointCloud2.resize(pointCloud.getPointCount());
 
   // copy points with DM points first, the rest second
@@ -1993,6 +1993,8 @@ encodeGeometryOctree(
       pointCloud2.setColor(dstIdx, pointCloud.getColor(i));
     if (pointCloud.hasReflectances())
       pointCloud2.setReflectance(dstIdx, pointCloud.getReflectance(i));
+    if (pointCloud.hasFrameIndex())
+      pointCloud2.setFrameIndex(dstIdx, pointCloud.getFrameIndex(i));
 		if (pointCloud.hasOpacities())
 			pointCloud2.setOpacity(dstIdx, pointCloud.getOpacity(i));
 		if (pointCloud.hasScales())

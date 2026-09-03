@@ -38,6 +38,10 @@ set -euo pipefail
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Prefer system perl for scripts/gen-cfg.pl.  Conda's perl may shadow it but
+# lacks List::MoreUtils/YAML on this machine.
+export PATH="/usr/bin:/bin:$PATH"
+
 ## Helper functions for checks
 ENSURE_EXEC() { [ -x "$1" ] || { echo "ERROR: Executable not found or not executable: $1"; exit 1; }; }
 ENSURE_FILE() { [ -f "$1" ] || { echo "ERROR: File not found: $1"; exit 1; }; }
@@ -52,16 +56,14 @@ JOBNAME="TM13-GS-v3.0-rc1"
 enc_flags=""
 
 ## Experiment settings
-CFG_DIR=cfg
-AUTO_RUN=2              # 0:off, 1:run_local, 2:run_slurm 
-FLAG_1F=1               # 0:NF, 1:1F
+AUTO_RUN=0              # 0:off, 1:run_local, 2:run_slurm
+FLAG_1F=0               # 0:NF, 1:1F
+FLAG_CONCAT=1           # 0:per-frame (standard), 1:ConcatGPCC (NF frames concatenated, frame id carried as reflectance)
 RUN_MODE=0              # 0 = anchor(octree-hybrid), 1 = alternative
+GPCC_JOBS=1             # local parallel jobs for GPCC encode/decode
+METRIC_JOBS=1           # local parallel jobs for MPEG metrics GPU
+INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
 
-# Whether to sample viewpoints for library sequence.
-# 0:off, 1:on (set VIEW_PERIOD=40 for library sequence)
-# If you use the latest version of the library sequence, set to 0 because the cameras are already sampled with a period of 40.
-# If you use the older version of the library sequence, set to 1 to sample viewpoints with a period of 40.
-SAMPLE_VIEWS_FOR_LIBRARY=0
 
 ## Dataset path
 DATASET_PATH=/path/to/CTC/dataset
@@ -71,13 +73,22 @@ PLYS_SUBFOLDER="plys"
 BASE_OUTPUT="/path/to/output"
 
 ## Binary and Configuration Paths
-TMC13_DIR="/path/to/tmc13-GS"
+TMC13_DIR="/path/to/mpeg-pcc-tmc13-gs"
 TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3"
-INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
-CFG_PATH="$TMC13_DIR/$CFG_DIR" 
-METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"
-GSCTOOL="/path/to/mpeg-gsc-tools/build/bin/gsTools"
+CFG_PATH="$TMC13_DIR/cfg"
+METRIC="/path/to/mpeg-gsc-metrics/build/Release/bin/mpeg-gsc-metrics"
 PYTHON="python3"
+
+## Group-of-Frames (GoF) split + pruning options.
+FLAG_GOF="${FLAG_GOF:-1}"                             # 0 = single concat, 1 = split into GoF groups
+GOF_GROUP_FRAME_COUNT="${GOF_GROUP_FRAME_COUNT:-16}"  # Frames per contiguous GoF group
+PRUNE_PCT="${PRUNE_PCT:-0.0}"                         # Fraction of least-important points pruned per frame
+FRAME_ID_SCALE="${FRAME_ID_SCALE:-1}"                 # 0 = auto spread ids across uint8 (recommended for lossy coding)
+
+FRAME_MERGE_SPLIT_DIR="$TMC13_DIR/tools/frame_merge_split"
+PREPROCESS_CONCAT_SCRIPT="$FRAME_MERGE_SPLIT_DIR/preprocess_concat_frame_index.py"
+POSTPROCESS_CONCAT_SCRIPT="$FRAME_MERGE_SPLIT_DIR/postprocess_concat_frame_index.py"
+
 
 ## External Pre-Post processing
 FLAG_EXT_PP=0  # 0 = No external pre/post, 1 = External pre-/post-processing
@@ -87,10 +98,11 @@ POST_SCRIPT="/path/to/gs_post_process.py"
 # Initial checks
 ENSURE_DIR "$DATASET_PATH"
 ENSURE_DIR "$TMC13_DIR"
-ENSURE_EXEC "$GSCTOOL"
 ENSURE_EXEC "$TMC13_BIN"
 ENSURE_EXEC "$METRIC"
 ENSURE_FILE "$INPUT_SEQUENCES_CFG"
+ENSURE_FILE "$PREPROCESS_CONCAT_SCRIPT"
+ENSURE_FILE "$POSTPROCESS_CONCAT_SCRIPT"
 
 if [[ $RUN_MODE -eq 0 ]]; then
     MODE_TOOLs=(
@@ -130,11 +142,8 @@ ADD_SEQ() {
         if [ -f "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" ]; then
             camera_count=$(grep -v "camera_position" "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" | wc -l)
             if [ "$camera_count" -gt 100 ]; then
-                echo "[WARN] Please update the library dataset from 4,000 views to the 100-sampled COLMAP version on the content server. The viewpoint subsampling feature will be deprecated soon."
-                if [ "$SAMPLE_VIEWS_FOR_LIBRARY" -eq 0 ]; then
-                    echo "[ERROR] If you are using an older version of the library (with 4000 views), please set SAMPLE_VIEWS_FOR_LIBRARY=1."
-                    exit 1
-                fi
+                echo "[ERROR] Please update the library dataset from 4,000 views to the 100-sampled COLMAP version on the content server."
+                exit 1
             fi
         fi
     fi
@@ -144,6 +153,18 @@ if [ "$FLAG_1F" -eq 1 ]; then
     PREFIX="1F"
 else
     PREFIX="NF"
+fi
+
+# ConcatGPCC carries the per-frame id as a uint16 reflectance attribute, so the
+# config tree is generated with --frame-id.  It applies only to the NF anchor
+# configs (octree-hybrid C1 + octree-predlift CW).
+GS_EXTRA=""
+if [ "$FLAG_CONCAT" -eq 1 ]; then
+    if [ "$FLAG_1F" -ne 0 ] || [ "$RUN_MODE" -ne 0 ]; then
+        echo "❌ FLAG_CONCAT=1 requires FLAG_1F=0 (NF) and RUN_MODE=0"
+        exit 1
+    fi
+    GS_EXTRA="--frame-id"
 fi
 
 # Load sequences from external file
@@ -176,9 +197,11 @@ MKDIRCK "$OUT/metrics"
 MKDIRCK "$BATCH_GPCC"
 MKDIRCK "$BATCH_METRIC"
 MKDIRCK "$OUT/bin"
+MKDIRCK "$OUT/cfg"
 MKDIRCK "$OUT/jobs/logs"
 MKDIRCK "$OUT/jobs/done/gpcc"
 MKDIRCK "$OUT/jobs/done/metric"
+MKDIRCK "$OUT/jobs/done/pre"
 
 # Validate build path
 if [[ ! -d "$TMC13_DIR/build" ]]; then
@@ -187,40 +210,51 @@ if [[ ! -d "$TMC13_DIR/build" ]]; then
 fi
 
 ## automatic cfg generation
-mkdir -p "$TMC13_DIR/$CFG_DIR" 
-cd "$TMC13_DIR/$CFG_DIR"
+cd "$OUT/cfg"
 if [ $FLAG_1F == 1 ]; then
-    if [ $RUN_MODE == 0 ]; then
-    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
-    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --pred-lift --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
-    else 
-    bash "$TMC13_DIR/scripts/gen-cfg.sh" --all --gaussiansplat --1F --cfgdir=$TMC13_DIR/cfg
-    fi
+   if [ $RUN_MODE == 0 ]; then
+   bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --1F --cfgdir=$CFG_PATH
+   bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --pred-lift --gaussiansplat --1F --cfgdir=$CFG_PATH
+   else 
+   bash "$TMC13_DIR/scripts/gen-cfg.sh" --all --gaussiansplat --1F --cfgdir=$CFG_PATH
+   fi
 else
-    if [ $RUN_MODE == 0 ]; then
-    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
-    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --pred-lift --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
-    else 
-    bash "$TMC13_DIR/script/gen-cfg.sh" --all --gaussiansplat --NF --cfgdir=$TMC13_DIR/cfg
+   if [ $RUN_MODE == 0 ]; then
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --hybrid --gaussiansplat --NF $GS_EXTRA --cfgdir=$CFG_PATH
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --octree --pred-lift --gaussiansplat --NF $GS_EXTRA --cfgdir=$CFG_PATH
+    else
+    bash "$TMC13_DIR/scripts/gen-cfg.sh" --all --gaussiansplat --NF --cfgdir=$CFG_PATH
     fi
 fi
-ENSURE_DIR "$CFG_PATH"
 
-# Build binaries
-cd "$TMC13_DIR/build"
-make -j"$(nproc)"
+# Build binaries.  Some local builds are CMake/Ninja, while a copied clean tree
+# may only contain a ready tmc3 binary under build/tmc3 without a Makefile.
+if [[ -f "$TMC13_DIR/build/CMakeCache.txt" || -f "$TMC13_DIR/build/Makefile" || -f "$TMC13_DIR/build/build.ninja" ]]; then
+    cmake --build "$TMC13_DIR/build" -j"$(nproc)"
+elif [[ -x "$TMC13_BIN" ]]; then
+    echo "[INFO] Reusing existing TMC3 binary: $TMC13_BIN"
+else
+    cmake -S "$TMC13_DIR" -B "$TMC13_DIR/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    cmake --build "$TMC13_DIR/build" -j"$(nproc)"
+fi
+
 cp "$TMC13_BIN" "$OUT/bin/tmc3"
 TMC13_BIN="$OUT/bin/tmc3"
+CFG_PATH="$OUT/cfg"
 
 cd "$OUT/jobs"
+RUN_PRE="$OUT/jobs/step0_preprocess.sh"     # concat: build GoFs per sequence
 RUN_GPCC="$OUT/jobs/step1_run_gpcc.sh"
 RUN_METRIC="$OUT/jobs/step2_run_metric.sh"
 RUN_SUMMARY="$OUT/jobs/step3_run_summary.sh"
 
 # Initialize run scripts
+: > "$RUN_PRE"
 : > "$RUN_GPCC"
 : > "$RUN_METRIC"
 : > "$RUN_SUMMARY"
+
+declare -A PRE_EMITTED      # concat: one preprocess job per sequence
 
 for MODE_TOOL in "${MODE_TOOLs[@]}"; do
     read -r MODE TOOL <<< "$MODE_TOOL"
@@ -237,10 +271,32 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
         
         # set the start frame, the number of frames, viewpoints sampling period
         if [ $FLAG_1F == 1 ]; then NUM_FRAMES=1; else NUM_FRAMES=32; fi
-        # For only the old version of library sequence (SAMPLE_VIEWS_FOR_LIBRARY=1), we sample viewpoints with a period of 40. 
-        if [ $SAMPLE_VIEWS_FOR_LIBRARY == 1 ] && [[ "$SEQ" == "library" ]]; then VIEW_PERIOD=40; else VIEW_PERIOD=1; fi
 
         SelFILEs=("${files[@]:0:$NUM_FRAMES}")
+
+        # Build the concat.ply
+        # once per sequence; it is shared by every rate point.
+        PRE_DIR="$OUT/preprocessed/$SEQ"
+        if [ $FLAG_CONCAT == 1 ] && [[ -z "${PRE_EMITTED[$SEQ]:-}" ]]; then
+            PRE_JOB="$BATCH_GPCC/$JOBNAME-$CURTIME-preprocess-$SEQ.sh"
+            {
+                echo "#!/bin/bash"
+                echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+                echo "#SBATCH --ntasks-per-node=1"
+                echo "#SBATCH --nodes=1"
+                echo "#SBATCH --mem-per-cpu=16G"
+                if [ $FLAG_GOF == 1 ]; then
+                    echo "$PYTHON \"$PREPROCESS_CONCAT_SCRIPT\" --input-glob \"${PLY_PATH%/}/*.camerapos.ply\" --out-dir \"$PRE_DIR\" --group-frame-count $GOF_GROUP_FRAME_COUNT --prune $PRUNE_PCT --frame-count $NUM_FRAMES --frame-id-scale $FRAME_ID_SCALE"
+                else
+                    echo "$PYTHON \"$PREPROCESS_CONCAT_SCRIPT\" --input-glob \"${PLY_PATH%/}/*.camerapos.ply\" --out-dir \"$PRE_DIR\" --frame-count $NUM_FRAMES --frame-id-scale $FRAME_ID_SCALE"
+                fi
+                echo "touch $OUT/jobs/done/pre/\${SLURM_JOB_ID:-UNDEFINED}"
+            } > "$PRE_JOB"
+            chmod +x "$PRE_JOB"
+            echo "$PRE_JOB" >> "$RUN_PRE"
+            PRE_EMITTED[$SEQ]=1
+        fi
+
         if [[ "$MODE" == "lossless-geom-lossless-attrs" ]]; then
             CFG_DIRs=("$CFG_PATH/$TOOL/$MODE/$SEQ")
         else
@@ -258,7 +314,56 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
             fi
 
             echo "$TOOL/$MODE/$SEQ/$RATE"
+            if [ "$FLAG_CONCAT" -eq 1 ]; then
+                # One encode/decode of the whole concatenated cloud, then split the
+                # decoded PLY back into per-frame PLYs using the reflectance id.
+                JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE.sh"
+                
+                cat << EOF > "$JOBFILE"
+#!/bin/bash
+#SBATCH --output=$OUT/jobs/logs/%j.out
+#SBATCH --ntasks-per-node=1
+#SBATCH --nodes=1
+#SBATCH --mem-per-cpu=16G
 
+if [ $FLAG_GOF -eq 1 ]; then
+    for GP in "${PRE_DIR}"/GOF_g*.ply; do
+        base=\$(basename "\$GP" .ply)
+        fmap=\$(cat "${PRE_DIR}/\${base}.frames")
+        make -f "$TMC13_DIR/scripts/Makefile.tmc13-step" -C "$RESULT_DIR" VPATH="$CFG" ENCODER="$TMC13_BIN" DECODER="$TMC13_BIN" SRCSEQ="\$GP"
+        "$PYTHON" "$POSTPROCESS_CONCAT_SCRIPT" --decoded-ply "$RESULT_DIR/\${base}.ply.bin.decoded.ply" --output-dir "$RESULT_DIR/reconstructed" --frame-map "\$fmap" --report-tag "\$base"
+    done
+else
+    make -f "$TMC13_DIR/scripts/Makefile.tmc13-step" -C "$RESULT_DIR" VPATH="$CFG" ENCODER="$TMC13_BIN" DECODER="$TMC13_BIN" SRCSEQ="$PRE_DIR/concat.ply"
+    "$PYTHON" "$POSTPROCESS_CONCAT_SCRIPT" --preprocessed-dir "$PRE_DIR" --decoded-ply "$RESULT_DIR/concat.ply.bin.decoded.ply" --output-dir "$RESULT_DIR/reconstructed" --frame-count $NUM_FRAMES
+fi
+
+touch "$OUT/jobs/done/gpcc/\${SLURM_JOB_ID:-UNDEFINED}"
+EOF
+                    chmod +x "$JOBFILE"
+                    echo "$JOBFILE" >> "$RUN_GPCC"
+
+                IDX=0
+                for FILE in "${SelFILEs[@]}"; do
+                    FN="$(printf 'frame_%04d' "$IDX")"
+                    numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
+                    for (( VIEW=0; VIEW<numVIEWs; VIEW+=1 )); do
+                        JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FN-$VIEW.sh"
+                        {
+                            echo "#!/bin/bash"
+                            echo "#SBATCH --output=$OUT/jobs/logs/%j.out"
+                            echo "#SBATCH --ntasks-per-node=1"
+                            echo "#SBATCH --nodes=1"
+                            echo "#SBATCH --mem-per-cpu=8G"
+                            echo "$METRIC --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeOm=0 --computeSsim=0 --computeIvssim=0 --computeQmiv=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/reconstructed/$FN.ply\" --output=\"$RESULT_DIR/$FN.ply.v$VIEW.metric\""
+                            echo "touch $OUT/jobs/done/metric/\${SLURM_JOB_ID:-UNDEFINED}"
+                        } > "$JOBFILE_MET"
+                        chmod +x "$JOBFILE_MET"
+                        echo "$JOBFILE_MET" >> "$RUN_METRIC"
+                    done
+                    IDX=$((IDX+1))
+                done
+            else
             for FILE in "${SelFILEs[@]}"; do
                 FRAME="$(basename "$FILE" .camerapos.ply)"
                 JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
@@ -284,7 +389,7 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                 echo "$JOBFILE" >> "$RUN_GPCC"
 
                 numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
-                for (( VIEW=0; VIEW<numVIEWs; VIEW+=VIEW_PERIOD )); do
+                for (( VIEW=0; VIEW<numVIEWs; VIEW+=1 )); do
                     JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
                     {
                         echo "#!/bin/bash"
@@ -300,8 +405,9 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                     echo "$JOBFILE_MET" >> "$RUN_METRIC"
                 done
             done
+            fi
             echo "$PYTHON $SCRIPT_DIR/gsc_parse_gpcc_results.py -d \"$RESULT_DIR\" -s \"$SEQ\" -r \"$RATE\" -f $FLAG_1F >> \"$csv_file\"" >> "$RUN_SUMMARY"
-        
+
         done
     done
 done
@@ -345,15 +451,15 @@ fi
 # Function to run jobs in parallel with progress display
 run_with_progress() {
     local jobfile="$1"
-    local nproc="${2:-$(nproc)}"
+    local parallel_jobs="${PARALLEL_JOBS:-8}"
     local total
     total=$(wc -l < "$jobfile")
     local count=0
 
-    echo "Total jobs: $total"
+    echo "Total jobs: $total (parallel: $parallel_jobs)"
 
     # Run jobs in parallel, emit "DONE" after each job finishes
-    cat "$jobfile" | xargs -P "${nproc}" -I {} bash -c '{} >/dev/null 2>&1; echo DONE' |
+    cat "$jobfile" | xargs -P "$parallel_jobs" -I {} bash -c '{} >/dev/null 2>&1; echo DONE' |
     while read -r signal; do
         count=$((count+1))
         percent=$((count*100/total))
@@ -374,7 +480,7 @@ run_with_progress_sbatch_wait() {
     echo "Submitting $total jobs to SLURM..."
     while read -r job; do
         while (( submitted - done_count > 10000 )); do
-            sleep 4
+            sleep 2
             submit_percent=$((submitted * 100 / total))
             done_count=$(find "$done_dir" -type f -printf '.' | wc -c)
             done_percent=$((done_count * 100 / total))
@@ -419,6 +525,11 @@ declare -f run_with_progress_sbatch_wait > "$MASTER_RUN_SLURM"
     echo "SCRIPT_DIR=\"$(dirname "$SCRIPT_PATH")\""
     echo "cd $SCRIPT_DIR"
     echo
+    if [ $FLAG_CONCAT == 1 ]; then
+        echo "echo '▶ Step 0: build concat.ply per sequence'"
+        echo "run_with_progress_sbatch_wait \"$RUN_PRE\" \"$OUT/jobs/done/pre/\""
+        echo
+    fi
     echo "echo '▶ Step 1: GPCC encode/decode in parallel'"
     echo "run_with_progress_sbatch_wait \"$RUN_GPCC\" \"$OUT/jobs/done/gpcc/\" "
     echo
@@ -441,11 +552,16 @@ declare -f run_with_progress > "$MASTER_RUN"
     echo "SCRIPT_DIR=\"$(dirname "$SCRIPT_PATH")\""
     echo "cd $SCRIPT_DIR"
     echo
+    if [ $FLAG_CONCAT == 1 ]; then
+        echo "echo '▶ Step 0: build concat.ply per sequence'"
+        echo "run_with_progress \"$RUN_PRE\""
+        echo
+    fi
     echo "echo '▶ Step 1: GPCC encode/decode in parallel'"
-    echo "run_with_progress \"$RUN_GPCC\""
+    echo "run_with_progress \"$RUN_GPCC\" \"$GPCC_JOBS\""
     echo
     echo "echo '▶ Step 2: Metric calculation in parallel'"
-    echo "run_with_progress \"$RUN_METRIC\""
+    echo "run_with_progress \"$RUN_METRIC\" \"$METRIC_JOBS\""
     echo
     echo "echo '▶ Step 3: Summary generation'"
     echo "bash \"$RUN_SUMMARY\""
@@ -455,7 +571,7 @@ chmod +x "$MASTER_RUN"
 
 echo
 echo "[Generated scripts]"
-echo "$RUN_GPCC"
+echo "$RUN_PRE"
 echo "$RUN_METRIC"
 echo "$RUN_SUMMARY"
 echo "$MASTER_RUN"
