@@ -154,6 +154,24 @@ bool extractSHQuantRegions(bool withSHCoefficients, const std::vector<GSPoint>& 
 bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
     size_t pointCount, std::vector<AttributeDescription>& attrDescs);
 
+// Scale power transform functions (implemented in powertransform.cpp)
+void setScalePowerTransformParams(
+    AttributeDescription& desc, const std::vector<double>& inputAttrBuf,
+    const std::vector<int>& indices, int pointCount, int64_t dCode);
+
+void ensureScalePowerTransformParams(AttributeDescription& desc);
+
+int quantizeScalePowerTransform(
+    const AttributeDescription& desc, double value, int c, int64_t clipMax);
+
+void quantizeScalePowerTransform(
+    const AttributeDescription& desc, const double* src, int c, int64_t clipMax,
+    std::vector<Vec3<attr_t>>& dst, int pointCount);
+
+void inverseScalePowerTransform(
+    const AttributeDescription& desc, const Vec3<attr_t>* src,
+    Vec3<float>* dst, int pointCount);
+
 namespace ply {
 
   //============================================================================

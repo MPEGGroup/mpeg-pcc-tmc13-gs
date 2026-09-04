@@ -378,6 +378,7 @@ public:
     return scales[index];
   }
   std::vector<Vec3<attr_t>>& getScale() { return scales; }
+  const std::vector<Vec3<attr_t>>& getScale() const { return scales; }
   void setScale(const size_t index, const Vec3<attr_t> scale)
   {
     assert(index < scales.size() && withScales);

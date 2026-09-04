@@ -233,6 +233,7 @@ enum class AttributeParameterType : uint8_t
   kDefaultValue = 4,
   kSHCoefficientLabel = 5,
   kRotationLabel = 6,
+  kScaleLabel = 7,
   /* [3, 127] are reserved for future use */
   /* [128, 255] are specified according to the attribute label */
 };
@@ -324,6 +325,9 @@ constexpr int KLT_SCALE = 10;
 constexpr int KLT_SIGMA_SCALE = 16;
 constexpr int KLT_MEAN_SCALE = SH_SCALE;
 constexpr int SS_SCALE = 12;
+constexpr int GS_SCALE_POWER_FACTOR_SCALE = 16;
+constexpr int GS_SCALE_SCALING_FACTOR_SCALE = 16;
+constexpr int GS_SCALE_STEP_SIZE_SCALE = 16;
 
 //============================================================================
 // KLT parameters for each SH group
@@ -335,6 +339,28 @@ struct PCCKltParameters {
     std::vector<std::vector<int64_t>> eigvecFxp;
     std::vector<int64_t>              meanFxp;
     std::vector<int64_t>              sigmaFxp;
+};
+
+//============================================================================
+struct PCCScalePowerParameters {
+  Vec3<int64_t> powerFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_POWER_FACTOR_SCALE);
+  Vec3<int64_t> scalingFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_SCALING_FACTOR_SCALE);
+  Vec3<int> numQuantRegionsMinus1 = Vec3<int>(0);
+  Vec3<int> numBitsForTransitionPoint = Vec3<int>(0);
+  std::vector<int> quantRegionTransitionPoint[3];
+  std::vector<int64_t> regionStepSizeFxp[3];
+
+  void clear()
+  {
+    powerFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_POWER_FACTOR_SCALE);
+    scalingFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_SCALING_FACTOR_SCALE);
+    numQuantRegionsMinus1 = Vec3<int>(0);
+    numBitsForTransitionPoint = Vec3<int>(0);
+    for (int c = 0; c < 3; c++) {
+      quantRegionTransitionPoint[c].clear();
+      regionStepSizeFxp[c].clear();
+    }
+  }
 };
 
 //============================================================================
@@ -370,6 +396,9 @@ struct AttributeParameters {
   RotationLabel rotation_label;
   EulerAngleUnitType euler_angle_unit_type;
 
+  bool scaleParameterPresent = false;
+  PCCScalePowerParameters scalePowerParams;
+
   // SH 2D Transform
   bool gsdTransform2dPresentFlag_ = false;
   bool dataAdaptiveShTransformEnabled_ = true;
@@ -400,7 +429,8 @@ struct AttributeParameters {
   {
     int count = opaqueParameters.size() + cicpParametersPresent
       + scalingParametersPresent + !attr_default_value.empty()
-	  + shCoefficientParameterPresent + rotationParameterPresent;
+      + shCoefficientParameterPresent + rotationParameterPresent
+      + scaleParameterPresent;
     return count;
   }
 
@@ -411,8 +441,10 @@ struct AttributeParameters {
     attr_default_value.clear();
     input_attr_default_value.clear();
     opaqueParameters.clear();
-		shCoefficientParameterPresent = false;
-		rotationParameterPresent = false;
+    shCoefficientParameterPresent = false;
+    rotationParameterPresent = false;
+    scaleParameterPresent = false;
+    scalePowerParams.clear();
 
     gsdTransform2dPresentFlag_ = false;
     dataAdaptiveShTransformEnabled_ = false;

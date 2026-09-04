@@ -145,6 +145,7 @@ file(GLOB PROJECT_CPP_FILES
   "pcc_chrono.cpp"
   "ply.cpp"
   "pointset_processing.cpp"
+  "powertransform.cpp"
   "transform.cpp"
   "quantization.cpp"
   "tables.cpp"
@@ -177,8 +178,11 @@ add_executable (ply-merge EXCLUDE_FROM_ALL
   "../tools/ply-merge.cpp"
   "FixedPoint.cpp"
   "misc.cpp"
+  "pcc_chrono.cpp"
   "ply.cpp"
+  "powertransform.cpp"
   "gstable.cpp"
+  "transform.cpp"
   "../dependencies/program-options-lite/program_options_lite.cpp"
   ${VERSION_FILE}
 )

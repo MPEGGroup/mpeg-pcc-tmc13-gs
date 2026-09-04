@@ -38,7 +38,6 @@
 #include "PCCMisc.h"
 #include "PCCPointSet.h"
 #include <string>
-#include <unordered_map>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -47,6 +46,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <unordered_map>
 
 namespace pcc {
 //============================================================================
@@ -787,11 +787,31 @@ ply::write(
       sphericalHarmonicsInvTransform(true, gsChunk, chunkCount, param_sh, convertColourspace);
     };
 
+    constexpr size_t kScalePowerWriteChunkSize = 65536;
+    const AttributeDescription* scaleDesc = nullptr;
+    std::vector<Vec3<float>> scalePowerWriteValues;
+    if (cloud.hasScales()) {
+      scaleDesc = &getAttributeDescription(attrDescs, KnownAttributeLabel::kScale, 0);
+      if (scaleDesc->params.scaleParameterPresent)
+        scalePowerWriteValues.resize(
+          std::min(kScalePowerWriteChunkSize, pointCount));
+    }
+
     for (size_t i = 0; i < pointCount; ++i) {
       if ((useGsdTransform2d || useShNQ) && (i % kShChunkSize == 0)) {
         size_t chunkCount = std::min(kShChunkSize, pointCount - i);
         dequantShChunk(i, chunkCount);
       }
+
+      if (scaleDesc && scaleDesc->params.scaleParameterPresent
+          && i % kScalePowerWriteChunkSize == 0) {
+        size_t chunkCount =
+          std::min(kScalePowerWriteChunkSize, pointCount - i);
+        inverseScalePowerTransform(
+          *scaleDesc, cloud.getScale().data() + i, scalePowerWriteValues.data(),
+          int(chunkCount));
+      }
+
       Vec3<double> position = cloud[i] * positionScale + positionOffset;
       if (!asConformance) {
         Vec3<float> positionFloat;
@@ -914,16 +934,24 @@ ply::write(
 				fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
         clock->start();
 			}
-			if (cloud.hasScales()) {
+      if (cloud.hasScales()) {
         float scale[3];
-        auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kScale, 0);
+        const auto& desc = *scaleDesc;
         auto offset = desc.params.attr_offset;
         auto attr_frac_bits = desc.params.attr_frac_bits;
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
-        for (int k = 0; k < 3; k++) {
-          int32_t attr = int32_t(cloud.getScale(i)[k]);
-          double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
-          scale[k]= buf;
+        if (desc.params.scaleParameterPresent) {
+          const auto& value = scalePowerWriteValues[i % kScalePowerWriteChunkSize];
+          scale[0] = value[0];
+          scale[1] = value[1];
+          scale[2] = value[2];
+        } else {
+          const auto& attr = cloud.getScale()[i];
+          for (int k = 0; k < 3; k++) {
+            double buf = double(int32_t(attr[k])) * attr_scale
+              / (1 << attr_frac_bits) + offset;
+            scale[k] = buf;
+          }
         }
 				Vec3<float> val32b{ float(scale[0])/GS_PROPERTY_SCALE, float(scale[1])/GS_PROPERTY_SCALE, float(scale[2])/GS_PROPERTY_SCALE };
         clock->stop();
@@ -1368,14 +1396,15 @@ ply::analyzeMinMax (
       desc.params.attr_frac_bits = 0;
       continue;
     }
-
     Stats stat;
-    
+    bool isGsScale = desc.attributeLabel == KnownAttributeLabel::kScale;
     std::vector<int> indices = getAttrIndices(desc, properties);
+
     for (int c = 0; c < indices.size(); c++) {
       double* buf = &inputAttrBuf[indices[c] * pointCount];
       for (int i = 0; i < pointCount; i++) {
-        stat.update(buf[i]);
+        double value = buf[i];
+        stat.update(value);
       }
     }
 
@@ -1387,9 +1416,20 @@ ply::analyzeMinMax (
     int64_t bit_depth_scale = (1ll << desc.bitdepth) - 1ll;
     int64_t d_code = int64_t(cmax) - int64_t(fmin);
     int64_t attr_scale = (d_code * attr_frac_bits_scale + (bit_depth_scale>>1)) / bit_depth_scale;
+    if (isGsScale) {
+      d_code = std::max<int64_t>(1, d_code);
+      attr_scale = std::max<int64_t>(
+        1,
+        (d_code * attr_frac_bits_scale + (bit_depth_scale >> 1))
+          / bit_depth_scale);
+    }
 
     desc.params.attr_offset = attr_offset;
     desc.params.attr_scale_minus1 = attr_scale - 1;
+
+    if (isGsScale)
+      setScalePowerTransformParams(
+        desc, inputAttrBuf, indices, pointCount, d_code);
   }
   return true;
 }
@@ -1404,6 +1444,10 @@ ply::quantizationLinear (
   int pointCount = cloud.getPointCount();  
   for (auto& desc : attrDescs)
   {
+    const bool isGsScale = desc.attributeLabel == KnownAttributeLabel::kScale;
+    if (isGsScale)
+      ensureScalePowerTransformParams(desc);
+
     const int64_t offset = desc.params.attr_offset;
     const int64_t attr_scale = desc.params.attr_scale_minus1 + 1;
     const int64_t attr_frac_bits_scale = 1ll << desc.params.attr_frac_bits;
@@ -1429,21 +1473,31 @@ ply::quantizationLinear (
 
       auto& dst = cloud.getAttrVec(desc);
 
-      for (int c = 0; c < 3; c++) {
-        for (int i = 0; i < pointCount; i++) {
-          dst[i][c] = attr_t(PCCClip(
-                std::llround((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
-                0, clip_max));
+      if (isGsScale) {
+        for (int c = 0; c < 3; c++)
+          quantizeScalePowerTransform(desc, src[c], c, clip_max, dst, pointCount);
+      } else {
+        for (int c = 0; c < 3; c++) {
+          for (int i = 0; i < pointCount; i++) {
+            dst[i][c] = attr_t(PCCClip(
+                  std::llround((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
+                  0, clip_max));
+          }
         }
       }
     }
     
     if (!desc.params.input_attr_default_value.empty()) {
       for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
-        desc.params.attr_default_value[c] = 
-          attr_t(PCCClip(
-            std::llround((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
-            0, clip_max));
+        if (isGsScale) {
+          desc.params.attr_default_value[c] = attr_t(quantizeScalePowerTransform(
+            desc, desc.params.input_attr_default_value[c], c, clip_max));
+        } else {
+          desc.params.attr_default_value[c] =
+            attr_t(PCCClip(
+              std::llround((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
+              0, clip_max));
+        }
       }
     }
   }
@@ -1690,6 +1744,10 @@ ply::read(
       if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
         continue;  // SH already quantized by NQ above
 
+      const bool isGsScale = desc.attributeLabel == KnownAttributeLabel::kScale;
+      if (isGsScale)
+        ensureScalePowerTransformParams(desc);
+
       const int64_t offset = desc.params.attr_offset;
       const int64_t attr_scale = desc.params.attr_scale_minus1 + 1;
       const int64_t attr_frac_bits_scale = 1ll << desc.params.attr_frac_bits;
@@ -1715,21 +1773,31 @@ ply::read(
 
         auto& dst = cloud.getAttrVec(desc);
 
-        for (int c = 0; c < 3; c++) {
-          for (int i = 0; i < pointCount; i++) {
-            dst[i][c] = attr_t(PCCClip(
-                  std::llround((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
-                  0, clip_max));
+        if (isGsScale) {
+          for (int c = 0; c < 3; c++)
+            quantizeScalePowerTransform(desc, src[c], c, clip_max, dst, pointCount);
+        } else {
+          for (int c = 0; c < 3; c++) {
+            for (int i = 0; i < pointCount; i++) {
+              dst[i][c] = attr_t(PCCClip(
+                    std::llround((src[c][i] - offset) * attr_frac_bits_scale / attr_scale),
+                    0, clip_max));
+            }
           }
         }
       }
 
       if (!desc.params.input_attr_default_value.empty()) {
         for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
-          desc.params.attr_default_value[c] =
-            attr_t(PCCClip(
-              std::llround((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
-              0, clip_max));
+          if (isGsScale) {
+            desc.params.attr_default_value[c] = attr_t(quantizeScalePowerTransform(
+              desc, desc.params.input_attr_default_value[c], c, clip_max));
+          } else {
+            desc.params.attr_default_value[c] =
+              attr_t(PCCClip(
+                std::llround((desc.params.input_attr_default_value[c] - offset) * attr_frac_bits_scale / attr_scale),
+                0, clip_max));
+          }
         }
       }
     }

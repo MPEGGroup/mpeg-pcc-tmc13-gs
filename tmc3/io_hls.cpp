@@ -567,6 +567,84 @@ parseAttrParamRotationLabel(Bs& bs, AttributeParameters* param)
 
 template<typename Bs>
 void
+writeAttrParamScaleLabel(
+  const AttributeDescription& attr, Bs& bs, const AttributeParameters& param)
+{
+  const auto& scaleParams = param.scalePowerParams;
+  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
+    bs.writeSn(32, scaleParams.powerFactorFxp[c]);
+    bs.writeSn(32, scaleParams.scalingFactorFxp[c]);
+  }
+
+  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
+    int numRegionsMinus1 = scaleParams.numQuantRegionsMinus1[c];
+    int transitionBits = scaleParams.numBitsForTransitionPoint[c];
+
+    bs.writeUe(numRegionsMinus1);
+    bs.writeUe(transitionBits);
+
+    const auto& transitionPoints =
+      scaleParams.quantRegionTransitionPoint[c];
+    for (int m = 0; m < numRegionsMinus1; m++) {
+      int transitionPoint = m < int(transitionPoints.size())
+        ? transitionPoints[m]
+        : 0;
+      bs.writeUn(transitionBits, transitionPoint);
+    }
+
+    const auto& stepSizes = scaleParams.regionStepSizeFxp[c];
+    for (int m = 0; m < numRegionsMinus1 + 1; m++) {
+      int64_t stepSize = m < int(stepSizes.size())
+        ? stepSizes[m]
+        : int64_t(1) << GS_SCALE_STEP_SIZE_SCALE;
+      bs.writeSn(32, stepSize);
+    }
+  }
+
+  bs.byteAlign();
+}
+
+//----------------------------------------------------------------------------
+
+template<typename Bs>
+void
+parseAttrParamScaleLabel(
+  const AttributeDescription& attr, Bs& bs, AttributeParameters* param)
+{
+  auto& scaleParams = param->scalePowerParams;
+  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
+    bs.readSn(32, &scaleParams.powerFactorFxp[c]);
+    bs.readSn(32, &scaleParams.scalingFactorFxp[c]);
+  }
+
+  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
+    int numRegionsMinus1;
+    int transitionBits;
+    bs.readUe(&numRegionsMinus1);
+    bs.readUe(&transitionBits);
+
+    scaleParams.numQuantRegionsMinus1[c] = numRegionsMinus1;
+    scaleParams.numBitsForTransitionPoint[c] = transitionBits;
+
+    auto& transitionPoints =
+      scaleParams.quantRegionTransitionPoint[c];
+    transitionPoints.resize(numRegionsMinus1);
+    for (int m = 0; m < numRegionsMinus1; m++)
+      bs.readUn(transitionBits, &transitionPoints[m]);
+
+    auto& stepSizes = scaleParams.regionStepSizeFxp[c];
+    stepSizes.resize(numRegionsMinus1 + 1);
+    for (int m = 0; m < numRegionsMinus1 + 1; m++)
+      bs.readSn(32, &stepSizes[m]);
+  }
+
+  bs.byteAlign();
+}
+
+//============================================================================
+
+template<typename Bs>
+void
 writeAttrParamOpaque(Bs& bs, const OpaqueAttributeParameter& param)
 {
   if (param.attr_param_type == AttributeParameterType::kItuT35) {
@@ -683,6 +761,17 @@ writeAttributeParameters(
     writeAttrParamRotationLabel(bs, params);
   }
 
+  if (params.scaleParameterPresent) {
+    int attr_param_len = 0;
+    auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
+    writeAttrParamScaleLabel(attr, bsCounter, params);
+
+    auto attr_param_type = AttributeParameterType::kScaleLabel;
+    bs.writeUn(8, attr_param_type);
+    bs.writeUn(8, attr_param_len);
+    writeAttrParamScaleLabel(attr, bs, params);
+  }
+
   for (const auto& param : params.opaqueParameters) {
     int attr_param_len = 0;
     auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
@@ -720,6 +809,10 @@ parseAttributeParameter(
   case Type::kRotationLabel:
     parseAttrParamRotationLabel(bs, &params);
     params.rotationParameterPresent = true;
+    break;
+  case Type::kScaleLabel:
+    parseAttrParamScaleLabel(attr, bs, &params);
+    params.scaleParameterPresent = true;
     break;
 
   case Type::kItuT35:

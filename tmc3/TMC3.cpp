@@ -1605,8 +1605,9 @@ sanitizeEncoderOpts(
     attrMeta.cicp_transfer_characteristics_idx = 2;
     attrMeta.cicp_video_full_range_flag = true;
     attrMeta.cicpParametersPresent = false;
-		attrMeta.shCoefficientParameterPresent = false;
-		attrMeta.rotationParameterPresent = false;
+    attrMeta.shCoefficientParameterPresent = false;
+    attrMeta.rotationParameterPresent = false;
+    attrMeta.scaleParameterPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
@@ -1662,11 +1663,12 @@ sanitizeEncoderOpts(
 			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
 		}
 
-		if (it.first == "scale") {
-			attr_sps.attr_num_dimensions_minus1 = 2;
-			attr_sps.attributeLabel = KnownAttributeLabel::kScale;
-			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-		}
+    if (it.first == "scale") {
+      attr_sps.attr_num_dimensions_minus1 = 2;
+      attr_sps.attributeLabel = KnownAttributeLabel::kScale;
+      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+      attrMeta.scaleParameterPresent = true;
+    }
 
 		if (!it.first.compare(0, 8, "rotation")) {
 			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
