@@ -1,10 +1,11 @@
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
 import torch
 import tyro
+import yaml
 from tqdm import tqdm
 from typing_extensions import Literal
 
@@ -52,6 +53,10 @@ def finetune_splats(
 
     # Create output directory.
     config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Dump the whole config.
+    with (config.output_dir / "cfg.yml").open("w") as f:
+        yaml.dump(asdict(config), f)
 
     # Set memory limit.
     if config.max_memory is not None and config.device != "cpu":
@@ -161,7 +166,10 @@ def preprocess(config: Config):
 
 
 if __name__ == "__main__":
-    config: Config = tyro.cli(Config)
+    # FlagConversionOff makes boolean fields expect an explicit `True`/`False`
+    # value (e.g. `--use-rdo True`) instead of `--flag`/`--no-flag` pairs, so
+    # external scripts can assemble `--key value` arguments uniformly.
+    config: Config = tyro.cli(tyro.conf.FlagConversionOff[Config])
     CONSOLE.log(config)
 
     CONSOLE.log("Running preprocess.")

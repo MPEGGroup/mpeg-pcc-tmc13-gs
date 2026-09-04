@@ -59,7 +59,7 @@ class PrunerConfig:
         if not (0.0 <= self.prune_ratio < 1.0):
             raise ValueError(f"Prune ratio must be between 0 and 1. Got {self.prune_ratio}.")
         # Check that imp_bin and campos_bin exist.
-        if self.mode == "gscm":
+        if self.prune_ratio > 0 and self.mode == "gscm":
             if not self.campos_bin.exists():
                 raise FileNotFoundError(f"Camera position binary not found at {self.campos_bin}.")
             if not self.imp_bin.exists():
@@ -191,16 +191,15 @@ class Pruner:
         camera = self.dataset.get_trainset(skip_image=True)[0]
         width, height = camera["width"], camera["height"]
         assert all(c["width"] == width and c["height"] == height for c in self.dataset.get_trainset(skip_image=True))
+
         start_time = time.time()
         run_cmd(
-            f"env OMP_NUM_THREADS={self.config.n_gscm_workers} "
-            if self.config.n_gscm_workers > 0
-            else ""
             f"{self.config.imp_bin}"
             f" -a {camerapos_ply_path}"
             f" --impScore={importance_score_path}"
             f" --width={width} --height={height}"
             f" -v 1"
+            f" --threads={self.config.n_gscm_workers}"
         )
         CONSOLE.log(f"Computed importance scores using GSCM in {time.time() - start_time:.1f} seconds.")
 
