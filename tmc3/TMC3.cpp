@@ -136,8 +136,7 @@ public:
     const std::string& postInvScalePath,
     const std::string& preInvScalePath,
     const CloudFrame& reconFrame,
-    PCCPointSet3& cloud,
-    bool externalPrePost);
+    PCCPointSet3& cloud);
 
   // determine the output ply scale factor
   double outputScale(const CloudFrame& cloud) const;
@@ -1130,6 +1129,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Matrix used in colourspace conversion\n"
     "  0: none (identity)\n"
     "  1: ITU-T BT.709\n"
+    "  5: ITU-T BT.601\n"
     "  8: YCgCo")
 
 	("numSHCoeffBandsMinus1", 
@@ -1648,6 +1648,11 @@ sanitizeEncoderOpts(
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kColour;
       attrMeta.cicpParametersPresent = true;
+      // Assume that YCgCo is actually YCgCoR for Colour
+      // This requires an extra bit to represent chroma (luma will have a
+      // reduced range)
+      if (attrMeta.cicp_matrix_coefficients_idx == ColourMatrix::kYCgCo)
+        attr_sps.bitdepth++;
     }
 
 		// Gaussian Splat Compression
@@ -1682,11 +1687,14 @@ sanitizeEncoderOpts(
 		if (!it.first.compare(0, 13, "SHCoefficient")) {
 			attr_sps.attr_num_dimensions_minus1 = 2;
 			attr_sps.attributeLabel = KnownAttributeLabel::kSH_coefficients;
+
+      attrMeta.cicp_transfer_characteristics_idx = int(attrMeta.cicp_matrix_coefficients_idx);
+      attrMeta.cicpParametersPresent = true;
+
 			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
 				attrMeta.sh_dc_coefficient_flag = true;
 			else 
 				attrMeta.sh_dc_coefficient_flag = false;
-			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
 			attrMeta.shCoefficientParameterPresent = true;
 		  
       int numShBandMinus1 = attrMeta.num_sh_coefficient_degrees_minus1;
@@ -1703,11 +1711,6 @@ sanitizeEncoderOpts(
       }
 		}
 
-    // Assume that YCgCo is actually YCgCoR for now
-    // This requires an extra bit to represent chroma (luma will have a
-    // reduced range)
-    if (attrMeta.cicp_matrix_coefficients_idx == ColourMatrix::kYCgCo)
-      attr_sps.bitdepth++;
 
     // Extend the default attribute value to the correct width if present
     int& attr_DU_mode = params.encoder.attr_DU_modes[it.second];
@@ -2087,7 +2090,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
 	}
 
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->encoder.externalPrePost, clock)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->convertColourspace, params->encoder.externalPrePost, clock)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
@@ -2187,7 +2190,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (reconPtr)
   {
     pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
-    writeOutputFrame(&clock_unused, params->reconstructedDataPath, {}, recon, recon.cloud, params->encoder.externalPrePost);
+    writeOutputFrame(&clock_unused, params->reconstructedDataPath, {}, recon, recon.cloud);
   }
 
   clock->stop();
@@ -2220,7 +2223,7 @@ SequenceEncoder::onPostRecolour(const PCCPointSet3& cloud)
   frame.frameNum = frameNum - params->firstFrameNum;
 
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
-  writeOutputFrame(&clock_unused, params->postRecolorPath, {}, frame, tmpCloud, params->encoder.externalPrePost);
+  writeOutputFrame(&clock_unused, params->postRecolorPath, {}, frame, tmpCloud);
 }
 
 //============================================================================
@@ -2290,7 +2293,7 @@ SequenceDecoder::onOutputCloud(const CloudFrame& frame)
   
   writeOutputFrame(
     clock,
-    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud, params->encoder.externalPrePost);
+    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud);
 }
 
 //============================================================================
@@ -2328,9 +2331,7 @@ SequenceCodec::writeOutputFrame(
   const std::string& postInvScalePath,
   const std::string& preInvScalePath,
   const CloudFrame& frame,
-  PCCPointSet3& cloud,
-  bool externalPrePost=true
-  )
+  PCCPointSet3& cloud)
 {
   if (postInvScalePath.empty() && preInvScalePath.empty())
     return;
@@ -2354,7 +2355,7 @@ SequenceCodec::writeOutputFrame(
   if (!preInvScalePath.empty()) {
     pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(&clock_unused, cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->encoder.externalPrePost);
+    ply::write(&clock_unused, cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->convertColourspace, params->encoder.externalPrePost);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
@@ -2362,7 +2363,7 @@ SequenceCodec::writeOutputFrame(
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
         clock, cloud, attrNames, plyScale, plyOrigin, decName,
-        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, externalPrePost)) {
+        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->convertColourspace, params->encoder.externalPrePost)) {
     cout << "Error: can't open output file!" << endl;
   }
 }

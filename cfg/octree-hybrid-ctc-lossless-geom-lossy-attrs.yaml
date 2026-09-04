@@ -126,7 +126,7 @@ categories:
      -
        - !conditional '"${group}" eq "catGS"'
        - intraLodPredictionSkipLayers: 0
-       - convertPlyColourspace: 0
+       - convertPlyColourspace: 1
        - transformType: 0
        - rahtPredictionEnabled: 0
        - outputBinaryPly: 1
@@ -141,6 +141,7 @@ categories:
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 
        - numSHCoeffBandsMinus1: 3
+       - colourMatrix: 1
        - ""
        - "# SH coefficients : band 0 (DC) ----------"
        - qp:
@@ -327,7 +328,7 @@ categories:
        - convertPlyColourspace: 1
      -
        - !conditional '"${group}" eq "catGS"'
-       - convertPlyColourspace: 0
+       - convertPlyColourspace: 1
        - outputBinaryPly: 1
 
     pcerrorflags:

@@ -39,7 +39,6 @@
 #include "PCCPointSet.h"
 #include <string>
 #include <unordered_map>
-
 #include <fstream>
 #include <string>
 #include <vector>
@@ -50,30 +49,6 @@
 #include <limits>
 
 namespace pcc {
-
-//============================================================================
-
-static void RGB2YUV(double (&src)[3])
-{
-  double R = src[0];
-  double G = src[1];
-  double B = src[2];
-  src[0] = +0.2126 * R + 0.7152 * G + 0.0722 * B;
-  src[1] = -0.1146 * R - 0.3854 * G + 0.5 * B;
-  src[2] = +0.5 * R - 0.4542 * G - 0.0458 * B;
-
-}
-static void YUV2RGB(double (&src)[3])
-{
-  double Y = src[0];
-  double U = src[1];
-  double V = src[2];
-  src[0] = Y + 1.5748 * V;
-  src[1] = Y - 0.1873 * U - 0.4681 * V;
-  src[2] = Y + 1.8556 * U;
-
-}
-
 //============================================================================
 
 int64_t adjust_frac_bits(int64_t val, int curr_frac_bits, int final_frac_bits)
@@ -555,6 +530,7 @@ ply::write(
   bool asAscii,
   const std::vector<AttributeDescription>& attrDescs,
   bool asConformance,
+  bool convertColourspace,
   bool externalPrePost=true)
 {
   clock->stop();
@@ -808,7 +784,7 @@ ply::write(
           }
         }
       }
-      sphericalHarmonicsInvTransform(true, gsChunk, chunkCount, param_sh);
+      sphericalHarmonicsInvTransform(true, gsChunk, chunkCount, param_sh, convertColourspace);
     };
 
     for (size_t i = 0; i < pointCount; ++i) {
@@ -884,8 +860,10 @@ ply::write(
             shdc[k]= buf;
           }
 
-          if (!externalPrePost)
-            YUV2RGB(shdc);
+          if (!externalPrePost && convertColourspace){
+            convertToRgb(
+              desc.params.cicp_matrix_coefficients_idx, shdc);
+          }
 
           Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
           clock->stop();
@@ -906,9 +884,13 @@ ply::write(
             }
           }
           
-          if (!externalPrePost)
+          if (!externalPrePost && convertColourspace) {
             for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
-              YUV2RGB(shac[m]);
+            {
+              convertToRgb(
+                desc.params.cicp_matrix_coefficients_idx, shac[m]);
+            }
+          }
 
           for (int k = 0; k < 3; k++) {
 						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
@@ -1273,7 +1255,8 @@ ply::convertColor (
         buf_tmp[1] = buf[1][i];
         buf_tmp[2] = buf[2][i];
 
-        RGB2YUV(buf_tmp);
+        convertFromRgb(
+          desc.params.cicp_matrix_coefficients_idx, buf_tmp);
 
         buf[0][i] = buf_tmp[0];
         buf[1][i] = buf_tmp[1];
@@ -1474,6 +1457,7 @@ ply::read(
   double positionScale,
   PCCPointSet3& cloud,
   std::vector<AttributeDescription>& attrDescs,
+  bool convertColourspace,
   bool externalPrePost,
   Stopwatch* clock)
 {
@@ -1508,7 +1492,9 @@ ply::read(
   if (!externalPrePost)
   {
     // Color conversion (skips SH when gsdTransform2dPresentFlag)
-    convertColor(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
+    if (convertColourspace) {
+      convertColor(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
+    }
 
     // Rotation and Scale conversion
     convertRotationAndScale(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
@@ -1553,7 +1539,7 @@ ply::read(
       }
 
       initializeShTransformParams(shParams);
-      sphericalHarmonicsTransform(witSHCoefficients, shView, pointCount, shParams);
+      sphericalHarmonicsTransform(witSHCoefficients, shView, pointCount, shParams, convertColourspace);
 
       if (useSharedAc) {
         // Shared AC + lround: one DC range (band 0) + one AC range (bands 1-15)

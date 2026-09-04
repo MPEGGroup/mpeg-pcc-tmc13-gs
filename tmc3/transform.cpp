@@ -38,6 +38,7 @@
 #include "PCCMisc.h"
 #include "PCCPointSet.h"
 #include "PCCSymEigen.h"
+
 #include <numeric>
 #include <string>
 #include <unordered_map>
@@ -47,25 +48,6 @@
 #include <vector>
 
 namespace pcc {
-void RGB2YUV(double (&src)[3])
-{
-  double R = src[0];
-  double G = src[1];
-  double B = src[2];
-  src[0] = +0.2126 * R + 0.7152 * G + 0.0722 * B;
-  src[1] = -0.1146 * R - 0.3854 * G + 0.5 * B;
-  src[2] = +0.5 * R - 0.4542 * G - 0.0458 * B;
-}
-
-void YUV2RGB(int64_t(&src)[3])
-{
-  double Y = src[0];
-  double U = src[1];
-  double V = src[2];
-  src[0] = (int64_t)(Y + 1.5748 * V);
-  src[1] = (int64_t)(Y - 0.1873 * U - 0.4681 * V);
-  src[2] = (int64_t)(Y + 1.8556 * U);
-}
 
 //============================================================================
 /// Initialize SH 2D transform parameters
@@ -322,18 +304,20 @@ bool sphericalHarmonicsInvTransform2D(bool witSHCoefficients, std::vector<GSPoin
 }
 
 bool sphericalHarmonicsInvTransform(bool witSHCoefficients, std::vector<GSPoint>& gsBuf,
-  size_t pointCount, AttributeParameters& params){
+  size_t pointCount, AttributeParameters& params, bool convertColourspace){
   if ( params.gsdTransform2dPresentFlag_ ) {
     return sphericalHarmonicsInvTransform2D(witSHCoefficients, gsBuf, pointCount, params ); }
   else{
+    if (!convertColourspace) return true;
+
     for(size_t p = 0; p < pointCount; p++) {
       auto& sh = gsBuf[p].shFxp;
       for (size_t m = 0; m < 16; m++)
-        YUV2RGB(sh[m]);
+        convertToRgb(params.cicp_matrix_coefficients_idx, sh[m]);
     }
   }
   return true;
-  }
+}
 
 //============================================================================
 // SHBufferView-based transform implementations (zero-copy Option 3)
@@ -587,7 +571,7 @@ bool sphericalHarmonicsTransform2D(bool witSHCoefficients, SHBufferView& shView,
 }
 
 bool sphericalHarmonicsTransform(bool witSHCoefficients, SHBufferView& shView,
-  size_t pointCount, AttributeParameters& params) {
+  size_t pointCount, AttributeParameters& params, bool convertColourspace) {
   if (!witSHCoefficients) return false;
   if (params.gsdTransform2dPresentFlag_) {
     bool anyKlt = false;
@@ -627,13 +611,15 @@ bool sphericalHarmonicsTransform(bool witSHCoefficients, SHBufferView& shView,
     return sphericalHarmonicsTransform2D(witSHCoefficients, shView, pointCount, params);
   }
   else {
+    if (!convertColourspace) return true;
+    
     for (size_t p = 0; p < pointCount; p++) {
       double sh[3];
       for (size_t m = 0; m < 16; m++) {
         sh[0] = shView.sh(p, m, 0);
         sh[1] = shView.sh(p, m, 1);
         sh[2] = shView.sh(p, m, 2);
-        RGB2YUV(sh);
+        convertFromRgb(params.cicp_matrix_coefficients_idx, sh);
         shView.sh(p, m, 0) = sh[0];
         shView.sh(p, m, 1) = sh[1];
         shView.sh(p, m, 2) = sh[2];

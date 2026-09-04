@@ -42,6 +42,7 @@
 #include "hls.h"
 
 #include "TMC3.h"
+#include "colourspace.h"
 
 namespace pcc {
 
@@ -132,17 +133,17 @@ void initializeShTransformParams(AttributeParameters& params);
 
 // Original GSPoint-based interface (kept for NQ pipeline compatibility)
 bool sphericalHarmonicsTransform(bool withSHCoefficients, std::vector<GSPoint>& gsBuf,
-    size_t pointCount, AttributeParameters& params);
+    size_t pointCount, AttributeParameters& params, bool convertColourspace);
 
 bool sphericalHarmonicsInvTransform(bool withSHCoefficients, std::vector<GSPoint>& gsBuf,
-    size_t pointCount, AttributeParameters& params);
+    size_t pointCount, AttributeParameters& params, bool convertColourspace);
 
 // Zero-copy SHBufferView interface (Option 3 - avoids gsBuf construction overhead)
 bool sphericalHarmonicsTransform(bool withSHCoefficients, SHBufferView& shView,
-    size_t pointCount, AttributeParameters& params);
+    size_t pointCount, AttributeParameters& params, bool convertColourspace);
 
 bool sphericalHarmonicsInvTransform(bool withSHCoefficients, SHBufferView& shView,
-    size_t pointCount, AttributeParameters& params);
+    size_t pointCount, AttributeParameters& params, bool convertColourspace);
 
 // Original GSPoint-based interface (deprecated, kept for backward compatibility)
 bool extractSHQuantRegions(bool withSHCoefficients, const std::vector<GSPoint>& gsBuf,
@@ -188,6 +189,7 @@ namespace ply {
     bool asAscii,
     const std::vector<AttributeDescription>& attrDescs,
     bool asConformance,
+    bool convertColourspace,
     bool externalPrePost
   );
 
@@ -201,6 +203,7 @@ namespace ply {
     double positionScale,
     PCCPointSet3& cloud,
     std::vector<AttributeDescription>& attrDescs,
+    bool convertColourspace,
     bool externalPrePost,
     Stopwatch* clock
   );
