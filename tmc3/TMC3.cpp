@@ -132,11 +132,11 @@ public:
   // Perform conversions and write output point cloud
   //  \params cloud  a mutable copy of reconFrame.cloud
   void writeOutputFrame(
+    Stopwatch* clock,
     const std::string& postInvScalePath,
     const std::string& preInvScalePath,
     const CloudFrame& reconFrame,
-    PCCPointSet3& cloud,
-    bool externalPrePost);
+    PCCPointSet3& cloud);
 
   // determine the output ply scale factor
   double outputScale(const CloudFrame& cloud) const;
@@ -443,24 +443,18 @@ namespace pcc {
 static std::ostream&
 operator<<(std::ostream& out, const SHCoefficientLabel& val)
 {
-  switch (val) {
-  case SHCoefficientLabel::kBand0_Order0:  out << "0 (DC: 0, 0)"; break;
-  case SHCoefficientLabel::kBand1_OrderM1: out << "1 (AC: 1,-1)"; break;
-  case SHCoefficientLabel::kBand1_Order0:  out << "2 (AC: 1, 0)"; break;
-  case SHCoefficientLabel::kBand1_Order1:  out << "3 (AC: 1, 1)"; break;
-  case SHCoefficientLabel::kBand2_OrderM2: out << "4 (AC: 2,-2)"; break;
-  case SHCoefficientLabel::kBand2_OrderM1: out << "5 (AC: 2,-1)"; break;
-  case SHCoefficientLabel::kBand2_Order0:  out << "6 (AC: 2, 0)"; break;
-  case SHCoefficientLabel::kBand2_Order1:  out << "7 (AC: 2, 1)"; break;
-  case SHCoefficientLabel::kBand2_Order2:  out << "8 (AC: 2, 2)"; break;
-  case SHCoefficientLabel::kBand3_OrderM3: out << "9 (AC: 3,-3)"; break;
-  case SHCoefficientLabel::kBand3_OrderM2: out << "10 (AC: 3,-2)"; break;
-  case SHCoefficientLabel::kBand3_OrderM1: out << "11 (AC: 3,-1)"; break;
-  case SHCoefficientLabel::kBand3_Order0:  out << "12 (AC: 3, 0)"; break;
-  case SHCoefficientLabel::kBand3_Order1:  out << "13 (AC: 3, 1)"; break;
-  case SHCoefficientLabel::kBand3_Order2:  out << "14 (AC: 3, 2)"; break;
-  case SHCoefficientLabel::kBand3_Order3:  out << "15 (AC: 3, 3)"; break;
+  uint32_t idx = static_cast<uint32_t>(val);
+  if (idx > 288) {
+      return out << idx << " (Unknown)";
   }
+  
+  uint32_t l = getShDegree(idx); 
+  int32_t m = static_cast<int32_t>(idx) - static_cast<int32_t>(l * l + l);
+
+  std::string shType = (l == 0) ? "DC" : "AC";
+  
+  out << idx << " (" << shType << ": " << l << "," << (m >= 0 ? " " : "") << m << ")";
+  
   return out;
 }
 }  // namespace pcc
@@ -767,6 +761,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  0: Use srcUnitLength\n"
     " >0: Relative to inputScale")
 
+  ("geomMinMaxBitDepth",
+    params.encoder.geomMinMaxBitDepth, 21,
+    "Bitdepth used to geometry min-max quantization.\n")
+
   (po::Section("Decoder"))
 
   ("skipOctreeLayers",
@@ -775,9 +773,22 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     " 0   : Full decode\n"
     " N>0 : Skip the bottom N layers in decoding process")
 
+  ("skipOctreeLayersforSH",
+    params.decoder.minGeomNodeSizeLog2forSH, 0,
+    "Partial decoding of SH attributes based octree\n"
+    " 0   : Full decode\n"
+    " N>0 : Skip the bottom N layers in decoding process")
+
   ("decodeMaxPoints",
     params.decoder.decodeMaxPoints, 0,
     "Partially decode up to N points")
+
+  ("targetSHDegree",
+    params.decoder.targetSHDegree, -1,
+    "Gaussian Splat: highest spherical harmonics degree to decode\n"
+    " -1 : decode all SH coefficients\n"
+    " N>=0 : decode SH coefficients with degree <= N,\n"
+    "        higher-degree SH coefficients are set to 0 without decoding")
 
   (po::Section("Encoder"))
 
@@ -848,6 +859,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("entropyContinuationEnabled",
     params.encoder.sps.entropy_continuation_enabled_flag, false,
     "Propagate context state between slices")
+
+  ("gsShRemapEnabled",
+    params.encoder.sps.gs_sh_remap_enabled_flag, false,
+    "Controls Remapping of Spherical Harmonics Coefficients.")
 
   ("disableAttributeCoding",
     params.disableAttributeCoding, false,
@@ -1114,11 +1129,16 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Matrix used in colourspace conversion\n"
     "  0: none (identity)\n"
     "  1: ITU-T BT.709\n"
+    "  5: ITU-T BT.601\n"
     "  8: YCgCo")
 
 	("numSHCoeffBandsMinus1", 
 		params_attr.desc.params.num_sh_coefficient_degrees_minus1, 3,
-		"number of SH coefficient bands.")
+    "number of SH coefficient bands.\n"
+    "   <0: Clipped to 0.\n"
+    " 0-16: Force coding up to the specified degree.\n"
+    "  >16: Clipped to 16.\n"
+    )
 
   ("shCoefficientLabel",
     params_attr.desc.params.sh_coefficient_label, SHCoefficientLabel::kBand0_Order0,
@@ -1151,6 +1171,30 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 		"Rotation angle \n"
 		"  0: Radian \n"
 		"  1: Degree")
+
+  ("gsdTransform2dPresentFlag",
+    params_attr.desc.params.gsdTransform2dPresentFlag_, false,
+    "Enable 2D transform for SH coefficients (0: simple RGB->YUV, 1: 2D KLT/DCT)")
+
+  ("dataAdaptiveShTransform",
+    params_attr.desc.params.dataAdaptiveShTransformEnabled_, false,
+    "Enable data-adaptive SH transform (KLT)")
+
+  ("enableGsdPcaDc",
+    params_attr.desc.params.gsdPcaDcFlag_, false,
+    "Enable PCA for DC component of SH")
+
+  ("enableShNonUniformQuantization",
+    params_attr.desc.params.enableShNonUniformQuantization_, false,
+    "Enable non-uniform quantization for SH coefficients")
+
+  ("shNqRangeMode",
+    params_attr.desc.params.shNqRangeMode_, 0,
+    "NQ range mode for SH: 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band")
+
+  ("shAdaptiveTpOpt",
+    params_attr.desc.params.shAdaptiveTpOptEnabled_, false,
+    "Enable adaptive transition point optimization")
 
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
@@ -1271,6 +1315,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.aps.scalable_lifting_enabled_flag, false,
     "Enable scalable attritube coding")
 
+  ("raht_adaptive_block_size_enabled",
+    params_attr.aps.raht_adaptive_block_size_enabled, false,
+    "Enable adaptive block size for RAHT")
+
   ("max_neigh_range",
     // NB: this is adjusted by minus 1 after the arguments are parsed
     params_attr.aps.max_neigh_range_minus1, 5,
@@ -1288,6 +1336,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("aps_slice_qp_deltas_present_flag",
     params_attr.aps.aps_slice_qp_deltas_present_flag, false,
     "Enable signalling of per-slice QP values")
+
+  ("rahtAttrOffsetEnabled",
+    params_attr.aps.raht_attr_offset_enabled, false,
+    "Enable attribute offset for RAHT")
 
   ("qpLayerOffsetsLuma",
     params_attr.encoder.abh.attr_layer_qp_delta_luma, {},
@@ -1553,8 +1605,9 @@ sanitizeEncoderOpts(
     attrMeta.cicp_transfer_characteristics_idx = 2;
     attrMeta.cicp_video_full_range_flag = true;
     attrMeta.cicpParametersPresent = false;
-		attrMeta.shCoefficientParameterPresent = false;
-		attrMeta.rotationParameterPresent = false;
+    attrMeta.shCoefficientParameterPresent = false;
+    attrMeta.rotationParameterPresent = false;
+    attrMeta.scaleParameterPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
@@ -1574,10 +1627,33 @@ sanitizeEncoderOpts(
       attr_sps.attributeLabel = KnownAttributeLabel::kReflectance;
     }
 
+    if (it.first == "frame_index") {
+      if (params.encoder.gps.geom_unique_points_flag || params.encoder.gps.trisoup_enabled_flag){
+        err.error() 
+        << "when geom_unique_points_flag == true or "
+        "trisoup_enabled_flag == true, "
+        "frame_index cannot be encoded.\n";
+      }
+
+      // Avoid wasting bits signalling chroma quant step size for frame index
+      attr_aps.aps_chroma_qp_offset = 0;
+      attr_enc.abh.attr_layer_qp_delta_chroma.clear();
+
+      // There is no matrix for frame index
+      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+      attr_sps.attr_num_dimensions_minus1 = 0;
+      attr_sps.attributeLabel = KnownAttributeLabel::kFrameIndex;
+    }
+
     if (it.first == "color") {
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kColour;
       attrMeta.cicpParametersPresent = true;
+      // Assume that YCgCo is actually YCgCoR for Colour
+      // This requires an extra bit to represent chroma (luma will have a
+      // reduced range)
+      if (attrMeta.cicp_matrix_coefficients_idx == ColourMatrix::kYCgCo)
+        attr_sps.bitdepth++;
     }
 
 		// Gaussian Splat Compression
@@ -1587,11 +1663,12 @@ sanitizeEncoderOpts(
 			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
 		}
 
-		if (it.first == "scale") {
-			attr_sps.attr_num_dimensions_minus1 = 2;
-			attr_sps.attributeLabel = KnownAttributeLabel::kScale;
-			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-		}
+    if (it.first == "scale") {
+      attr_sps.attr_num_dimensions_minus1 = 2;
+      attr_sps.attributeLabel = KnownAttributeLabel::kScale;
+      attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
+      attrMeta.scaleParameterPresent = true;
+    }
 
 		if (!it.first.compare(0, 8, "rotation")) {
 			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
@@ -1612,24 +1689,30 @@ sanitizeEncoderOpts(
 		if (!it.first.compare(0, 13, "SHCoefficient")) {
 			attr_sps.attr_num_dimensions_minus1 = 2;
 			attr_sps.attributeLabel = KnownAttributeLabel::kSH_coefficients;
+
+      attrMeta.cicp_transfer_characteristics_idx = int(attrMeta.cicp_matrix_coefficients_idx);
+      attrMeta.cicpParametersPresent = true;
+
 			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
 				attrMeta.sh_dc_coefficient_flag = true;
 			else 
 				attrMeta.sh_dc_coefficient_flag = false;
-			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
 			attrMeta.shCoefficientParameterPresent = true;
-		      
-			if (attrMeta.num_sh_coefficient_degrees_minus1 > 3)
-				attrMeta.num_sh_coefficient_degrees_minus1 = 3;
-			else if (attrMeta.num_sh_coefficient_degrees_minus1 < 0)
-				attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+		  
+      int numShBandMinus1 = attrMeta.num_sh_coefficient_degrees_minus1;
+      if (numShBandMinus1 > 16)
+        attrMeta.num_sh_coefficient_degrees_minus1 = 16;
+      else if (numShBandMinus1 < 0)
+        attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+      
+      int numShCoefficients = ((numShBandMinus1+1) * (numShBandMinus1+1));
+      if (int(attrMeta.sh_coefficient_label) >= numShCoefficients)
+      {
+        const auto& SH_label = attr_sps.params.sh_coefficient_label;
+        err.error() << "Invalid numSHCoeffBandsMinus1 ("<< attrMeta.num_sh_coefficient_degrees_minus1 <<") for " << attr_sps << "s_" << (int)SH_label <<".\n";
+      }
 		}
 
-    // Assume that YCgCo is actually YCgCoR for now
-    // This requires an extra bit to represent chroma (luma will have a
-    // reduced range)
-    if (attrMeta.cicp_matrix_coefficients_idx == ColourMatrix::kYCgCo)
-      attr_sps.bitdepth++;
 
     // Extend the default attribute value to the correct width if present
     int& attr_DU_mode = params.encoder.attr_DU_modes[it.second];
@@ -1700,6 +1783,9 @@ sanitizeEncoderOpts(
     if (attr_aps.attr_encoding == AttributeEncoding::kRAHTransform) {
       attr_aps.num_detail_levels_minus1 = 0;
       attr_aps.adaptive_prediction_threshold = 0;
+    } else {
+      attr_aps.raht_attr_offset_enabled = false;
+      attr_aps.raht_adaptive_block_size_enabled = false;
     }
 
     if (!params.encoder.gps.geom_angular_mode_enabled_flag) {
@@ -1923,6 +2009,39 @@ sanitizeEncoderOpts(
   }
   
 }
+//============================================================================
+
+inline void filterInvalidShRemapPairs(
+  SequenceParameterSet& sps,
+  std::vector<std::pair<int, int>>& pairs, 
+  const int numShCoeffs)
+{
+  pairs.erase(std::remove_if(pairs.begin(), pairs.end(), [numShCoeffs](const std::pair<int, int>& p) {
+      return (p.first & 15) >= numShCoeffs || (p.second & 15) >= numShCoeffs; 
+  }), pairs.end());
+}
+
+inline void applyGsShRemap(
+  PCCPointSet3& pointCloud, 
+  std::vector<std::pair<int, int>>& pairs)
+{
+  const size_t voxelCount = pointCloud.getPointCount();
+  const int numSHCoeffs = pointCloud.getNumSHCoeffs();
+  for(const auto& p: pairs)
+  {
+    const int c0 = p.first >> 4;
+    const int m0 = p.first & 15;
+    const int c1 = p.second >> 4;
+    const int m1 = p.second & 15;
+
+    auto& sh0 = pointCloud.getSHCoefficient(m0);
+    auto& sh1 = pointCloud.getSHCoefficient(m1);
+
+    for (size_t n = 0; n < voxelCount; ++n) {
+      std::swap(sh0[n][c0], sh1[n][c1]);
+    }
+  }
+}
 
 //============================================================================
 
@@ -1963,22 +2082,17 @@ SequenceEncoder::compress(Stopwatch* clock)
 int
 SequenceEncoder::compressOneFrame(Stopwatch* clock)
 {
+  clock->start();
+
   std::string srcName{expandNum(params->uncompressedDataPath, frameNum)};
   PCCPointSet3 pointCloud;
 
-	int numBandsMinus1 = 3;
-	for (int i = 0; i < params->encoder.sps.attributeSets.size(); i++) {
-    auto tmp = params->encoder.sps.attributeSets[i];
-    if (tmp.attributeLabel.known_attribute_label
-      == KnownAttributeLabel::kSH_coefficients
-			&& tmp.params.sh_dc_coefficient_flag) {
-      numBandsMinus1 = tmp.params.num_sh_coefficient_degrees_minus1;
-		}
+	for (auto& desc: params->encoder.sps.attributeSets) {
+    pointCloud.activateAttribute(desc);
 	}
-  pointCloud.setNumSHCoeffsWithNumBandsMinus1(numBandsMinus1);
 
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->encoder.externalPrePost)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->convertColourspace, params->encoder.externalPrePost, clock)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
@@ -2011,10 +2125,21 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     pointCloud.removeReflectances();
   assert(codeReflectance == pointCloud.hasReflectances());
 
+  bool codeFrameIndex = hasAttr("frame_index");
+  if (!codeFrameIndex)
+    pointCloud.removeFrameIndex();
+  assert(codeFrameIndex == pointCloud.hasFrameIndex());
+
   bool codeOpacity = hasAttr("opacity");
   if (!codeOpacity)
 	  pointCloud.removeOpacities();
   assert(codeOpacity == pointCloud.hasOpacities());
+
+  bool codeRotationW = hasAttr("rotationW");
+  if (!codeRotationW) {
+	  pointCloud.removeScalarRotations();
+  }
+  assert(codeRotationW == pointCloud.hasScalarRotations());
 
   bool codeRotation = hasAttr("rotationXYZ");
   if (!codeRotation) {
@@ -2032,11 +2157,20 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
 	  pointCloud.removeSHCoefficients();
   assert(codeSHCoefficient == pointCloud.hasSHCoefficients());
 
-  clock->start();
-
   if (params->convertColourspace)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
+
+  if (params->encoder.sps.gs_sh_remap_enabled_flag) {
+    const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
+    std::vector<std::pair<int, int>> gs_sh_remap_pairs =
+      {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 
+       {11, 33}, {12, 34}, {13, 35}, {14, 24}, {15, 40},
+       {26, 41}, {27, 37}, {28, 38}, {29, 39}, {31, 46}};
+
+    filterInvalidShRemapPairs(params->encoder.sps, gs_sh_remap_pairs, numShCoeffs);
+    applyGsShRemap(pointCloud, gs_sh_remap_pairs); 
+  }
 
   // The reconstructed point cloud
   CloudFrame recon;
@@ -2054,10 +2188,14 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   int frameLen = bytestreamLenFrameEnd - bytestreamLenFrameStart;
   std::cout << "Total frame size " << frameLen << " B" << std::endl;
 
-  clock->stop();
 
   if (reconPtr)
-    writeOutputFrame(params->reconstructedDataPath, {}, recon, recon.cloud, params->encoder.externalPrePost);
+  {
+    pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
+    writeOutputFrame(&clock_unused, params->reconstructedDataPath, {}, recon, recon.cloud);
+  }
+
+  clock->stop();
 
   return 0;
 }
@@ -2086,7 +2224,8 @@ SequenceEncoder::onPostRecolour(const PCCPointSet3& cloud)
   frame.cloud = cloud;
   frame.frameNum = frameNum - params->firstFrameNum;
 
-  writeOutputFrame(params->postRecolorPath, {}, frame, tmpCloud, params->encoder.externalPrePost);
+  pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
+  writeOutputFrame(&clock_unused, params->postRecolorPath, {}, frame, tmpCloud);
 }
 
 //============================================================================
@@ -2140,14 +2279,23 @@ SequenceDecoder::decompress(Stopwatch* clock)
 void
 SequenceDecoder::onOutputCloud(const CloudFrame& frame)
 {
-  clock->stop();
-
   // copy the point cloud in order to modify it according to the output options
   PCCPointSet3 pointCloud(frame.cloud);
-  writeOutputFrame(
-    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud, params->encoder.externalPrePost);
 
-  clock->start();
+  if (frame.gs_sh_remap_enabled_flag) {
+    const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
+    std::vector<std::pair<int, int>> gs_sh_remap_pairs =
+      {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 
+       {11, 33}, {12, 34}, {13, 35}, {14, 24}, {15, 40},
+       {26, 41}, {27, 37}, {28, 38}, {29, 39}, {31, 46}};
+
+    filterInvalidShRemapPairs(params->encoder.sps, gs_sh_remap_pairs, numShCoeffs);
+    applyGsShRemap(pointCloud, gs_sh_remap_pairs); 
+  }
+  
+  writeOutputFrame(
+    clock,
+    params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud);
 }
 
 //============================================================================
@@ -2181,12 +2329,11 @@ SequenceCodec::outputOrigin(const CloudFrame& frame) const
 
 void
 SequenceCodec::writeOutputFrame(
+  Stopwatch* clock,
   const std::string& postInvScalePath,
   const std::string& preInvScalePath,
   const CloudFrame& frame,
-  PCCPointSet3& cloud,
-  bool externalPrePost=true
-  )
+  PCCPointSet3& cloud)
 {
   if (postInvScalePath.empty() && preInvScalePath.empty())
     return;
@@ -2208,16 +2355,17 @@ SequenceCodec::writeOutputFrame(
 
   // Dump the decoded colour using the pre inverse scaled geometry
   if (!preInvScalePath.empty()) {
+    pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_unused;
     std::string filename{expandNum(preInvScalePath, frameNum)};
-    ply::write(cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->encoder.externalPrePost);
+    ply::write(&clock_unused, cloud, attrNames, 1.0, 0.0, filename, !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->convertColourspace, params->encoder.externalPrePost);
   }
 
   auto plyScale = outputScale(frame) / (1 << frame.outputFpBits);
   auto plyOrigin = outputOrigin(frame);
   std::string decName{expandNum(postInvScalePath, frameNum)};
   if (!ply::write(
-        cloud, attrNames, plyScale, plyOrigin, decName,
-        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, externalPrePost)) {
+        clock, cloud, attrNames, plyScale, plyOrigin, decName,
+        !params->outputBinaryPly, frame.attrDesc, !params->outputHeaderType, params->convertColourspace, params->encoder.externalPrePost)) {
     cout << "Error: can't open output file!" << endl;
   }
 }

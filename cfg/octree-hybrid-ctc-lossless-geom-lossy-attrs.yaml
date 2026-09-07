@@ -126,19 +126,22 @@ categories:
      -
        - !conditional '"${group}" eq "catGS"'
        - intraLodPredictionSkipLayers: 0
-       - convertPlyColourspace: 0
+       - convertPlyColourspace: 1
        - transformType: 0
        - rahtPredictionEnabled: 0
        - outputBinaryPly: 1
        - inputScale: 2097152 # 2^21
        - sequenceScale: 1
        - externalScale: 0
+       - geomMinMaxBitDepth: '${geomBD}'
        - attrFracBits: 12
        - "# All attributes have the same bitdepth"
        - bitdepth: 12
        - calcQPLayerOffsetsEnabled: 0
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 
+       - numSHCoeffBandsMinus1: 3
+       - colourMatrix: 1
        - ""
        - "# SH coefficients : band 0 (DC) ----------"
        - qp:
@@ -325,7 +328,7 @@ categories:
        - convertPlyColourspace: 1
      -
        - !conditional '"${group}" eq "catGS"'
-       - convertPlyColourspace: 0
+       - convertPlyColourspace: 1
        - outputBinaryPly: 1
 
     pcerrorflags:
@@ -416,25 +419,26 @@ categories:
       ulb_unicorn_vox20:
 
       # catGS
-      manwithfruit_tracked: { width: 3840, height: 2160 }
-      cinema_tracked: { width: 1920, height: 1080 }
-      cinema_semitracked: { width: 1920, height: 1080 }
-      breakfast_untracked: { width: 1920, height: 1080 }
-      breakfast_tracked: { width: 1920, height: 1080 }
-      breakfast_semitracked: { width: 1920, height: 1080 }
-      bartender_tracked: { width: 1920, height: 1080 }
-      bartender_semitracked: { width: 1920, height: 1080 }
-      trio: { width: 1920, height: 1080 }
-      makeup: { width: 1920, height: 1080 }
-      musical: { width: 1920, height: 1080 }
-      tennis_player: { width: 4518, height: 2540 }
-      solo_tango_male: { width: 4528, height: 2544 }
-      tango_duo: { width: 4522, height: 2538 }
-      plant: { width: 2954, height: 3968 }
-      solo_tango_female: { width: 4534, height: 2542 }
-      library: { width: 3793, height: 2131 }
-      lego_bugatti: { width: 3852, height: 2868 }
-      lego_ferrari: { width: 4594, height: 5514 }
-      gymnast: { width: 2456, height: 2054 }
-      flowerdance: { width: 2456, height: 2054 }
-      cricket_player: { width: 4520, height: 2540 }
+      manwithfruit_tracked: { width: 3840, height: 2160, geomBD: 18 }
+      cinema_tracked: { width: 1920, height: 1080, geomBD: 18 }
+      cinema_semitracked: { width: 1920, height: 1080, geomBD: 18 }
+      breakfast_untracked: { width: 1920, height: 1080, geomBD: 18 }
+      breakfast_tracked: { width: 1920, height: 1080, geomBD: 18 }
+      breakfast_semitracked: { width: 1920, height: 1080, geomBD: 18 }
+      bartender_tracked: { width: 1920, height: 1080, geomBD: 18 }
+      bartender_semitracked: { width: 1920, height: 1080, geomBD: 18 }
+      trio: { width: 1920, height: 1080, geomBD: 18 }
+      makeup: { width: 1920, height: 1080, geomBD: 18 }
+      musical: { width: 1920, height: 1080, geomBD: 18 }
+      tennis_player: { width: 4518, height: 2540, geomBD: 18 }
+      solo_tango_male: { width: 4528, height: 2544, geomBD: 18 }
+      tango_duo: { width: 4522, height: 2538, geomBD: 18 }
+      plant: { width: 2954, height: 3968, geomBD: 18 }
+      solo_tango_female: { width: 4534, height: 2542, geomBD: 18 }
+      library: { width: 3793, height: 2131, geomBD: 18 }
+      lego_bugatti: { width: 3852, height: 2868, geomBD: 18 }
+      lego_ferrari: { width: 4594, height: 5514, geomBD: 18 }
+      gymnast: { width: 2456, height: 2054, geomBD: 18 }
+      flowerdance: { width: 2456, height: 2054, geomBD: 18 }
+      cricket_player: { width: 4520, height: 2540, geomBD: 18 }
+      corsair: { width: 2000, height: 1294, geomBD: 18 }

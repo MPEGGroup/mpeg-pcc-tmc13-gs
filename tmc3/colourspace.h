@@ -125,4 +125,74 @@ transformYCgCoRToGbr(int bitDepth, T<Tv>& ycgco)
 
 //============================================================================
 
+template<class T> 
+inline static void convertRgbToYCbCrBt709(T (&src)[3]) { 
+    T R = src[0]; T G = src[1]; T B = src[2]; 
+    src[0] = static_cast<T>(+0.212600 * R + 0.715200 * G + 0.072200 * B); 
+    src[1] = static_cast<T>(-0.114572 * R - 0.385428 * G + 0.500000 * B); 
+    src[2] = static_cast<T>(+0.500000 * R - 0.454153 * G - 0.045847 * B); 
+} 
+
+template<class T> 
+inline static void convertYCbCrToRgbBt709(T (&src)[3]) { 
+    T Y = src[0]; T Cb = src[1]; T Cr = src[2]; 
+    src[0] = static_cast<T>(Y + 1.574800 * Cr); 
+    src[1] = static_cast<T>(Y - 0.187324 * Cb - 0.468124 * Cr); 
+    src[2] = static_cast<T>(Y + 1.855600 * Cb); 
+} 
+
+template<class T> 
+inline static void convertRgbToYCbCrBt601(T (&src)[3]) { 
+    T R = src[0]; T G = src[1]; T B = src[2]; 
+    src[0] = static_cast<T>(+0.299000 * R + 0.587000 * G + 0.114000 * B); 
+    src[1] = static_cast<T>(-0.168736 * R - 0.331264 * G + 0.500000 * B); 
+    src[2] = static_cast<T>(+0.500000 * R - 0.418688 * G - 0.081312 * B); 
+} 
+
+template<class T> 
+inline static void convertYCbCrToRgbBt601(T (&src)[3]) { 
+    T Y = src[0]; T Cb = src[1]; T Cr = src[2]; 
+    src[0] = static_cast<T>(Y + 1.402000 * Cr); 
+    src[1] = static_cast<T>(Y - 0.344136 * Cb - 0.714136 * Cr); 
+    src[2] = static_cast<T>(Y + 1.772000 * Cb); 
+} 
+
+template<class T> 
+inline void convertRgbToYcgco(T (&src)[3]) { 
+    T R = src[0]; T G = src[1]; T B = src[2]; 
+    src[0] = static_cast<T>( 0.25 * R + 0.5 * G + 0.25 * B); 
+    src[1] = static_cast<T>(-0.25 * R + 0.5 * G - 0.25 * B); 
+    src[2] = static_cast<T>( 0.50 * R - 0.5 * B); 
+} 
+
+template<class T> 
+inline void convertYcgcoToRgb(T (&src)[3]) { 
+    T Y = src[0]; T Cg = src[1]; T Co = src[2]; 
+    src[0] = static_cast<T>(Y + Co - Cg); 
+    src[1] = static_cast<T>(Y + Cg); 
+    src[2] = static_cast<T>(Y - Co - Cg); 
+} 
+
+template<class T> 
+inline void convertFromRgb(const ColourMatrix cicp_matrix_coefficients_idx, T (&src)[3]) { 
+    switch (cicp_matrix_coefficients_idx) { 
+        case ColourMatrix::kBt709: convertRgbToYCbCrBt709(src); break; 
+        case ColourMatrix::kBt601: convertRgbToYCbCrBt601(src); break; 
+        case ColourMatrix::kYCgCo: convertRgbToYcgco(src);      break; 
+        default: break; 
+    } 
+} 
+
+template<class T> 
+inline void convertToRgb(const ColourMatrix cicp_matrix_coefficients_idx, T (&src)[3]) { 
+    switch (cicp_matrix_coefficients_idx) { 
+        case ColourMatrix::kBt709: convertYCbCrToRgbBt709(src); break; 
+        case ColourMatrix::kBt601: convertYCbCrToRgbBt601(src); break; 
+        case ColourMatrix::kYCgCo: convertYcgcoToRgb(src);      break; 
+        default: break; 
+    } 
+}
+
+//============================================================================
+
 }  // namespace pcc

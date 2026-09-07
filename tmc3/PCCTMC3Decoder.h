@@ -56,6 +56,7 @@ struct DecoderParams {
   // layers to skip during the decode process (attribute coding must take
   // this into account)
   int minGeomNodeSizeLog2;
+  int minGeomNodeSizeLog2forSH;
 
   // A maximum number of points to partially decode.
   int decodeMaxPoints;
@@ -65,6 +66,12 @@ struct DecoderParams {
 
   // Maximum number of attribute groups merged into one RAHT decoding pass.
   int maxAttributeNumberPerGroup;
+
+  // Gaussian Splat Compression: the highest SH degree to decode.
+  // SH coefficients whose degree is <= targetSHDegree are decoded; SH
+  // coefficients of higher degree are set to zero without decoding.
+  //  -1: decode all SH coefficients (default)
+  int targetSHDegree = -1;
 
   bool gs_ext = false;
 };

@@ -95,7 +95,8 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
   if (src.hasSHCoefficients())
     dst.cloud.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
-	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+	  src.hasOpacities(), src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
+    src.hasSHCoefficients(), src.hasFrameIndex());
   return dst;
 }
 
@@ -182,8 +183,10 @@ quantizePositions(
     dst->clear();
     if (src.hasSHCoefficients())
       dst->setNumSHCoeffs(src.getNumSHCoeffs());
-		dst->addRemoveAttributes(src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
-		src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+		dst->addRemoveAttributes(
+      src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
+		  src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
+      src.hasSHCoefficients(), src.hasFrameIndex());
     dst->resize(numSrcPoints);
   }
 
@@ -210,6 +213,11 @@ quantizePositions(
       dst->setReflectance(i, src.getReflectance(i));
   }
 
+  if (src.hasFrameIndex()) {
+    for (int i = 0; i < numSrcPoints; ++i)
+      dst->setFrameIndex(i, src.getFrameIndex(i));
+  }
+
   if (src.hasOpacities()) {
 	  for (int i = 0; i < numSrcPoints; ++i)
 		  dst->setOpacity(i, src.getOpacity(i));
@@ -220,10 +228,15 @@ quantizePositions(
 		  dst->setScale(i, src.getScale(i));
   }
 
+  if (src.hasScalarRotations()) {
+    for (int i = 0; i < numSrcPoints; ++i) {
+      dst->setRotationScalar(i, src.getRotationScalar(i));
+    }
+  }
+
   if (src.hasRotations()) {
     for (int i = 0; i < numSrcPoints; ++i) {
       dst->setRotationVec(i, src.getRotationVec(i));
-      dst->setRotationScalar(i, src.getRotationScalar(i));
     }
   }
 

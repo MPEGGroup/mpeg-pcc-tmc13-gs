@@ -233,6 +233,7 @@ enum class AttributeParameterType : uint8_t
   kDefaultValue = 4,
   kSHCoefficientLabel = 5,
   kRotationLabel = 6,
+  kScaleLabel = 7,
   /* [3, 127] are reserved for future use */
   /* [128, 255] are specified according to the attribute label */
 };
@@ -260,7 +261,29 @@ enum class SHCoefficientLabel : uint32_t
 	kBand3_Order1 = 13,
 	kBand3_Order2 = 14,
 	kBand3_Order3 = 15,
+
+  kCount = 289
 };
+
+static inline uint32_t getShDegree(uint32_t idx) {
+    if (idx < 1)   return 0;
+    if (idx < 4)   return 1;
+    if (idx < 9)   return 2;
+    if (idx < 16)  return 3;
+    if (idx < 25)  return 4;
+    if (idx < 36)  return 5;
+    if (idx < 49)  return 6;
+    if (idx < 64)  return 7;
+    if (idx < 81)  return 8;
+    if (idx < 100) return 9;
+    if (idx < 121) return 10;
+    if (idx < 144) return 11;
+    if (idx < 169) return 12;
+    if (idx < 196) return 13;
+    if (idx < 225) return 14;
+    if (idx < 256) return 15;
+    return 16;
+}
 
 //============================================================================
 
@@ -291,6 +314,53 @@ struct OpaqueAttributeParameter {
 
   // the attribute data excluding type0/type1 identification bytes */
   std::vector<uint8_t> attr_param_byte;
+};
+
+//============================================================================
+// SH Transform and Quantization scale constants
+
+constexpr int DCT_SCALE = 8;
+constexpr int SH_SCALE = 16;
+constexpr int KLT_SCALE = 10;
+constexpr int KLT_SIGMA_SCALE = 16;
+constexpr int KLT_MEAN_SCALE = SH_SCALE;
+constexpr int SS_SCALE = 12;
+constexpr int GS_SCALE_POWER_FACTOR_SCALE = 16;
+constexpr int GS_SCALE_SCALING_FACTOR_SCALE = 16;
+constexpr int GS_SCALE_STEP_SIZE_SCALE = 16;
+
+//============================================================================
+// KLT parameters for each SH group
+
+struct PCCKltParameters {
+    std::vector<std::vector<double>> eigvec;
+    std::vector<double>              mean;
+    std::vector<double>              sigma;
+    std::vector<std::vector<int64_t>> eigvecFxp;
+    std::vector<int64_t>              meanFxp;
+    std::vector<int64_t>              sigmaFxp;
+};
+
+//============================================================================
+struct PCCScalePowerParameters {
+  Vec3<int64_t> powerFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_POWER_FACTOR_SCALE);
+  Vec3<int64_t> scalingFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_SCALING_FACTOR_SCALE);
+  Vec3<int> numQuantRegionsMinus1 = Vec3<int>(0);
+  Vec3<int> numBitsForTransitionPoint = Vec3<int>(0);
+  std::vector<int> quantRegionTransitionPoint[3];
+  std::vector<int64_t> regionStepSizeFxp[3];
+
+  void clear()
+  {
+    powerFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_POWER_FACTOR_SCALE);
+    scalingFactorFxp = Vec3<int64_t>(int64_t(1) << GS_SCALE_SCALING_FACTOR_SCALE);
+    numQuantRegionsMinus1 = Vec3<int>(0);
+    numBitsForTransitionPoint = Vec3<int>(0);
+    for (int c = 0; c < 3; c++) {
+      quantRegionTransitionPoint[c].clear();
+      regionStepSizeFxp[c].clear();
+    }
+  }
 };
 
 //============================================================================
@@ -326,6 +396,32 @@ struct AttributeParameters {
   RotationLabel rotation_label;
   EulerAngleUnitType euler_angle_unit_type;
 
+  bool scaleParameterPresent = false;
+  PCCScalePowerParameters scalePowerParams;
+
+  // SH 2D Transform
+  bool gsdTransform2dPresentFlag_ = false;
+  bool dataAdaptiveShTransformEnabled_ = true;
+  /// DC PCA Flag
+  bool gsdPcaDcFlag_ = false;
+  std::vector<int> shTrTypeCol_;
+  std::vector<std::vector<int>> shTrGrpRow_;
+  std::vector<int> shTrTypeRow_;
+  std::vector<int> shKltFlag_;
+  std::vector<PCCKltParameters> shKltParams_;
+
+  // SH Non-Uniform Quantization
+  bool enableShNonUniformQuantization_ = false;
+  bool shAdaptiveTpOptEnabled_ = false;
+  int shNqRangeMode_ = 0;  // 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band
+  std::vector<int> shNumRegionsMinus1_;
+  std::vector<int> shTransitionPoints_;
+  std::vector<double> shStepSizes_;
+  std::vector<int64_t> shStepSizesFxp_;
+  int64_t min_offset_fxp[3] = {};
+  double min_offset[3] = {};
+  std::vector<int> shNumBitsForTransitionPoint_;
+
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;
 
@@ -333,7 +429,8 @@ struct AttributeParameters {
   {
     int count = opaqueParameters.size() + cicpParametersPresent
       + scalingParametersPresent + !attr_default_value.empty()
-	  + shCoefficientParameterPresent + rotationParameterPresent;
+      + shCoefficientParameterPresent + rotationParameterPresent
+      + scaleParameterPresent;
     return count;
   }
 
@@ -344,8 +441,27 @@ struct AttributeParameters {
     attr_default_value.clear();
     input_attr_default_value.clear();
     opaqueParameters.clear();
-		shCoefficientParameterPresent = false;
-		rotationParameterPresent = false;
+    shCoefficientParameterPresent = false;
+    rotationParameterPresent = false;
+    scaleParameterPresent = false;
+    scalePowerParams.clear();
+
+    gsdTransform2dPresentFlag_ = false;
+    dataAdaptiveShTransformEnabled_ = false;
+    gsdPcaDcFlag_ = false;
+    shTrTypeCol_.clear();
+    shTrGrpRow_.clear();
+    shTrTypeRow_.clear();
+    shKltFlag_.clear();
+    shKltParams_.clear();
+    enableShNonUniformQuantization_ = false;
+    shAdaptiveTpOptEnabled_ = false;
+    shNqRangeMode_ = 0;
+    shNumRegionsMinus1_.clear();
+    shNumBitsForTransitionPoint_.clear();
+    shTransitionPoints_.clear();
+    shStepSizes_.clear();
+    shStepSizesFxp_.clear();
   }
 };
 
@@ -533,6 +649,8 @@ struct SequenceParameterSet {
 
   // Indicates that context state may be propagated between slices.
   bool entropy_continuation_enabled_flag;
+  
+  bool gs_sh_remap_enabled_flag = false;
 };
 
 //============================================================================
@@ -842,6 +960,13 @@ struct AttributeParameterSet {
 
   // Whether raw attribute are coded as fixed width or variable length.
   bool raw_attr_variable_len_flag;
+
+  bool aps_extension_flag;
+  
+  bool raht_attr_offset_enabled;
+
+  // Whether to use Morton Code Scaling feature
+  bool raht_adaptive_block_size_enabled = false;
 };
 
 //============================================================================
@@ -918,6 +1043,10 @@ struct AttributeBrickHeader {
   int attr_region_bits_minus1;
 
   int32_t attr_dist2_delta;
+
+  std::vector<int> raht_attr_offset;
+  
+  int32_t raht_block_size_log2;
 };
 
 //============================================================================

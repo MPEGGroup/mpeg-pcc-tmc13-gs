@@ -15,7 +15,7 @@ check_symbol_exists(getrusage sys/resource.h HAVE_GETRUSAGE)
 # Fallback to descriptive version if VCS unavailable
 #  NB: the "unconfirmed-" part refers to this being a fallback option
 #      and the reported version may or may not be accurate.
-set(VERSION_FALLBACK "release-v2.0")
+set(VERSION_FALLBACK "release-v3.0-rc1")
 set(VERSION_FILE ${CMAKE_CURRENT_BINARY_DIR}/version.cpp)
 set(VERSION_FILE_IN ${CMAKE_CURRENT_SOURCE_DIR}/version.cpp.in)
 set(VERSION_CACHE_FILE ${CMAKE_CURRENT_BINARY_DIR}/version.cache)
@@ -145,6 +145,8 @@ file(GLOB PROJECT_CPP_FILES
   "pcc_chrono.cpp"
   "ply.cpp"
   "pointset_processing.cpp"
+  "powertransform.cpp"
+  "transform.cpp"
   "quantization.cpp"
   "tables.cpp"
   "../dependencies/program-options-lite/*.cpp"
@@ -176,8 +178,11 @@ add_executable (ply-merge EXCLUDE_FROM_ALL
   "../tools/ply-merge.cpp"
   "FixedPoint.cpp"
   "misc.cpp"
+  "pcc_chrono.cpp"
   "ply.cpp"
+  "powertransform.cpp"
   "gstable.cpp"
+  "transform.cpp"
   "../dependencies/program-options-lite/program_options_lite.cpp"
   ${VERSION_FILE}
 )

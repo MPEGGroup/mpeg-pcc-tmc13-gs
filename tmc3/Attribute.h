@@ -61,6 +61,7 @@ public:
     const AttributeBrickHeader& abh,
     int geom_num_points_minus1,
     int minGeomNodeSizeLog2,
+    int minGeomNodeSizeLog2ForSH,
     const char* payload,
     size_t payloadLen,
     AttributeContexts& ctxtMem,
@@ -82,6 +83,8 @@ public:
   virtual bool isReusable(
     const AttributeParameterSet& aps,
     const AttributeBrickHeader& abh) const = 0;
+
+  virtual void outputPartialPoints(PCCPointSet3& pointCloud, PCCPointSet3& accumPointCloud) =0;
 };
 
 //----------------------------------------------------------------------------

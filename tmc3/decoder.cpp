@@ -184,7 +184,11 @@ PCCTMC3Decoder3::decompress(
       for (size_t i = 0; i < numPoints; i++)
         for (int k = 0; k < 3; k++)
           _currentPointCloud[i][k] += _sliceOrigin[k];
-      _accumCloud.append(_currentPointCloud);
+
+      if(_params.minGeomNodeSizeLog2forSH > 0) 
+        _attrDecoder->outputPartialPoints(_currentPointCloud, _accumCloud);
+      else 
+        _accumCloud.append(_currentPointCloud);
     }
   }
 
@@ -353,36 +357,10 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
   assert(buf.type == PayloadType::kGeometryBrick);
   std::cout << "positions bitstream size " << buf.size() << " B\n";
 	
-  bool hasColour = false;
-  bool hasReflectance = false;
-  bool hasOpacity = false;
-  bool hasScale = false;
-  bool hasRotation = false;
-  bool hasSHCoefficient = false;
-
-  for (auto attrSet : _sps->attributeSets) {
-    if (attrSet.attributeLabel == KnownAttributeLabel::kColour)
-      hasColour |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kReflectance)
-      hasReflectance |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kOpacity)
-      hasOpacity |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kScale)
-      hasScale |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kRotation)
-      hasRotation |= true;
-    else if (attrSet.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-      hasSHCoefficient |= true;						
-      assert(attrSet.params.num_sh_coefficient_degrees_minus1 >= 0);
-      int numSHBandsMinus1 = attrSet.params.num_sh_coefficient_degrees_minus1;
-      _currentPointCloud.setNumSHCoeffsWithNumBandsMinus1(numSHBandsMinus1);
-		}
-	}
-
 	_currentPointCloud.clear();
-  _currentPointCloud.addRemoveAttributes(
-    hasColour, hasReflectance, hasOpacity, hasScale, hasRotation,
-    hasSHCoefficient);
+  for (auto& attrSet : _sps->attributeSets) {
+    _currentPointCloud.activateAttribute(attrSet);
+	}
 
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
   clock_user.start();
@@ -419,6 +397,9 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
       std::fill(attrs.begin(), attrs.end(), defAttrVal);
     } else if (desc.attributeLabel == KnownAttributeLabel::kReflectance)    {
       auto& attrs = _currentPointCloud.getReflectance();
+      std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
+    } else if (desc.attributeLabel == KnownAttributeLabel::kFrameIndex) {
+      auto& attrs = _currentPointCloud.getFrameIndex();
       std::fill(attrs.begin(), attrs.end(), defAttrVal[0]);
     } else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)    {
       auto& attrs = _currentPointCloud.getOpacity();
@@ -575,17 +556,31 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
 
   auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
 
+  // Gaussian Splat Compression: partial SH decoding.
+  // SH coefficients whose degree exceeds the requested targetSHDegree are not
+  // decoded; their values are set to zero instead. When targetSHDegree is -1
+  // all SH coefficients are decoded.
+  bool skipSHCoefficient = false;
+  if (
+    attr_sps.attributeLabel == KnownAttributeLabel::kSH_coefficients
+    && _params.targetSHDegree >= 0) {
+    int shDegree = getShDegree((int)attr_sps.params.sh_coefficient_label);
+    skipSHCoefficient = shDegree > _params.targetSHDegree;
+  }
+
   receive_attr_num++;
   if (attr_sps.attr_num_dimensions_minus1 == 2
     && attr_aps.attr_encoding == AttributeEncoding::kRAHTransform)
     _allAttrAbh.push_back(abh);
 
 
-  _attrDecoder->decode(
-    *_sps, attr_sps, attr_aps, abh, _gbh.footer.geom_num_points_minus1,
-    _params.minGeomNodeSizeLog2, buf.data() + abhSize, buf.size() - abhSize,
-    ctxtMemAttr, _currentPointCloud, _params.maxAttributeNumberPerGroup,
-    &bufferRahtCoefficients);
+  if (!skipSHCoefficient) {
+    _attrDecoder->decode(
+      *_sps, attr_sps, attr_aps, abh, _gbh.footer.geom_num_points_minus1,
+      _params.minGeomNodeSizeLog2, _params.minGeomNodeSizeLog2forSH, buf.data() + abhSize, buf.size() - abhSize,
+      ctxtMemAttr, _currentPointCloud, _params.maxAttributeNumberPerGroup,
+      &bufferRahtCoefficients);
+  }
 
   if (
     receive_attr_num == _sps->attributeSets.size()&& _params.maxAttributeNumberPerGroup > 1) {
@@ -667,6 +662,12 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
     attr_t defAttrVal = cadu.constattr_default_value[0];
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setReflectance(i, defAttrVal);
+  }
+
+  if (label == KnownAttributeLabel::kFrameIndex) {
+    attr_t defAttrVal = cadu.constattr_default_value[0];
+    for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
+      _currentPointCloud.setFrameIndex(i, defAttrVal);
   }
 
   if (label == KnownAttributeLabel::kOpacity) {

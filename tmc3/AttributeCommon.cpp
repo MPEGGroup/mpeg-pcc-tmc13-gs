@@ -104,7 +104,7 @@ AttributeLods::isReusable(
     return false;
 
   // until this feature is stable, always generate LoDs.
-  if (_aps.scalable_lifting_enabled_flag || aps.scalable_lifting_enabled_flag)
+  if (_aps.scalable_lifting_enabled_flag != aps.scalable_lifting_enabled_flag)
     return false;
 
   if (_aps.lod_decimation_type != aps.lod_decimation_type)
@@ -132,6 +132,58 @@ AttributeLods::isReusable(
   return true;
 }
 
+//============================================================================
+void AttributeLods::outputPartialPoints(PCCPointSet3& pointCloud, PCCPointSet3& accumPointCloud)
+{
+  // Create a deep copy to automatically inherit all attribute flags and memory allocations.
+  // This avoids the need to manually call initialization methods like addColors() or resize().
+  PCCPointSet3 partialCloud = pointCloud;
+  const size_t pointCount = indexes.size();
+  int shCount = pointCloud.getNumSHCoeffs();
+  partialCloud.resize(numPoints);
+
+  // Reorder the points and their corresponding attributes using getter and setter methods.
+  size_t t = pointCount-1;
+  for (size_t i = 0; i < numPoints; ++i) {
+    const size_t origIdx = indexes[t--];
+    //const size_t origIdx = indexes[i];
+
+    // Set position using the overloaded operator[].
+    partialCloud[i] = pointCloud[origIdx];
+
+    // Set attributes using their respective getter and setter methods.
+    // Replace 'hasColors()' with your actual boolean getter if the name differs.
+    if (pointCloud.hasColors())
+      partialCloud.setColor(i, pointCloud.getColor(origIdx));
+
+    if (pointCloud.hasReflectances())
+      partialCloud.setReflectance(i, pointCloud.getReflectance(origIdx));
+
+    if (pointCloud.hasFrameIndex())
+      partialCloud.setFrameIndex(i, pointCloud.getFrameIndex(origIdx));
+
+    if (pointCloud.hasOpacities())
+      partialCloud.setOpacity(i, pointCloud.getOpacity(origIdx));
+
+    if (pointCloud.hasScales())
+      partialCloud.setScale(i, pointCloud.getScale(origIdx));
+
+    if (pointCloud.hasRotations()) {
+      // Adjust this part if your class uses separate setters for rotation vector and scalar.
+      partialCloud.setRotationVec(i, pointCloud.getRotationVec(origIdx));
+      partialCloud.setRotationScalar(i, pointCloud.getRotationScalar(origIdx));
+    }
+
+    if (pointCloud.hasSHCoefficients()) {
+      for (size_t k=0; k < shCount; k++) {
+        partialCloud.setSHCoefficient(k, i, pointCloud.getSHCoefficient(k, origIdx));
+      }
+    }
+  }
+  // Swap the contents of the original point cloud with the partial one.
+  // This efficiently updates the original object with the newly ordered data.
+	accumPointCloud.append(partialCloud);
+}
 //============================================================================
 
 bool
@@ -222,6 +274,9 @@ getAttribute(
   else if (desc.attributeLabel == KnownAttributeLabel::kReflectance) {
     attribute[0] = pointCloud.getReflectance(pointIndex);
   }
+  else if (desc.attributeLabel == KnownAttributeLabel::kFrameIndex) {
+    attribute[0] = pointCloud.getFrameIndex(pointIndex);
+  }
   else if (desc.attributeLabel == KnownAttributeLabel::kOpacity) {
     attribute[0] = pointCloud.getOpacity(pointIndex);
   }
@@ -259,6 +314,10 @@ setAttribute(
     pointCloud.setReflectance(pointIndex, attribute[0]);
   }
   else if (desc.attributeLabel ==
+           KnownAttributeLabel::kFrameIndex) {
+    pointCloud.setFrameIndex(pointIndex, attribute[0]);
+  }
+  else if (desc.attributeLabel ==
            KnownAttributeLabel::kOpacity) {
     pointCloud.setOpacity(pointIndex, attribute[0]);
   }
@@ -266,6 +325,63 @@ setAttribute(
            KnownAttributeLabel::kSH_coefficients) {
     int SHindex = int(desc.params.sh_coefficient_label);
     pointCloud.setSHCoefficient(SHindex, pointIndex, attribute);
+  }
+}
+
+//============================================================================
+std::vector<int> deriveDcShiftValues(
+  const std::vector<int>& attr, 
+  const int voxelCount, 
+  const int attrDim) 
+{
+  const int totalElements = voxelCount * attrDim;
+  assert(totalElements == attr.size());
+
+  std::vector<int64_t> attrSums(attrDim, 0);
+  const int* attrPtr = attr.data(); 
+
+  for (int n = 0; n < totalElements; n += attrDim) {
+    for (int d = 0; d < attrDim; ++d) {
+      attrSums[d] += attrPtr[n + d];
+    }
+  }
+
+  std::vector<int> dcShiftValues(attrDim);
+  for (int d = 0; d < attrDim; ++d) {
+    dcShiftValues[d] = divApprox(attrSums[d], voxelCount, 0);
+  }
+
+  return dcShiftValues;
+}
+
+void fwdDcShift(
+  std::vector<int>& attr, 
+  const std::vector<int>& dcShiftValues, 
+  const int voxelCount, 
+  const int attrDim) 
+{
+  const int totalElements = voxelCount * attrDim;
+  assert(totalElements == attr.size());
+  
+  int* attrPtr = attr.data();
+
+  if (attrDim == 3) {
+    const int val0 = dcShiftValues[0];
+    const int val1 = dcShiftValues[1];
+    const int val2 = dcShiftValues[2];
+    
+    for (int i = 0; i < voxelCount; ++i) {
+      attrPtr[0] -= val0;
+      attrPtr[1] -= val1;
+      attrPtr[2] -= val2;
+      attrPtr += 3; 
+    }
+  } else {
+    for (int n = 0; n < totalElements; n += attrDim) {
+      for (int d = 0; d < attrDim; ++d) {
+        attrPtr[n + d] -= dcShiftValues[d];
+      }
+    }
   }
 }
 

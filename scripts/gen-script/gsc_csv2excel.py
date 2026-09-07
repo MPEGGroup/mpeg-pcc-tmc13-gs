@@ -39,6 +39,28 @@ import openpyxl
 START_COL = 11
 DEBUG_MODE = False
 
+
+def parse_rate_id(rate_token: str) -> int:
+    """Map CSV rate token to worksheet row offset.
+
+    Supported forms:
+    - r01..r05 -> 0..4
+    - lossless (or any non-numeric label) -> 0
+    """
+    token = (rate_token or "").strip().lower()
+    if not token:
+        return 0
+
+    if token.startswith("r"):
+        suffix = token[1:]
+        if suffix.isdigit():
+            # Keep existing behavior: rows beyond the five CTC rates map to base row.
+            rid = int(suffix) - 1
+            return 0 if rid > 4 else max(rid, 0)
+
+    # Non-numeric labels (eg, "lossless") map to base row.
+    return 0
+
 def write_values(ws, csv_tokens, row):
     """Write a range of CSV values into the worksheet."""
     for col, val in enumerate(csv_tokens):
@@ -54,7 +76,7 @@ def get_offset_dict(ws, flag_1f):
     target_flag = "1F" if flag_1f else "NF"
     offset_dict = {}
 
-    for r in range(1, 183):
+    for r in range(1, 300):
         f_flag = ws.cell(row=r, column=2).value
         seqname = ws.cell(row=r, column=3).value
         if f_flag == target_flag and seqname:
@@ -79,8 +101,8 @@ def csv_to_xlsm(ws, csv_path, flag_1f):
             if seq not in offset_dict:
                 print(f"[WARN] Sequence not found in sheet: {seq}")
                 continue
-            
-            rate_id = 0 if csv_tokens[1] == "lossless" else int(csv_tokens[1].split("r")[-1]) - 1
+
+            rate_id = parse_rate_id(csv_tokens[1])
             row = offset_dict[seq] + rate_id
             
             if DEBUG_MODE:

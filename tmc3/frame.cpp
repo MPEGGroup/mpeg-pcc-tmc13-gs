@@ -62,6 +62,7 @@ CloudFrame::setParametersFrom(
   this->outputUnitLength = reciprocal(sps.seqGeomScale);
   this->outputUnit = sps.seq_geom_scale_unit_flag;
   this->attrDesc = sps.attributeSets;
+  this->gs_sh_remap_enabled_flag = sps.gs_sh_remap_enabled_flag;
 }
 
 //============================================================================

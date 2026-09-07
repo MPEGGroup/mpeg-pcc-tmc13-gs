@@ -141,7 +141,7 @@ PCCTMC3Encoder3::compress(
       int64_t seqMaxGlobal = std::max({maxX, maxY, maxZ});  
       int64_t seqSizeGlobal = (seqMaxGlobal - seqOriginGlobal);
 
-      params->codedGeomScale = (double)std::pow(2, 18) / (inputscale*(double)seqSizeGlobal);
+      params->codedGeomScale = (double)std::pow(2, params->geomMinMaxBitDepth ) / (inputscale*(double)seqSizeGlobal);
       params->sps.globalScale = Rational(params->seqGeomScale / params->codedGeomScale);
 
       
@@ -735,6 +735,15 @@ PCCTMC3Encoder3::compressPartition(
   if (params->adjustQPLayerOffsetsEnabled) 
     adjustQPLayerOffsets(pointCloud, params->refImageWidth, params->refImageHeight, qpLayers);
 
+  int raht_block_size_log2 = 0; 
+  for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
+    const auto& attr_aps = *_aps[attrIdx];
+    if (attr_aps.raht_adaptive_block_size_enabled) {
+      raht_block_size_log2 = estimateDist2(pointCloud, 100, 128, 0.85f);
+      break;
+    }
+  }
+
   // for each attribute
   for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
@@ -821,6 +830,11 @@ PCCTMC3Encoder3::compressPartition(
       auto dist2 =
         estimateDist2(pointCloud, 100, 128, attr_enc.dist2PercentileEstimate);
       abh.attr_dist2_delta = dist2 - attr_aps.dist2;
+    }
+    
+    abh.raht_block_size_log2 = 0; 
+    if (attr_aps.raht_adaptive_block_size_enabled) {
+      abh.raht_block_size_log2 = raht_block_size_log2;
     }
 
     if (params->maxAttributeNumberPerGroup > 1 && bufferRahtCoefficients.empty())
@@ -960,7 +974,7 @@ PCCTMC3Encoder3::encodeGeometryBrick(
     gbh.rootNodeSizeLog2 = gbh.maxRootNodeDimLog2;
 
   // todo(df): remove estimate when arithmetic codec is replaced
-  int maxAcBufLen = int(pointCloud.getPointCount()) * 3 * 4 + 1024;
+  int maxAcBufLen = int(pointCloud.getPointCount()) * 56 * 2 + 1024;
 
   // allocate entropy streams
   std::vector<std::unique_ptr<EntropyEncoder>> arithmeticEncoders;
@@ -1086,7 +1100,8 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 	  dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(
     src.hasColors(), src.hasReflectances(), src.hasOpacities(),
-    src.hasScales(), src.hasRotations(), src.hasSHCoefficients());		
+    src.hasScales(), src.hasScalarRotations(), src.hasRotations(),
+    src.hasSHCoefficients(), src.hasFrameIndex());
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -1101,15 +1116,21 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
     if (src.hasReflectances())
       dst.setReflectance(i, src.getReflectance(inputIdx));
 
+    if (src.hasFrameIndex())
+      dst.setFrameIndex(i, src.getFrameIndex(inputIdx));
+
 		if (src.hasOpacities())
 			dst.setOpacity(i, src.getOpacity(inputIdx));
 
 		if (src.hasScales())
 			dst.setScale(i, src.getScale(inputIdx));
 
+    if (src.hasScalarRotations()) {
+			dst.setRotationScalar(i, src.getRotationScalar(inputIdx));
+    }
+
 		if (src.hasRotations()) {
 			dst.setRotationVec(i, src.getRotationVec(inputIdx));
-			dst.setRotationScalar(i, src.getRotationScalar(inputIdx));
 		}
 
 		if (src.hasSHCoefficients()) {
@@ -1150,7 +1171,8 @@ getPartition(
   if (src.hasSHCoefficients())
     dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
-	  src.hasOpacities(), src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+	 src.hasOpacities(), src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
+    src.hasSHCoefficients(), src.hasFrameIndex());
   dst.resize(size);
 
   int dstIdx = 0;
@@ -1165,16 +1187,20 @@ getPartition(
       if (src.hasReflectances())
         dst.setReflectance(dstIdx, src.getReflectance(srcIdx));
 
+      if (src.hasFrameIndex())
+        dst.setFrameIndex(dstIdx, src.getFrameIndex(srcIdx));
+
 			if (src.hasOpacities())
 				dst.setOpacity(dstIdx, src.getOpacity(srcIdx));
 
 			if (src.hasScales())
 				dst.setScale(dstIdx, src.getScale(srcIdx));
 
-			if (src.hasRotations()) {
-				dst.setRotationVec(dstIdx, src.getRotationVec(srcIdx));
+			if (src.hasScalarRotations()) 
 				dst.setRotationScalar(dstIdx, src.getRotationScalar(srcIdx));
-			}
+
+			if (src.hasRotations()) 
+				dst.setRotationVec(dstIdx, src.getRotationVec(srcIdx));
 
 			if (src.hasSHCoefficients()) {
 				for (int k = 0; k < src.getNumSHCoeffs(); k++)

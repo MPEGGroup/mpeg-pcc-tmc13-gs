@@ -43,8 +43,21 @@ SH_B2_KEYS = [f"SH_ac_coefficients_{m}" for m in range(4,9)]
 SH_B3_KEYS = [f"SH_ac_coefficients_{m}" for m in range(9,16)]
 ROT_KEYS   = ["rotations_XYZ", "rotations_W"]
 SCALE_KEYS = ["scales"]
+OPACITY_KEYS = ["opacities", "opacity"]
+REFLECTANCE_KEYS = ["reflectances"]
+FRAME_INDEX_KEYS = ["frame indexs", "frame indices", "frameindex", "frame_index"]
 
-ATTR_KEYS = SH_B0_KEYS + SH_B1_KEYS + SH_B2_KEYS + SH_B3_KEYS + ROT_KEYS + SCALE_KEYS + ["opacities"]
+ATTR_KEYS = (
+    SH_B0_KEYS
+    + SH_B1_KEYS
+    + SH_B2_KEYS
+    + SH_B3_KEYS
+    + ROT_KEYS
+    + SCALE_KEYS
+    + OPACITY_KEYS
+    + REFLECTANCE_KEYS
+    + FRAME_INDEX_KEYS
+)
 
 # ===== Results structure =====
 results = {
@@ -76,18 +89,29 @@ def avg(values):
 
 def parse_enc_log(file_path):
     """Parse encoder log file for byte size and encoding times."""
-    with open(file_path, "rt") as fp:
+    with open(file_path, "rt", errors="replace") as fp:
         for line in fp:
             if "Total bitstream size" in line:
                 token = line.strip().split()
                 results["TMC13Info"]["Total"]["byte"].append(int(token[3]))
             elif "bitstream size" in line:
-                token = line.strip().split()
-                attr = token[0]
-                results["TMC13Info"][attr]["byte"].append(int(token[3]))
+                # The attribute name is everything before " bitstream size",
+                # which may be multiple words (e.g. "frame index").
+                stripped = line.strip()
+                bs_pos = stripped.index("bitstream size")
+                attr = stripped[:bs_pos].strip()
+                byte_str = stripped[bs_pos + len("bitstream size"):].strip().split()[0]
+                if attr not in results["TMC13Info"]:
+                    results["TMC13Info"][attr] = {"byte": [], "encT": [], "decT": []}
+                results["TMC13Info"][attr]["byte"].append(int(byte_str))
             elif "processing time (user)" in line:
                 token = line.strip().split()
-                attr = token[0]
+                # Attribute name is everything before " processing time (user)"
+                stripped = line.strip()
+                pt_pos = stripped.index("processing time (user)")
+                attr = stripped[:pt_pos].strip()
+                if attr not in results["TMC13Info"]:
+                    results["TMC13Info"][attr] = {"byte": [], "encT": [], "decT": []}
                 results["TMC13Info"][attr]["encT"].append(float(token[-2]))
             elif "Processing time (user)" in line:
                 token = line.strip().split()
@@ -95,11 +119,15 @@ def parse_enc_log(file_path):
 
 def parse_dec_log(file_path):
     """Parse decoder log file for decoding times."""
-    with open(file_path, "rt") as fp:
+    with open(file_path, "rt", errors="replace") as fp:
         for line in fp:
             if "processing time (user)" in line:
                 token = line.strip().split()
-                attr = token[0]
+                stripped = line.strip()
+                pt_pos = stripped.index("processing time (user)")
+                attr = stripped[:pt_pos].strip()
+                if attr not in results["TMC13Info"]:
+                    results["TMC13Info"][attr] = {"byte": [], "encT": [], "decT": []}
                 results["TMC13Info"][attr]["decT"].append(float(token[-2]))
             elif "Processing time (user)" in line:
                 token = line.strip().split()
@@ -107,7 +135,7 @@ def parse_dec_log(file_path):
 
 def parse_rss_file(file_path, key):
     """Parse RSS file for max resident set size."""
-    with open(file_path, "rt") as fp:
+    with open(file_path, "rt", errors="replace") as fp:
         token = fp.readline().strip().split()[-1]
         max_rss = int(token.split("maxresident)k")[0])
         results["MetricInfo"][key].append(max_rss)
@@ -124,7 +152,7 @@ def parse_metric_file(file_path):
         "SSIM (avg)": "YUV-SSIM"
     }
 
-    with open(file_path, "rt") as fp:
+    with open(file_path, "rt", errors="replace") as fp:
         for line in fp:
             for search_str, metric_key in metric_map.items():
                 if search_str in line and "OM-" not in line:
@@ -177,7 +205,7 @@ def main():
         sum(sum(results["TMC13Info"][k]["byte"]) for k in SH_B3_KEYS),
         sum(sum(results["TMC13Info"][k]["byte"]) for k in ROT_KEYS),
         sum(sum(results["TMC13Info"][k]["byte"]) for k in SCALE_KEYS),
-        sum(results["TMC13Info"]["opacities"]["byte"]),
+        sum(sum(results["TMC13Info"][k]["byte"]) for k in OPACITY_KEYS),
         avg(results["MetricInfo"]["RGB-PSNR"]),
         avg(results["MetricInfo"]["YUV-PSNR"]),
         avg(results["MetricInfo"]["YUV-SSIM"]),

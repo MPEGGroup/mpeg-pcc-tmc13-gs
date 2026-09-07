@@ -763,8 +763,9 @@ encodePredictiveGeometry(
   PCCPointSet3 outCloud;
   if (cloud.hasSHCoefficients())
     outCloud.setNumSHCoeffs(cloud.getNumSHCoeffs());
-  outCloud.addRemoveAttributes(cloud.hasColors(), cloud.hasReflectances()
-	  , cloud.hasOpacities(), cloud.hasScales(), cloud.hasRotations(), cloud.hasSHCoefficients());
+  outCloud.addRemoveAttributes(cloud.hasColors(), cloud.hasReflectances(), 
+    cloud.hasOpacities(), cloud.hasScales(), cloud.hasScalarRotations(), cloud.hasRotations(), 
+    cloud.hasSHCoefficients(), cloud.hasFrameIndex());
   outCloud.resize(numPoints);
 
   // storage for spherical point co-ordinates determined in angular mode
@@ -873,14 +874,16 @@ encodePredictiveGeometry(
         outCloud.setColor(i, cloud.getColor(srcIdx));
       if (cloud.hasReflectances())
         outCloud.setReflectance(i, cloud.getReflectance(srcIdx));    
+      if (cloud.hasFrameIndex())
+        outCloud.setFrameIndex(i, cloud.getFrameIndex(srcIdx));
       if (cloud.hasOpacities())
         outCloud.setOpacity(i, cloud.getOpacity(srcIdx));
       if (cloud.hasScales())
         outCloud.setScale(i, cloud.getScale(srcIdx));
-      if (cloud.hasRotations()) {
-        outCloud.setRotationVec(i, cloud.getRotationVec(srcIdx));
+      if (cloud.hasScalarRotations())
         outCloud.setRotationScalar(i, cloud.getRotationScalar(srcIdx));
-      }
+      if (cloud.hasRotations())
+        outCloud.setRotationVec(i, cloud.getRotationVec(srcIdx));
       if (cloud.hasSHCoefficients()) {
         for (int k = 0; k < cloud.getNumSHCoeffs(); k++)
           outCloud.setSHCoefficient(k, i, cloud.getSHCoefficient(k, srcIdx));

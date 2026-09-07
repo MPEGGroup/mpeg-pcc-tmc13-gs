@@ -151,6 +151,7 @@ struct EncoderParams {
 	int refImageWidth;
 	int refImageHeight;
 
+  int geomMinMaxBitDepth; 
 };
 
 //============================================================================

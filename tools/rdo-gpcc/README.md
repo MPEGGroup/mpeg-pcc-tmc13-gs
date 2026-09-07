@@ -2,21 +2,15 @@
 Codebase of  [m73559 [GSC][JEE 6.2-related] Improving G-PCC Anchor with Gaussian Self-Finetuning](https://git.mpeg.expert/MPEG/Explorations/GSC/contributions/-/issues/142).
 
 ## Table of Contents <!-- omit in toc -->
-- [Setup](#setup)
-  - [Requirements](#requirements)
-  - [Build a Container](#build-a-container)
-  - [Install Third-party Libraries and Python Dependencies](#install-third-party-libraries-and-python-dependencies)
-- [Reproduce Results for Cross-checking](#reproduce-results-for-cross-checking)
-  - [Download Datasets](#download-datasets)
-  - [Process Datasets](#process-datasets)
-  - [Generate Scripts](#generate-scripts)
-  - [Run Scripts](#run-scripts)
-- [Contact](#contact)
+- [Requirements](#requirements)
+- [Build a Container](#build-a-container)
+- [Install Third-party Libraries and Python Dependencies](#install-third-party-libraries-and-python-dependencies)
+- [Prepare Datasets](#prepare-datasets)
+- [Generate Scripts](#generate-scripts)
+- [Run Scripts](#run-scripts)
 
 
-## Setup
-
-### Requirements
+## Requirements
 - [NVIDIA CUDA GPU](https://developer.nvidia.com/cuda-gpus) 
 - [Singularity](https://github.com/sylabs/singularity)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
@@ -28,16 +22,16 @@ Tested environment is
 
 Although not tested, the code would work on other GPUs and newer version of Singularity and NVIDIA Container Toolkit.
 
-For newer GPUs with CUDA capabilities > sm_90 (e.g., GeForce RTX 5090), you need to upgrade PyTorch to latest version.
+For newer GPUs with CUDA capabilities > sm_90 (e.g., GeForce RTX 5090), you need to upgrade PyTorch to the latest version.
 We have prepared an example Singularity definition file and configuration file in `examples/pt29cu130`.
 Please replace `singularity/rdo-gpcc.def` and `pyproject.toml` with those under `examples/pt29cu130`.
 
 If you cannot install Singularity and NVIDIA Container Toolkit, 
-you can mannually install dependencies such as CUDA, cmake, uv to the host machine.
+you can manually install dependencies such as CUDA, cmake, uv to the host machine.
 See `singularity/rdo-gpcc.def` for details.
 
-### Build a Container
-(If you have mannually installed dependencies to the host machine, skip this section.)
+## Build a Container
+(If you have manually installed dependencies to the host machine, skip this section.)
 
 You can build a Singularity container from the Singularity definition file `singularity/rdo-gpcc.def` by `singularity build` command.
 ```
@@ -54,59 +48,66 @@ We use `--nv --nvccli` options to enable GPU access inside the container and `-H
 
 All the following commands should be executed inside the container.
 
-### Install Third-party Libraries and Python Dependencies
-You can build and install third-party libraries and python dependencies by `scripts/install/install.sh`.
+## Install Third-party Libraries and Python Dependencies
+
+This project depends on the following third-party libraries. Clone and build each one, following the build instructions in each repository (newer compatible versions would also work).
+
+| Library | Repository | Tested version | Note |
+|---|---|---|---|
+| mpeg-pcc-tmc13-gs | https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs | `release-v2.0-rc2` | |
+| mpeg-gsc-metrics | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics | `release_mpeg154` | |
+| mpeg-gsc-tools | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-tools | `release_mpeg154` | |
+| mpeg-gsc-metrics (with pruning) | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics | commit `9daf2b313d9f363d867da810625356e185b2a3aa` | Required only for GSCM-based pruning |
+
+Then install pycolmap and the Python dependencies:
 ```
 Singularity> bash scripts/install/install.sh
 ```
-
-This script clones and builds the following third-party libraries:
-- [mpeg-pcc-tmc13-gs](https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs) (`third_party/mpeg-pcc-tmc13-gs`)
-- [mpeg-gsc-metrics](https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics.git) (`third_party/mpeg-gsc-metrics`)
-- [mpeg-gsc-tools](https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-tools.git) (`third_party/mpeg-gsc-tools`)
-- [pycolmap](https://github.com/rmbrualla/pycolmap) (`third_party/pycolmap`)
-
-It applys a patch for pycolmap to fix minor compatibility issues.
-
-If you have already cloned mpeg-pcc-tmc13-gs, mpeg-gsc-metrics and mpeg-gsc-tools elsewhere, you can create symbolic links under `third_party`.
-
-It also installs python dependencies in `pyproject.toml`.
+This clones [pycolmap](https://github.com/rmbrualla/pycolmap) (commit `cc7ea4b7301720ac29287dbe450952511b32125e`), applies a compatibility patch, and installs the Python dependencies from `pyproject.toml`.
 
 
+## Prepare Datasets
+Download the CTC datasets from the MPEG content server and preprocess them so that each frame has a Gaussian-splat PLY with embedded camera positions (`*.camerapos.ply`) and its corresponding COLMAP training views (using the `cameraPosition` tool from `mpeg-gsc-tools`).
 
-## Reproduce Results for Cross-checking
-### Download Datasets
-Download CTC datasets from MPEG content server and place them under `data/CTC`.
+## Generate Scripts
+`gen-script-with-finetuning.sh` is based on the original `gen-script.sh` of `mpeg-pcc-tmc13-gs`, with the fine-tuning step added.
 
-After downloading:
+Copy [`scripts/gen-script/gen-script-with-finetuning.sh`](scripts/gen-script/gen-script-with-finetuning.sh) into `mpeg-pcc-tmc13-gs/scripts/gen-script/` (so it can find its helper files), then edit the settings and placeholder paths at the top. Variables marked with **`*`** are the ones added for fine-tuning (they do not exist in the original `gen-script.sh`) and only need to be set when `FLAG_FINETUNE` ≥ 1:
+
+| Variable | Description |
+|---|---|
+| `DATASET_PATH` | Processed dataset directory |
+| `BASE_OUTPUT` | Output directory for the generated jobs and results |
+| `TMC13_DIR` | Path to the built `mpeg-pcc-tmc13-gs` |
+| `METRIC` | Path to the `mpeg-gsc-metrics` binary |
+| `GSCTOOL` | Path to the `mpeg-gsc-tools` directory |
+| `PYTHON` | Python launcher used to run `preprocess_rdo.py` and the summary scripts (default `python3`; inside the container use `uv run --project ${RDOGPCC_DIR}`) |
+| `AUTO_RUN` | Auto-run mode after generation (`0`: off, `1`: local, `2`: Slurm) |
+| `SAMPLE_VIEWS_FOR_LIBRARY` | Subsample viewpoints for the older `library` sequence (`0`: off (default), `1`: on) |
+| `FLAG_FINETUNE`* | Fine-tuning mode (see the table below) |
+| `RDOGPCC_DIR`* | This repository (defaults to `${TMC13_DIR}/tools/rdo-gpcc`) |
+| `CAMPOS_BIN`* | `cameraPosition` binary from `mpeg-gsc-tools` |
+| `IMP_BIN`* | `importance-scores` binary from the pruning build of `mpeg-gsc-metrics` |
+
+`FLAG_FINETUNE` selects the fine-tuning mode:
+
+| Value | Behavior |
+|---|---|
+| `0` | Off — skip fine-tuning and encode the input PLY directly (same as the original `gen-script.sh`) |
+| `1` | Fine-tune with `cfg/default.cfg` |
+| `2` | Fine-tune with per-sequence BD-rate configs (`cfg/per-seq-bdrate/<seq>.cfg`) |
+| `3` | Fine-tune with per-sequence BD-area configs (`cfg/per-seq-bdarea/<seq>.cfg`) |
+
+Run the copied script:
 ```
-data/CTC
- |- bartender_semitracked
- |- bartender_tracked
- |- breakdance_untracked
- ...
+Singularity> bash mpeg-pcc-tmc13-gs/scripts/gen-script/gen-script-with-finetuning.sh
 ```
+The run scripts are generated under `<BASE_OUTPUT>/<JOBNAME>-<timestamp>/jobs/` as `run_all.sh` (local) and `run_all_slurm.sh` (Slurm).
 
-### Process Datasets
-You can process datasets by `scripts/dataset/process_datasets.sh`.
-
-It will add camera parameters to ply files and generate training views by Minimum Spanning Tree.
+## Run Scripts
+This runs fine-tuning, G-PCC encoding/decoding, and metric computation in sequence.
 ```
-Singularity> bash scripts/dataset/process_datasets.sh
-```
-Processed datasets will be saved to `data/CTC.processed`.
-
-### Generate Scripts
-You can generate scripts by `scripts/gen-script/gen-script-with-finetuning.sh`.
-```
-Singularity> bash scripts/gen-script/gen-script-with-finetuning.sh
-```
-The scripts will be generated under `output/gen-script-output/<JOBNAME>/jobs/run_all.sh`
-
-### Run Scripts
-You can run experiments by running generated scripts.
-```
-Singularity> bash output/gen-script-output/<JOBNAME>/jobs/run_all.sh
+Singularity> bash <BASE_OUTPUT>/<JOBNAME>-<timestamp>/jobs/run_all.sh
 ```
 
 GPU concurrency during fine-tuning introduces variability in pre-processed GS models across runs.

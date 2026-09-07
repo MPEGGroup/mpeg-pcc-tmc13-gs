@@ -248,6 +248,7 @@ public:
     withFrameIndex = false;
     withOpacities = false;
     withScales = false;
+    withScalarRotations = false;
     withRotations = false;
     withSHCoefficients = false;
   }
@@ -273,6 +274,7 @@ public:
     swap(withFrameIndex, other.withFrameIndex);
     swap(withOpacities, other.withOpacities);
     swap(withScales, other.withScales);
+    swap(withScalarRotations, other.withScalarRotations);
     swap(withRotations, other.withRotations);
     swap(withSHCoefficients, other.withSHCoefficients);
   }
@@ -376,6 +378,7 @@ public:
     return scales[index];
   }
   std::vector<Vec3<attr_t>>& getScale() { return scales; }
+  const std::vector<Vec3<attr_t>>& getScale() const { return scales; }
   void setScale(const size_t index, const Vec3<attr_t> scale)
   {
     assert(index < scales.size() && withScales);
@@ -413,30 +416,40 @@ public:
 
   attr_t getRotationScalar(const size_t index) const
   {
-    assert(index < rotations_scalar.size() && withRotations);
+    assert(index < rotations_scalar.size() && withScalarRotations);
     return rotations_scalar[index];
   }
   attr_t& getRotationScalar(const size_t index)
   {
-    assert(index < rotations_scalar.size() && withRotations);
+    assert(index < rotations_scalar.size() && withScalarRotations);
     return rotations_scalar[index];
   }
   std::vector<attr_t>& getRotationScalar() { return rotations_scalar; }
   void setRotationScalar(const size_t index, const attr_t val)
   {
-    assert(index < rotations_scalar.size() && withRotations);
+    assert(index < rotations_scalar.size() && withScalarRotations);
     rotations_scalar[index] = val;
   }
   bool hasRotations() const { return withRotations; }
+  bool hasScalarRotations() const { return withScalarRotations; }
   void addRotations()
   {
     withRotations = true;
+    resize(getPointCount());
+  }
+  void addScalarRotations()
+  {
+    withScalarRotations = true;
     resize(getPointCount());
   }
   void removeRotations()
   {
     withRotations = false;
     rotations_vec.resize(0);
+  }
+  void removeScalarRotations()
+  {
+    withScalarRotations = false;
     rotations_scalar.resize(0);
   }
 
@@ -498,22 +511,24 @@ public:
 
   int getNumSHCoeffs() const { return numSHCoeffs; }
 
-  uint8_t getFrameIndex(const size_t index) const
+  attr_t getFrameIndex(const size_t index) const
   {
     assert(index < frameidx.size() && withFrameIndex);
     return frameidx[index];
   }
 
-  uint8_t& getFrameIndex(const size_t index)
+  attr_t& getFrameIndex(const size_t index)
   {
     assert(index < frameidx.size() && withFrameIndex);
     return frameidx[index];
   }
 
-  void setFrameIndex(const size_t index, const uint8_t frameindex)
+  std::vector<attr_t>& getFrameIndex() { return frameidx; }
+
+  void setFrameIndex(const size_t index, const attr_t frameindex)
   {
     assert(index < frameidx.size() && withFrameIndex);
-    frameidx[index] = frameindex;
+    frameidx[index] = attr_t(PCCClip(int(frameindex), 0, 255));
   }
 
   bool hasFrameIndex() const { return withFrameIndex; }
@@ -545,8 +560,10 @@ public:
     bool withReflectances,
     bool withOpacities = false,
     bool withScales = false,
+    bool withScalarRotations = false,
     bool withRotations = false,
-    bool withSHCoefficients = false)
+    bool withSHCoefficients = false,
+    bool withFrameIndices = false)
   {
     if (withColors)
       addColors();
@@ -558,6 +575,11 @@ public:
     else
       removeReflectances();
 
+    if (withFrameIndices)
+      addFrameIndex();
+    else
+      removeFrameIndex();
+
     // Gaussian splat compression
     if (withOpacities)
       addOpacities();
@@ -568,6 +590,11 @@ public:
       addScales();
     else
       removeScales();
+
+    if (withScalarRotations)
+      addScalarRotations();
+    else
+      removeScalarRotations();
 
     if (withRotations)
       addRotations();
@@ -598,10 +625,10 @@ public:
       opacities.resize(size);
     if (hasScales())
       scales.resize(size);
-    if (hasRotations()) {
-      rotations_vec.resize(size);
+    if (hasScalarRotations()) 
       rotations_scalar.resize(size);
-		}
+    if (hasRotations())
+      rotations_vec.resize(size);
     if (hasSHCoefficients()) {
       sh_coefficients.resize(numSHCoeffs);
       for (int i = 0; i < numSHCoeffs; i++)
@@ -626,10 +653,10 @@ public:
       opacities.reserve(size);
     if (hasScales())
       scales.reserve(size);
-    if (hasRotations()) {
-      rotations_vec.reserve(size);
+    if (hasScalarRotations())
       rotations_scalar.reserve(size);
-		}
+    if (hasRotations())
+      rotations_vec.reserve(size);
     if (hasSHCoefficients()) {
       sh_coefficients.resize(numSHCoeffs);
       for (int i = 0; i < numSHCoeffs; i++)
@@ -638,6 +665,15 @@ public:
   }
   void clear()
   {
+    withColors = false;
+    withReflectances = false;
+    withFrameIndex = false;
+    withOpacities = false;
+    withScales = false;
+    withScalarRotations = false;
+    withRotations = false;
+    withSHCoefficients = false;
+
     positions.clear();
     colors.clear();
     reflectances.clear();
@@ -677,7 +713,8 @@ public:
         setNumSHCoeffs(src.getNumSHCoeffs());
       addRemoveAttributes(
         src.hasColors(), src.hasReflectances(), src.hasOpacities(),
-        src.hasScales(), src.hasRotations(), src.hasSHCoefficients());
+        src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
+        src.hasSHCoefficients(), src.hasFrameIndex());
     }
 
     int dstEnd = positions.size();
@@ -698,6 +735,11 @@ public:
         src.reflectances.begin(), src.reflectances.end(),
         std::next(reflectances.begin(), dstEnd));
 
+    if (hasFrameIndex() && src.hasFrameIndex())
+      std::copy(
+        src.frameidx.begin(), src.frameidx.end(),
+        std::next(frameidx.begin(), dstEnd));
+
     // Gaussian splat compression
     if (hasOpacities() && src.hasOpacities())
       std::copy(
@@ -709,13 +751,16 @@ public:
         src.scales.begin(), src.scales.end(),
         std::next(scales.begin(), dstEnd));
 
+    if (hasScalarRotations() && src.hasScalarRotations()) {
+      std::copy(
+        src.rotations_scalar.begin(), src.rotations_scalar.end(),
+        std::next(rotations_scalar.begin(), dstEnd));
+    }
+
     if (hasRotations() && src.hasRotations()) {
       std::copy(
         src.rotations_vec.begin(), src.rotations_vec.end(),
         std::next(rotations_vec.begin(), dstEnd));
-      std::copy(
-        src.rotations_scalar.begin(), src.rotations_scalar.end(),
-        std::next(rotations_scalar.begin(), dstEnd));
     }
 
     if (hasSHCoefficients() && src.hasSHCoefficients()) {
@@ -738,6 +783,9 @@ public:
     if (hasReflectances()) {
       std::swap(getReflectance(index1), getReflectance(index2));
     }
+    if (hasFrameIndex()) {
+      std::swap(getFrameIndex(index1), getFrameIndex(index2));
+    }
     // Gaussian splat compression
     if (hasOpacities()) {
       std::swap(getOpacity(index1), getOpacity(index2));
@@ -745,9 +793,11 @@ public:
     if (hasScales()) {
       std::swap(getScale(index1), getScale(index2));
     }
+    if (hasScalarRotations()) {
+      std::swap(getRotationScalar(index1), getRotationScalar(index2));
+    }
     if (hasRotations()) {
       std::swap(getRotationVec(index1), getRotationVec(index2));
-      std::swap(getRotationScalar(index1), getRotationScalar(index2));
     }
     if (hasSHCoefficients()) {
       for (int i = 0; i < sh_coefficients.size(); i++)
@@ -800,21 +850,47 @@ public:
     }
     return bbox;
   }
-  void setAttribute(KnownAttributeLabel attrLabel)
-  {
-    if (KnownAttributeLabel::kColour == attrLabel)
-      withColors = true;
-    else if (KnownAttributeLabel::kReflectance == attrLabel)
-      withReflectances = true;
-    else if (KnownAttributeLabel::kOpacity == attrLabel)
-      withOpacities = true;
-    else if (KnownAttributeLabel::kScale == attrLabel)
-      withScales = true;
-    else if (KnownAttributeLabel::kRotation == attrLabel) {
-      withRotations = true;
+
+  void activateAttribute(const AttributeDescription& desc) {
+    switch (desc.attributeLabel.known_attribute_label) {
+      case KnownAttributeLabel::kColour:
+        withColors = true;
+        return; 
+          
+      case KnownAttributeLabel::kReflectance:
+        withReflectances = true;
+        return;
+      
+      case KnownAttributeLabel::kFrameIndex:
+        withFrameIndex = true;
+        return;
+
+      case KnownAttributeLabel::kOpacity:
+        withOpacities = true;
+        return;
+          
+      case KnownAttributeLabel::kScale:
+        withScales = true;
+        return;
+          
+      case KnownAttributeLabel::kRotation:
+        if (desc.attr_num_dimensions_minus1 == 0) {
+          withScalarRotations = true;
+        } else {
+          withRotations = true;
+        }
+        return;
+          
+      case KnownAttributeLabel::kSH_coefficients:
+        if (desc.params.sh_dc_coefficient_flag) {
+          setNumSHCoeffsWithNumBandsMinus1(desc.params.num_sh_coefficient_degrees_minus1);
+        }
+        withSHCoefficients = true;
+        return;
+          
+      default:
+        break;
     }
-    else if (KnownAttributeLabel::kSH_coefficients == attrLabel)
-      withSHCoefficients = true;
   }
 
   std::vector<Vec3<attr_t>>& getAttrVec(AttributeDescription& desc) {
@@ -834,6 +910,8 @@ public:
   std::vector<attr_t>& getAttrScalar(AttributeDescription& desc) {
     if (desc.attributeLabel == KnownAttributeLabel::kReflectance)
       return getReflectance();
+    else if (desc.attributeLabel == KnownAttributeLabel::kFrameIndex)
+      return getFrameIndex();
     else if (desc.attributeLabel == KnownAttributeLabel::kOpacity)
       return getOpacity();
     else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
@@ -849,7 +927,7 @@ private:
   std::vector<PointType> positions;
   std::vector<Vec3<attr_t>> colors;
   std::vector<attr_t> reflectances;
-  std::vector<uint8_t> frameidx;
+  std::vector<attr_t> frameidx;
   bool withColors;
   bool withReflectances;
   bool withFrameIndex;
@@ -863,6 +941,7 @@ private:
 
   bool withOpacities;
   bool withScales;
+  bool withScalarRotations;
   bool withRotations;
   bool withSHCoefficients;
 };

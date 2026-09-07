@@ -8,7 +8,6 @@ import imageio
 import numpy as np
 import torch
 import torch.nn.functional as F
-import yaml
 from fused_ssim import fused_ssim
 from rich.progress import Progress
 from sklearn.neighbors import NearestNeighbors
@@ -128,10 +127,6 @@ class Trainer:
     def train(self):
         cfg = self.cfg
         device = self.device
-
-        # Dump cfg.
-        with (cfg.result_dir / "cfg.yml").open("w") as f:
-            yaml.dump(vars(cfg), f)
 
         trainloader = torch.utils.data.DataLoader(
             self.dataset.get_trainset(),
