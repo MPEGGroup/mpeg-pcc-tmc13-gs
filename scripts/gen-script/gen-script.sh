@@ -58,7 +58,7 @@ enc_flags=""
 ## Experiment settings
 AUTO_RUN=0              # 0:off, 1:run_local, 2:run_slurm
 FLAG_1F=0               # 0:NF, 1:1F
-FLAG_CONCAT=1           # 0:per-frame (standard), 1:ConcatGPCC (NF frames concatenated, frame id carried as reflectance)
+FLAG_CONCAT=1           # 0:per-frame (standard), 1:ConcatGPCC (NF frames concatenated)
 RUN_MODE=0              # 0 = anchor(octree-hybrid), 1 = alternative
 GPCC_JOBS=1             # local parallel jobs for GPCC encode/decode
 METRIC_JOBS=1           # local parallel jobs for MPEG metrics GPU
