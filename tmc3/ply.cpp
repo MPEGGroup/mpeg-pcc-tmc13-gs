@@ -1400,7 +1400,8 @@ ply::analyzeMinMax (
       continue;
     }
     Stats stat;
-    bool isGsScale = desc.attributeLabel == KnownAttributeLabel::kScale;
+    bool hasScaleParam = desc.params.scaleParameterPresent;
+    
     std::vector<int> indices = getAttrIndices(desc, properties);
 
     for (int c = 0; c < indices.size(); c++) {
@@ -1419,7 +1420,8 @@ ply::analyzeMinMax (
     int64_t bit_depth_scale = (1ll << desc.bitdepth) - 1ll;
     int64_t d_code = int64_t(cmax) - int64_t(fmin);
     int64_t attr_scale = (d_code * attr_frac_bits_scale + (bit_depth_scale>>1)) / bit_depth_scale;
-    if (isGsScale) {
+
+    if (hasScaleParam) {
       d_code = std::max<int64_t>(1, d_code);
       attr_scale = std::max<int64_t>(
         1,
@@ -1430,7 +1432,7 @@ ply::analyzeMinMax (
     desc.params.attr_offset = attr_offset;
     desc.params.attr_scale_minus1 = attr_scale - 1;
 
-    if (isGsScale)
+    if (hasScaleParam)
       setScalePowerTransformParams(
         desc, inputAttrBuf, indices, pointCount, d_code);
   }
@@ -1447,8 +1449,8 @@ ply::quantizationLinear (
   int pointCount = cloud.getPointCount();  
   for (auto& desc : attrDescs)
   {
-    const bool isGsScale = desc.attributeLabel == KnownAttributeLabel::kScale;
-    if (isGsScale)
+    bool hasScaleParam = desc.params.scaleParameterPresent;
+    if (hasScaleParam)
       ensureScalePowerTransformParams(desc);
 
     const int64_t offset = desc.params.attr_offset;
@@ -1476,7 +1478,7 @@ ply::quantizationLinear (
 
       auto& dst = cloud.getAttrVec(desc);
 
-      if (isGsScale) {
+      if (hasScaleParam) {
         for (int c = 0; c < 3; c++)
           quantizeScalePowerTransform(desc, src[c], c, clip_max, dst, pointCount);
       } else {
@@ -1492,7 +1494,7 @@ ply::quantizationLinear (
     
     if (!desc.params.input_attr_default_value.empty()) {
       for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
-        if (isGsScale) {
+        if (hasScaleParam) {
           desc.params.attr_default_value[c] = attr_t(quantizeScalePowerTransform(
             desc, desc.params.input_attr_default_value[c], c, clip_max));
         } else {
@@ -1747,8 +1749,8 @@ ply::read(
       if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
         continue;  // SH already quantized by NQ above
 
-      const bool isGsScale = desc.attributeLabel == KnownAttributeLabel::kScale;
-      if (isGsScale)
+      bool hasScaleParam = desc.params.scaleParameterPresent;
+      if (hasScaleParam)
         ensureScalePowerTransformParams(desc);
 
       const int64_t offset = desc.params.attr_offset;
@@ -1776,7 +1778,7 @@ ply::read(
 
         auto& dst = cloud.getAttrVec(desc);
 
-        if (isGsScale) {
+        if (hasScaleParam) {
           for (int c = 0; c < 3; c++)
             quantizeScalePowerTransform(desc, src[c], c, clip_max, dst, pointCount);
         } else {
@@ -1792,7 +1794,7 @@ ply::read(
 
       if (!desc.params.input_attr_default_value.empty()) {
         for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
-          if (isGsScale) {
+          if (hasScaleParam) {
             desc.params.attr_default_value[c] = attr_t(quantizeScalePowerTransform(
               desc, desc.params.input_attr_default_value[c], c, clip_max));
           } else {

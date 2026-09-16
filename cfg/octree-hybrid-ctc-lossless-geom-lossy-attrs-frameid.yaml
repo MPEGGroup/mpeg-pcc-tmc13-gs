@@ -141,6 +141,15 @@ categories:
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 
        - numSHCoeffBandsMinus1: 3
+       - ""  
+       - gsdTransform2dPresentFlag: 1 
+       - dataAdaptiveShTransform: 1
+       - enableGsdPcaDc: 1
+       - enableShNonUniformQuantization: 1
+       - shNqRangeMode: 0 
+       - shAdaptiveTpOpt: 1
+       - raht_adaptive_block_size_enabled: 1
+       - nonUniformQuantScale: 1
        - colourMatrix: 1
        - ""
        - "# SH coefficients : band 0 (DC) ----------"

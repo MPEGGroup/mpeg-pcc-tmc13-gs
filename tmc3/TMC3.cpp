@@ -1196,6 +1196,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.desc.params.shAdaptiveTpOptEnabled_, false,
     "Enable adaptive transition point optimization")
 
+  ("nonUniformQuantScale",
+    params_attr.desc.params.scaleParameterPresent, false,
+    "Enable non-uniform quantization for Scale pre- and post-processing")
+
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
     "Coding method to use for attribute:\n"
@@ -1607,7 +1611,6 @@ sanitizeEncoderOpts(
     attrMeta.cicpParametersPresent = false;
     attrMeta.shCoefficientParameterPresent = false;
     attrMeta.rotationParameterPresent = false;
-    attrMeta.scaleParameterPresent = false;
 
     // Enable scaling if a paramter has been set
     //  - pre/post scaling is only currently supported for reflectance
@@ -1667,7 +1670,8 @@ sanitizeEncoderOpts(
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kScale;
       attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-      attrMeta.scaleParameterPresent = true;
+    } else {
+      attrMeta.scaleParameterPresent = false;
     }
 
 		if (!it.first.compare(0, 8, "rotation")) {
