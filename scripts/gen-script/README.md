@@ -1,6 +1,6 @@
-# The gen-script package for G-PCC-for-GSC simulations
+# The gen-script package for TMC13-GS simulations
 
-This guide explains how to prepare data, configure paths, and run scripts for JEE6.2, JEE6.6 and G-PCC CEs experiments using **G-PCC-for-GSC**.
+This guide explains how to prepare data, configure paths, and run scripts for JEE6.2, JEE6.6 and G-PCC CEs experiments using **TMC13-GS**.
 
 ### Package Structure
 The `gen-script` package is organized as follows:
@@ -12,16 +12,22 @@ The `gen-script` package is organized as follows:
 ├── README.md                          # Documentation for the package
 │
 ├── anchor_results/                    # Reference (anchor) results for comparison
-│   ├── 1F_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg152.csv
-│   └── NF_GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-release-mpeg151.csv
+│   ├── 1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv
+│   ├── 1F_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs.csv
+│   ├── NF_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs.csv
+│   └── NF_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs.csv
 │
-└── templates/                         # XLSM Templates from WG04N0751 for Reporting
-    ├── WG04N0751 template.xlsm
+├── templates/                         # XLSM Templates from WG05N0420 for Reporting
+│   └── WG05N0420_template.xlsm
+│
+└── testset_inputs/
+    └── dataset.config.ctc.sh          # Dataset configuration for evaluation
+
 ```
 > Note: The provided anchor result files (.csv) were generated in the LGE environment. **After completing the anchor cross‑check, please update these CSV files accordingly**.
 
-> Note: [MDS25782_WG04_N00751	
-](https://dms.mpeg.expert/doc_end_user/documents/152_Geneva/wg11/MDS25782_WG04_N00751.zip) - Common test conditions for Gaussian splat coding
+> Note: [MDS26500_WG05_N00420	
+](https://dms.mpeg.expert/doc_end_user/documents/155_Geneva/wg11/MDS26500_WG05_N00420-v2.zip) - Common test conditions for Gaussian splat coding
 
 
 
@@ -43,13 +49,13 @@ Install the `openpyxl` Python package (version 3.1.5) to handle XLSM files:
 python3 -m pip install openpyxl==3.1.5
 ```
 
-## 2. Build G-PCC-for-GSC
+## 2. Build TMC13-GS
 Clone the repository:
 ```bash
-git clone https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/g-pcc-for-gsc
-cd g-pcc-for-gsc
-git fetch origin tag release_mpeg152-rc1
-git checkout tags/release_mpeg152-rc1
+git clone https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs
+cd mpeg-pcc-tmc13-gs
+git fetch origin tag v3.0-rc2
+git checkout tags/v3.0-rc2
 ```
 Build the project:
 ```bash
@@ -63,14 +69,20 @@ Edit `gen-script.sh` to set the sequence, binary, and configuration directories.
 
 ### Experiment Name
 ```bash
-JOBNAME="G-PCC-for-GSC-mpeg152"
+JOBNAME="TM13-GS-v3.0-rc2"
 ```
 ### Experiment Settings
+For 1F evaluation:
 ```
-MODEs=("lossless-geom-lossy-attrs")
-TOOLs=("octree-raht") # or octree-predlift
-AUTO_RUN=1            # 0:off, 1:run_local, 2:run_slurm
-FLAG_1F=1             # 0: NF, 1: 1F
+AUTO_RUN=0              # 0:off, 1:run_local, 2:run_slurm
+FLAG_1F=1               # 0:NF, 1:1F
+FLAG_CONCAT=0           # 0:per-frame (standard), 1:ConcatGPCC (NF frames concatenated)
+```
+For NF evaluation:
+```
+AUTO_RUN=0              # 0:off, 1:run_local, 2:run_slurm
+FLAG_1F=0               # 0:NF, 1:1F
+FLAG_CONCAT=1           # 0:per-frame (standard), 1:ConcatGPCC (NF frames concatenated)
 ```
 > **Note**: If `AUTO_RUN` is set to 1 or 2, the generated scripts will run immediately after creation.
 
@@ -89,11 +101,10 @@ BASE_OUTPUT="/path/to/output"
 
 ### Binary and Configuration Paths
 ```bash
-TMC13_DIR="/path/to/g-pcc-for-gsc"     # TMC13 directory
+TMC13_DIR="/path/to/mpeg-pcc-tmc13-gs"     # TMC13 directory
 TMC13_BIN="$TMC13_DIR/build/tmc3/tmc3" # TMC13 binary
-CFG_PATH="$TMC13_DIR/$CFG_DIR"         # Configuration directory
+CFG_PATH="$TMC13_DIR/cfg"              # Configuration directory
 METRIC="/path/to/mpeg-gsc-metrics/build/bin/mpeg-gsc-metrics"  # Metric binary
-GSCTOOL="/path/to/mpeg-gsc-tools/" # Metric binary
 PYTHON="python3"
 ```
 
@@ -134,15 +145,15 @@ bash /path/to/output/jobs/run_all_slurm.sh
 
 ## 6. `run_all.sh` Example Log
 ```
-▶ Step 1: GPCC encode/decode in parallel
+▶ GPCC encode/decode in parallel
 Submitting 100 jobs to SLURM...
 All jobs submitted. Waiting for completion...                              
 Progress: 100/100 (100%)
-▶ Step 2: Metric calculation in parallel
+▶ Metric calculation in parallel
 Submitting 4930 jobs to SLURM...
 All jobs submitted. Waiting for completion...                              
 Progress: 4930/4930 (100%)
-▶ Step 3: Summary generation
+▶ Summary generation
 ✅ All tasks completed
 ```
 
@@ -150,11 +161,12 @@ Progress: 4930/4930 (100%)
 All simulation outputs are organized under:
 ```
 /path/to/output/
-└── G-PCC-for-GSC-mpeg152/
+└── TM13-GS-v3.0-rc2/
     ├── bin/                                           # Executables or binaries used for the run
+    ├── cfg/                                           # Configurations for each sequences
     ├── jobs/                                          # Job scripts and logs
-    ├── results/octree-raht/lossless-geom-lossy-attrs/
-    │   ├── bartender_track/                       
+    ├── results/octree-hybrid/lossless-geom-lossy-attrs/
+    │   ├── bartender_semitracked/                       
     │   │   ├── r01/                               
     │   │   │   ├── frame000.pre.ply.bin.log           # Encoder log
     │   │   │   ├── frame000.pre.ply.bin.time          # Encoding time and RSS
@@ -163,13 +175,14 @@ All simulation outputs are organized under:
     │   │   │   ├── frame000.pre.ply.bin.decoded.time  # Decoding time and RSS
     │   │   │   └── frame000.pre.ply.bin.decoded.ply   # Decoded PLY
     │   │   ├── ...                                
-    │   │   └── r05/
+    │   │   └── r04/
     │   ├── ...                                   
     │   └── ManWithFruit
     └── metrics/
-        ├── 1F_anchor__vs__GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-G-PCC-for-GSC-mpeg152.csv
+        ├── 1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs-TM13-GS-v3.0-rc2.csv
+        ├── 1F_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs-TM13-GS-v3.0-rc2.csv
         │   # Raw results data in CSV format
-        └── 1F-GPCC-for-GSC-octree-raht-lossless-geom-lossy-attrs-G-PCC-for-GSC-mpeg152.xlsm
+        └── 1F_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs-TM13-GS-v3.0-rc2.xlsm
             # XLSM comparing Anchor vs Proposed results
 ```
 

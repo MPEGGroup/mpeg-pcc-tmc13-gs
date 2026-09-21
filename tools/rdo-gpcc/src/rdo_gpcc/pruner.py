@@ -173,7 +173,7 @@ class Pruner:
 
         CONSOLE.log("Adding camera parameters to ply file.")
         run_cmd(
-            f"{self.config.campos_bin}"
+            f"{self.config.campos_bin} camera"
             f" --input={input_ply_path}"
             f" --output={camerapos_ply_path}"
             f" --image={self.dataset.config.dataset_dir / 'sparse' / 'images.bin'}"
@@ -189,15 +189,12 @@ class Pruner:
 
         CONSOLE.log("Computing importance scores.")
         camera = self.dataset.get_trainset(skip_image=True)[0]
-        width, height = camera["width"], camera["height"]
-        assert all(c["width"] == width and c["height"] == height for c in self.dataset.get_trainset(skip_image=True))
 
         start_time = time.time()
         run_cmd(
             f"{self.config.imp_bin}"
             f" -a {camerapos_ply_path}"
             f" --impScore={importance_score_path}"
-            f" --width={width} --height={height}"
             f" -v 1"
             f" --threads={self.config.n_gscm_workers}"
         )

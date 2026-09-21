@@ -6,7 +6,7 @@ categories:
     encflags:
      - mode: 0
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - mainProfileCompliant: 0
        - gsProfileCompliant: 1
        - ""
@@ -44,7 +44,7 @@ categories:
          - !conditional '"${group}" eq "cat3-frame"'
          - inferredDirectCodingMode: 3
        -
-         - !conditional '"${group}" eq "catGS"'
+         - !conditional '"${group}" =~ m{^catGS}'
          - inferredDirectCodingMode: 3
 
        # default qtbt and planar with cat3-frame exception
@@ -58,7 +58,7 @@ categories:
          - maxNumQtBtBeforeOt: 6
          - planarModeIdcmUse: 32
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - neighbourAvailBoundaryLog2: 0
        - intra_pred_max_node_size_log2: 0
        - planarEnabled: 0
@@ -79,7 +79,7 @@ categories:
        - lodDecimator: 1
        - lod_neigh_bias: ${seq_lod_bias}
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - lodDecimator: 1
        - intraLodPredictionSkipLayers: 0
      -
@@ -124,7 +124,7 @@ categories:
        - attrScale: 1
        - attribute: color
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - intraLodPredictionSkipLayers: 0
        - convertPlyColourspace: 1
        - transformType: 0
@@ -141,6 +141,15 @@ categories:
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 
        - numSHCoeffBandsMinus1: 3
+       - ""  
+       - gsdTransform2dPresentFlag: 1 
+       - dataAdaptiveShTransform: 1
+       - enableGsdPcaDc: 1
+       - enableShNonUniformQuantization: 1
+       - shNqRangeMode: 0 
+       - shAdaptiveTpOpt: 1
+       - raht_adaptive_block_size_enabled: 1
+       - nonUniformQuantScale: 1
        - colourMatrix: 1
        - ""
        - "# SH coefficients : band 0 (DC) ----------"
@@ -334,10 +343,10 @@ categories:
        - !conditional '${src-unit-metres}'
        - outputUnitLength: '${src-unit-metres}'
      -
-       - !conditional '"${group}" ne "catGS"'
+       - !conditional '"${group}" !~ m{^catGS}'
        - convertPlyColourspace: 1
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - convertPlyColourspace: 1
        - outputBinaryPly: 1
 

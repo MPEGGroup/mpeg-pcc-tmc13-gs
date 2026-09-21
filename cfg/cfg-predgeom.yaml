@@ -11,7 +11,7 @@ encflags:
  - predGeomSort: 2
  - predGeomAzimuthSortPrecision: 8
  -
-   - !conditional '"${group}" eq "catGS"'
+   - !conditional '"${group}" =~ m{^catGS}'
    - sortInputByAzimuth: 0
    - predGeomAzimuthSortPrecision: 0
 

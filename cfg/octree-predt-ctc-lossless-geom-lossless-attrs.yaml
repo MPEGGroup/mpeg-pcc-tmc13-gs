@@ -6,7 +6,7 @@ categories:
     encflags:
      - mode: 0
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - mainProfileCompliant: 0
        - gsProfileCompliant: 1
        - ""
@@ -44,7 +44,7 @@ categories:
          - !conditional '"${group}" eq "cat3-frame"'
          - inferredDirectCodingMode: 3
        -
-         - !conditional '"${group}" eq "catGS"'
+         - !conditional '"${group}" =~ m{^catGS}'
          - inferredDirectCodingMode: 3
 
        # default qtbt and planar with cat3-frame exception
@@ -58,7 +58,7 @@ categories:
          - maxNumQtBtBeforeOt: 6
          - planarModeIdcmUse: 32
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - neighbourAvailBoundaryLog2: 0
        - intra_pred_max_node_size_log2: 0
        - inferredDirectCodingMode: 3
@@ -115,7 +115,7 @@ categories:
          - attrScale: 1
          - attribute: color
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - convertPlyColourspace: 1
        - transformType: 1
        - levelOfDetailCount: 0
@@ -136,6 +136,21 @@ categories:
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}'    
        - numSHCoeffBandsMinus1: 3
+       - ""       
+       - gsdTransform2dPresentFlag: 1 
+       -
+         - !conditional '"${group}" eq "catGS-FF"'
+         - dataAdaptiveShTransform: 1
+         - enableGsdPcaDc: 1
+       -
+         - !conditional '"${group}" eq "catGS-OC"'
+         - dataAdaptiveShTransform: 0
+         - enableGsdPcaDc: 0
+       - enableShNonUniformQuantization: 1
+       - shNqRangeMode: 0 
+       - shAdaptiveTpOpt: 0
+       - raht_adaptive_block_size_enabled: 0
+       - nonUniformQuantScale: 1
        - colourMatrix: 1
        - ""
        - "# SH coefficients : band 0 (DC) ----------"
@@ -236,10 +251,10 @@ categories:
        - !conditional '${src-unit-metres}'
        - outputUnitLength: '${src-unit-metres}'
      -
-       - !conditional '"${group}" ne "catGS"'
+       - !conditional '"${group}" !~ m{^catGS}'
        - convertPlyColourspace: 1
      -
-       - !conditional '"${group}" eq "catGS"'
+       - !conditional '"${group}" =~ m{^catGS}'
        - convertPlyColourspace: 1
        - outputBinaryPly: 1
 
@@ -310,8 +325,7 @@ categories:
       ulb_unicorn_vox13:
       ulb_unicorn_vox20:
 
-      # catGS
-      manwithfruit_tracked: { width: 3840, height: 2160, geomBD: 18 }
+      # catGS - FF
       cinema_tracked: { width: 1920, height: 1080, geomBD: 18 }
       cinema_semitracked: { width: 1920, height: 1080, geomBD: 18 }
       breakfast_untracked: { width: 1920, height: 1080, geomBD: 18 }
@@ -322,6 +336,9 @@ categories:
       trio: { width: 1920, height: 1080, geomBD: 18 }
       makeup: { width: 1920, height: 1080, geomBD: 18 }
       musical: { width: 1920, height: 1080, geomBD: 18 }
+      
+      # catGS - OC
+      manwithfruit_tracked: { width: 3840, height: 2160, geomBD: 18 }
       tennis_player: { width: 4518, height: 2540, geomBD: 18 }
       solo_tango_male: { width: 4528, height: 2544, geomBD: 18 }
       tango_duo: { width: 4522, height: 2538, geomBD: 18 }

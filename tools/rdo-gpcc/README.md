@@ -52,12 +52,12 @@ All the following commands should be executed inside the container.
 
 This project depends on the following third-party libraries. Clone and build each one, following the build instructions in each repository (newer compatible versions would also work).
 
-| Library | Repository | Tested version | Note |
-|---|---|---|---|
-| mpeg-pcc-tmc13-gs | https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs | `release-v2.0-rc2` | |
-| mpeg-gsc-metrics | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics | `release_mpeg154` | |
-| mpeg-gsc-tools | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-tools | `release_mpeg154` | |
-| mpeg-gsc-metrics (with pruning) | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics | commit `9daf2b313d9f363d867da810625356e185b2a3aa` | Required only for GSCM-based pruning |
+| Library | Repository | Tested version |
+|---|---|---|
+| mpeg-pcc-tmc13-gs | https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs | `release-v3.0-rc2` |
+| mpeg-gsc-metrics | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics | `release_mpeg155` |
+| mpeg-gsc-tools | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-tools | `release_mpeg155` |
+| mpeg-gsc-importance | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-importance | `release_mpeg155` |
 
 Then install pycolmap and the Python dependencies:
 ```
@@ -67,7 +67,7 @@ This clones [pycolmap](https://github.com/rmbrualla/pycolmap) (commit `cc7ea4b73
 
 
 ## Prepare Datasets
-Download the CTC datasets from the MPEG content server and preprocess them so that each frame has a Gaussian-splat PLY with embedded camera positions (`*.camerapos.ply`) and its corresponding COLMAP training views (using the `cameraPosition` tool from `mpeg-gsc-tools`).
+Download the CTC datasets from the MPEG content server and preprocess them so that each frame has a Gaussian-splat PLY with embedded camera positions (`*.camerapos.ply`) and its corresponding COLMAP training views (using the `gstools` tool from `mpeg-gsc-tools`).
 
 ## Generate Scripts
 `gen-script-with-finetuning.sh` is based on the original `gen-script.sh` of `mpeg-pcc-tmc13-gs`, with the fine-tuning step added.
@@ -80,13 +80,11 @@ Copy [`scripts/gen-script/gen-script-with-finetuning.sh`](scripts/gen-script/gen
 | `BASE_OUTPUT` | Output directory for the generated jobs and results |
 | `TMC13_DIR` | Path to the built `mpeg-pcc-tmc13-gs` |
 | `METRIC` | Path to the `mpeg-gsc-metrics` binary |
-| `GSCTOOL` | Path to the `mpeg-gsc-tools` directory |
 | `PYTHON` | Python launcher used to run `preprocess_rdo.py` and the summary scripts (default `python3`; inside the container use `uv run --project ${RDOGPCC_DIR}`) |
 | `AUTO_RUN` | Auto-run mode after generation (`0`: off, `1`: local, `2`: Slurm) |
-| `SAMPLE_VIEWS_FOR_LIBRARY` | Subsample viewpoints for the older `library` sequence (`0`: off (default), `1`: on) |
 | `FLAG_FINETUNE`* | Fine-tuning mode (see the table below) |
 | `RDOGPCC_DIR`* | This repository (defaults to `${TMC13_DIR}/tools/rdo-gpcc`) |
-| `CAMPOS_BIN`* | `cameraPosition` binary from `mpeg-gsc-tools` |
+| `GSTOOLS_BIN`* | `gstools` binary from `mpeg-gsc-tools` |
 | `IMP_BIN`* | `importance-scores` binary from the pruning build of `mpeg-gsc-metrics` |
 
 `FLAG_FINETUNE` selects the fine-tuning mode:
