@@ -166,26 +166,54 @@ include_directories(
   "${CMAKE_CURRENT_SOURCE_DIR}/../dependencies/program-options-lite"
 )
 
-add_executable (tmc3
-  ${PROJECT_CPP_FILES}
-  ${PROJECT_INC_FILES}
-  ${PROJECT_IN_FILES}
-  ${VERSION_FILE}
-)
-add_dependencies(tmc3 genversion)
+if(EMSCRIPTEN)
+  add_executable (TMC13DecoderWrapper
+    "TMC13DecoderWrapper.cpp"
+    ${PROJECT_CPP_FILES}
+    ${PROJECT_INC_FILES}
+    ${PROJECT_IN_FILES}
+    ${VERSION_FILE}
+  )
+  add_dependencies(TMC13DecoderWrapper genversion)
+  target_link_options(TMC13DecoderWrapper PRIVATE
+      "--bind"
+      "-O3"
+      "-flto"
+      "--no-entry"
+      "-sMODULARIZE=1"
+      "-sEXPORT_ES6=1"
+      "-sENVIRONMENT=web"
+      "-sDISABLE_EXCEPTION_CATCHING=1"
+      "-sALLOW_MEMORY_GROWTH=1"
+      "-sWASM=1"
+      "-sMALLOC=emmalloc"
+      "-sDEMANGLE_SUPPORT=0"
+      "-sUSE_CLOSURE_COMPILER=0"
+  )
+  set_target_properties(TMC13DecoderWrapper PROPERTIES SUFFIX ".js")
+else()
+  set(WASM_MODE 0)
+  add_executable (tmc3
+    ${PROJECT_CPP_FILES}
+    ${PROJECT_INC_FILES}
+    ${PROJECT_IN_FILES}
+    ${VERSION_FILE}
+  )
+  add_dependencies(tmc3 genversion)
 
-add_executable (ply-merge EXCLUDE_FROM_ALL
-  "../tools/ply-merge.cpp"
-  "FixedPoint.cpp"
-  "misc.cpp"
-  "pcc_chrono.cpp"
-  "ply.cpp"
-  "powertransform.cpp"
-  "gstable.cpp"
-  "transform.cpp"
-  "../dependencies/program-options-lite/program_options_lite.cpp"
-  ${VERSION_FILE}
-)
-add_dependencies(ply-merge genversion)
+  add_executable (ply-merge EXCLUDE_FROM_ALL
+    "../tools/ply-merge.cpp"
+    "FixedPoint.cpp"
+    "misc.cpp"
+    "pcc_chrono.cpp"
+    "ply.cpp"
+    "powertransform.cpp"
+    "gstable.cpp"
+    "transform.cpp"
+    "../dependencies/program-options-lite/program_options_lite.cpp"
+    ${VERSION_FILE}
+  )
+  add_dependencies(ply-merge genversion)
 
-install (TARGETS tmc3 DESTINATION bin)
+  install (TARGETS tmc3 DESTINATION bin)
+endif()

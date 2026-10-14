@@ -5,3 +5,5 @@
 
 // Note: This is a temporary macro. It must be removed after the conformance bitstream is regenerated.
 #cmakedefine01 TEST_CONFORMANCE
+
+#cmakedefine01 WASM_MODE

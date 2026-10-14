@@ -53,3 +53,4 @@ CMakeCache.txt
 DerivedData
 __pycache__/
 *.cfg
+dist/

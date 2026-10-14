@@ -36,6 +36,7 @@
 #pragma once
 
 #include "PayloadBuffer.h"
+#include "TMC3Config.h"
 
 #include <istream>
 #include <ostream>
@@ -47,6 +48,9 @@ namespace pcc {
 std::ostream& writeTlv(const PayloadBuffer& buf, std::ostream& os);
 
 std::istream& readTlv(std::istream& is, PayloadBuffer* buf);
+#if WASM_MODE
+void readTlv(std::vector<uint8_t>& bitstream_buf, PayloadBuffer* buf, int& readSize);
+#endif
 
 //============================================================================
 

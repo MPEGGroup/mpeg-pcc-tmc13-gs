@@ -51,6 +51,7 @@
 #include "io_tlv.h"
 #include "pcc_chrono.h"
 #include "osspecific.h"
+#include "TMC3Config.h"
 
 namespace pcc {
 
@@ -151,11 +152,12 @@ PCCTMC3Decoder3::outputCurrentCloud(PCCTMC3Decoder3::Callbacks* callback)
   // NB: if accumCloud is reused for future inter-prediction, global scaling
   //     must be applied to a copy.
   scaleGeometry(_outCloud.cloud, _sps->globalScale, _outCloud.outputFpBits);
-
+#if !WASM_MODE
   callback->onOutputCloud(_outCloud);
 
   std::swap(_outCloud.cloud, _accumCloud);
   _accumCloud.clear();
+#endif
 }
 
 //============================================================================
@@ -355,15 +357,20 @@ int
 PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
 {
   assert(buf.type == PayloadType::kGeometryBrick);
+  
+  #if !WASM_MODE
   std::cout << "positions bitstream size " << buf.size() << " B\n";
-	
+	#endif
+
 	_currentPointCloud.clear();
   for (auto& attrSet : _sps->attributeSets) {
     _currentPointCloud.activateAttribute(attrSet);
 	}
-
+	
+  #if !WASM_MODE
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
   clock_user.start();
+  #endif
 
   int gbhSize, gbfSize;
   _gbh = parseGbh(*_sps, *_gps, buf, &gbhSize, &gbfSize);
@@ -462,7 +469,7 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
 
   // At least the first slice's geometry has been decoded
   _firstSliceInFrame = false;
-
+  #if !WASM_MODE
   clock_user.stop();
 
   auto total_user =
@@ -470,6 +477,7 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
   std::cout << "positions processing time (user): "
             << total_user.count() / 1000.0 << " s\n";
   std::cout << std::endl;
+  #endif
 
   return 0;
 }
@@ -511,15 +519,15 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
   // must be inspected.
   int abhSize;
   abh = parseAbh(*_sps, attr_aps, buf, &abhSize);
-
+  #if !WASM_MODE
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
-
+  #endif
   // replace the attribute decoder if not compatible
   if (!_attrDecoder || !_attrDecoder->isReusable(attr_aps, abh))
     _attrDecoder = makeAttributeDecoder();
-
+  #if !WASM_MODE
   clock_user.start();
-
+  #endif
   // Convert cartesian positions to spherical for use in attribute coding.
   // NB: this retains the original cartesian positions to restore afterwards
   std::vector<pcc::point_t> altPositions;
@@ -598,7 +606,7 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
 
   // Note the current sliceID for loss detection
   _ctxtMemAttrSliceIds[abh.attr_sps_attr_idx] = _sliceId;
-
+  #if !WASM_MODE
   clock_user.stop();
 
   auto total_user =
@@ -626,6 +634,7 @@ PCCTMC3Decoder3::decodeAttributeBrick(const PayloadBuffer& buf)
               << " s\n";
   }
   std::cout << std::endl;
+  #endif
 }
 
 //--------------------------------------------------------------------------
@@ -637,9 +646,10 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
   // todo(df): replace assertions with error handling
   assert(_sps);
   assert(_gps);
+  #if !WASM_MODE
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;
   clock_user.start();
-
+  #endif
   ConstantAttributeDataUnit cadu = parseConstantAttribute(*_sps, buf);
 
   // verify that this corresponds to the correct geometry slice
@@ -706,7 +716,7 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
     for (int i = 0; i < _currentPointCloud.getPointCount(); i++)
       _currentPointCloud.setSHCoefficient(SHIndex, i, defAttrVal);
   }
-  
+  #if !WASM_MODE
   clock_user.stop();
 
   std::cout << label << "s bitstream size " << buf.size() << " B\n";
@@ -717,6 +727,7 @@ PCCTMC3Decoder3::decodeConstantAttribute(const PayloadBuffer& buf)
             << "s processing time (user): " << total_user.count() / 1000.0
             << " s\n";
   std::cout << std::endl;
+  #endif
 }
 
 //============================================================================

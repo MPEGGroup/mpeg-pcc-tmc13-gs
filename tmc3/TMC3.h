@@ -43,7 +43,9 @@
 #include "pcc_chrono.h"
 
 struct Parameters;
-
+#if WASM_MODE
+class SequenceDecoder;
+#endif
 typedef pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock>
   Stopwatch;
 

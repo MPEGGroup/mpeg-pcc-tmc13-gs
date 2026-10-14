@@ -215,7 +215,7 @@ void convertFromGbr(
   const std::vector<AttributeDescription>& attrDescs, PCCPointSet3& cloud);
 
 //============================================================================
-
+#if !WASM_MODE
 int
 main(int argc, char* argv[])
 {
@@ -256,7 +256,7 @@ main(int argc, char* argv[])
 
   return ret;
 }
-
+#endif
 //---------------------------------------------------------------------------
 
 std::array<const char*, 3>
@@ -2283,6 +2283,9 @@ SequenceDecoder::decompress(Stopwatch* clock)
 void
 SequenceDecoder::onOutputCloud(const CloudFrame& frame)
 {
+  #if !WASM_MODE
+  clock->stop();
+
   // copy the point cloud in order to modify it according to the output options
   PCCPointSet3 pointCloud(frame.cloud);
 
@@ -2300,6 +2303,8 @@ SequenceDecoder::onOutputCloud(const CloudFrame& frame)
   writeOutputFrame(
     clock,
     params->reconstructedDataPath, params->preInvScalePath, frame, pointCloud);
+  clock->start();
+  #endif
 }
 
 //============================================================================

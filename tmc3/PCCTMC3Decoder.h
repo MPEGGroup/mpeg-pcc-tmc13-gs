@@ -46,6 +46,7 @@
 #include "framectr.h"
 #include "geometry.h"
 #include "hls.h"
+#include "TMC3Config.h"
 
 namespace pcc {
 
@@ -101,6 +102,11 @@ public:
   void storeTileInventory(TileInventory&& inventory);
 
   //==========================================================================
+#if WASM_MODE
+  CloudFrame& getOutputFrame() {return _outCloud; };
+  PCCPointSet3& getOutputCloud() {return _currentPointCloud; };
+  void outputCurrentCloud(Callbacks* callback);
+#endif
 
 private:
   void activateParameterSets(const AttributeParamInventoryHdr& gbh);
@@ -109,7 +115,9 @@ private:
   void decodeAttributeBrick(const PayloadBuffer& buf);
   void decodeConstantAttribute(const PayloadBuffer& buf);
   bool dectectFrameBoundary(const PayloadBuffer* buf);
+  #if !WASM_MODE
   void outputCurrentCloud(Callbacks* callback);
+  #endif
   void startFrame();
 
   //==========================================================================

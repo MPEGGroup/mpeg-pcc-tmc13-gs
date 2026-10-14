@@ -36,6 +36,7 @@
 #include "io_tlv.h"
 
 #include <cstdint>
+#include <cstring>
 
 namespace pcc {
 
@@ -77,6 +78,24 @@ readTlv(std::istream& is, PayloadBuffer* buf)
   is.read(buf->data(), length);
   return is;
 }
+#if WASM_MODE
+void readTlv(std::vector<uint8_t>& bitstream_buf, PayloadBuffer* buf, int& readSize)
+{
+  buf->resize(0);
+  buf->type = PayloadType(static_cast<unsigned>(bitstream_buf[readSize + 0]));
+
+  uint32_t length = 0;
+  length = (length << 8) | static_cast<unsigned>(bitstream_buf[readSize + 1]);
+  length = (length << 8) | static_cast<unsigned>(bitstream_buf[readSize + 2]);
+  length = (length << 8) | static_cast<unsigned>(bitstream_buf[readSize + 3]);
+  length = (length << 8) | static_cast<unsigned>(bitstream_buf[readSize + 4]);
+
+  buf->resize(length);
+  std::memcpy(buf->data(), &bitstream_buf[readSize + 5], length);
+
+  readSize += length + 5;
+}
+#endif
 
 //============================================================================
 
