@@ -97,6 +97,12 @@ POST_SCRIPT="/path/to/gs_post_process.py"
 ## Fine-tuning
 # 0 = off, 1 = default.cfg, 2 = per-sequence BD-rate cfg,
 # 3 = per-sequence BD-area cfg.
+FLAG_FINETUNE=0
+# Multi-layer joint fine-tuning of the SH layers (m77600), on top of FLAG_FINETUNE.
+# 0 = off, 1 = jointly fine-tune the SH layers of the fine-tuned model and encode
+# the result. It runs MULTILAYER_STEPS steps and does not prune again.
+FLAG_MULTILAYER=0
+MULTILAYER_STEPS=10000
 if [ $FLAG_FINETUNE != 0 ]; then
     RDOGPCC_DIR="${TMC13_DIR}/tools/rdo-gpcc"   # rdo-gpcc (this repository)
     SCRIPT_DIR="${TMC13_DIR}/scripts/gen-script"
@@ -135,6 +141,9 @@ ENSURE_EXEC "$METRIC"
 ENSURE_FILE "$INPUT_SEQUENCES_CFG"
 ENSURE_FILE "$PREPROCESS_CONCAT_SCRIPT"
 ENSURE_FILE "$POSTPROCESS_CONCAT_SCRIPT"
+if [ $FLAG_MULTILAYER != 0 ] && [ $FLAG_FINETUNE == 0 ]; then
+    echo "ERROR: FLAG_MULTILAYER needs FLAG_FINETUNE >= 1"; exit 1
+fi
 if [ $FLAG_FINETUNE != 0 ]; then
     ENSURE_DIR "$RDOGPCC_DIR"
     ENSURE_EXEC "$GSTOOLS_BIN"
@@ -335,16 +344,35 @@ if [ $FLAG_FINETUNE != 0 ]; then
                 ENSURE_FILE "$FINETUNE_CFG"
                 # Build command-line arguments for preprocess_rdo.py from the fine-tuning config.
                 FINETUNE_CFG_ARGS="$(build_finetune_args_from_config "$FINETUNE_CFG")"
+                # With multi-layer fine-tuning, the model above is its starting point.
+                FINETUNE_PLY="$FINETUNE_RESULT_DIR/$FRAME.ply"
+                if [ $FLAG_MULTILAYER != 0 ]; then FINETUNE_PLY="$FINETUNE_RESULT_DIR/$FRAME.pass1.ply"; fi
                 echo "${PYTHON} ${RDOGPCC_DIR}/scripts/preprocess_rdo.py \
                         ${FINETUNE_CFG_ARGS} \
                         --input-ply-path \"$FILE\" \
                         --output-dir \"$FINETUNE_RESULT_DIR/$FRAME.finetune\" \
-                        --output-ply-path \"$FINETUNE_RESULT_DIR/$FRAME.ply\" \
+                        --output-ply-path \"$FINETUNE_PLY\" \
                         --dataset-dir \"${DATASET_PATH}/${SEQ}/colmap_data/${FRAME}\" \
                         --dataset.subsample-every 1 \
                         --pruner.campos-bin \"${GSTOOLS_BIN}\" \
                         --pruner.imp-bin \"${IMP_BIN}\" \
                         "
+                if [ $FLAG_MULTILAYER != 0 ]; then
+                    # The arguments after the config override it.
+                    echo "${PYTHON} ${RDOGPCC_DIR}/scripts/preprocess_rdo.py \
+                        ${FINETUNE_CFG_ARGS} \
+                        --input-ply-path \"$FILE\" \
+                        --init-ply-path \"$FINETUNE_PLY\" \
+                        --trainer.max-steps 0 \
+                        --pruner.prune-ratio 0.0 \
+                        --multilayer.enabled True \
+                        --multilayer.max-steps ${MULTILAYER_STEPS} \
+                        --output-dir \"$FINETUNE_RESULT_DIR/$FRAME.multilayer\" \
+                        --output-ply-path \"$FINETUNE_RESULT_DIR/$FRAME.ply\" \
+                        --dataset-dir \"${DATASET_PATH}/${SEQ}/colmap_data/${FRAME}\" \
+                        --dataset.subsample-every \"${VIEW_PERIOD}\" \
+                        "
+                fi
                 echo "touch $OUT/jobs/done/finetune/\${SLURM_JOB_ID:-UNDEFINED}"
             } > "$JOBFILE_FINETUNE"
             chmod +x "$JOBFILE_FINETUNE"
