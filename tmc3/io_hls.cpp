@@ -1416,21 +1416,20 @@ write(const SequenceParameterSet& sps,  AttributeParameterSet& aps)
   }
 
   aps.aps_extension_flag = true; 
-  bool aps_gs_extension_present_flag = false;
-  aps_gs_extension_present_flag = true; // changed for GS extension
-  int aps_extension_7bits = 0; // fixed to 0
+  bool aps_gpcc_extension_present = true;
+  int aps_extension_7bits = 0;
   bs.write(aps.aps_extension_flag);
   if (aps.aps_extension_flag){
-    bs.write(aps_gs_extension_present_flag);    
+    bs.write(aps_gpcc_extension_present);    
     bs.writeUn(7, aps_extension_7bits);
-    if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
-      bs.writeUe(aps.raht_fixed_point_precision_minus15);
-      bs.write(aps.raht_adaptive_block_size_enabled);
-      bs.write(aps.raht_attr_offset_enabled);
+    if (aps_gpcc_extension_present) {
+      bs.writeUn(2, aps.aps_attr_parameter_set_id_extension_2bits);
+      if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
+        bs.writeUe(aps.raht_fixed_point_precision_minus15);
+        bs.write(aps.raht_adaptive_block_size_enabled);
+        bs.write(aps.raht_attr_offset_enabled);
+      }
     }
-  }
-  if (aps_gs_extension_present_flag) {
-    bs.writeUn(2, aps.aps_attr_parameter_set_id_extension_2bits);
   }
   if (aps_extension_7bits) {
     assert(!aps_extension_7bits);
@@ -1540,20 +1539,20 @@ parseAps(const PayloadBuffer& buf)
   }
 
   aps.aps_extension_flag = bs.read();
-  bool aps_gs_extension_present_flag = false;
+  bool aps_gpcc_extension_present = false;
   int aps_extension_7bits = 0;
   aps.raht_attr_offset_enabled = false;
   if (aps.aps_extension_flag) {
-    aps_gs_extension_present_flag = bs.read();    
+    aps_gpcc_extension_present = bs.read();    
     bs.readUn(7, &aps_extension_7bits);
-    if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
-      bs.readUe(&aps.raht_fixed_point_precision_minus15);
-      bs.read(&aps.raht_adaptive_block_size_enabled);
-      bs.read(&aps.raht_attr_offset_enabled);
+    if (aps_gpcc_extension_present) {
+      bs.readUn(2, &aps.aps_attr_parameter_set_id_extension_2bits);
+      if (aps.attr_encoding == AttributeEncoding::kRAHTransform) {
+        bs.readUe(&aps.raht_fixed_point_precision_minus15);
+        bs.read(&aps.raht_adaptive_block_size_enabled);
+        bs.read(&aps.raht_attr_offset_enabled);
+      }
     }
-  }
-  if (aps_gs_extension_present_flag) {
-    bs.readUn(2, &aps.aps_attr_parameter_set_id_extension_2bits);
   }
   aps.aps_attr_parameter_set_id = aps.aps_attr_parameter_set_id_v1 + (aps.aps_attr_parameter_set_id_extension_2bits << 4);
   if (aps_extension_7bits) {
@@ -2128,8 +2127,8 @@ void writeConstantAttribute(
   assert(buf->type == PayloadType::kConstantAttribute);
   auto bs = makeBitWriter(std::back_inserter(*buf));
 
-  bs.writeUn(4, &cadu.constattr_seq_parameter_set_id);
-  bs.writeUn(3, &cadu.constattr_reserved_zero_3bits);
+  bs.writeUn(4, cadu.constattr_seq_parameter_set_id);
+  bs.writeUn(3, cadu.constattr_reserved_zero_3bits);
   bs.writeUe(cadu.constattr_sps_attr_idx);
   bs.writeUe(cadu.constattr_slice_id);
 
