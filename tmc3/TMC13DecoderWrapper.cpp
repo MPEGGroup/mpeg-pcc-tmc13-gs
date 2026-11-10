@@ -1,6 +1,10 @@
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 #include <vector>
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
 
 #include <TMC3.h>
 #include <PCCTMC3Encoder.h>
@@ -48,6 +52,9 @@ struct Parameters {
   // Output coordinate system to use
   OutputSystem outputSystem;
 
+  // Output header type to use
+  bool outputHeaderType;
+
   // when true, configure the encoder as if no attributes are specified
   bool disableAttributeCoding;
 
@@ -75,6 +82,9 @@ struct Parameters {
 
   // resort the input points by azimuth angle
   bool sortInputByAzimuth;
+
+  // Maximum number of attribute groups that can be processed in one RAHT encoding or decoding pass.
+  int maxAttributeNumberPerGroup;
 };
 
 //----------------------------------------------------------------------------
@@ -87,6 +97,7 @@ public:
   // Perform conversions and write output point cloud
   //  \params cloud  a mutable copy of reconFrame.cloud
   void writeOutputFrame(
+    Stopwatch* clock,
     const std::string& postInvScalePath,
     const std::string& preInvScalePath,
     const CloudFrame& reconFrame,
@@ -165,16 +176,41 @@ private:
 
 //============================================================================
 
-inline void YUV2RGB(float& y, float& u, float& v)
-{
-    const float Y = y;
-    const float U = u;
-    const float V = v;
+//============================================================================
+// SH remapping, as in SequenceDecoder::onOutputCloud() (TMC3.cpp)
 
-    y = Y + 1.5748f * V;                 // R
-    u = Y - 0.1873f * U - 0.4681f * V;   // G
-    v = Y + 1.8556f * U;                 // B
+inline void filterInvalidShRemapPairs(
+  std::vector<std::pair<int, int>>& pairs, const int numShCoeffs)
+{
+  pairs.erase(std::remove_if(pairs.begin(), pairs.end(), [numShCoeffs](const std::pair<int, int>& p) {
+      return (p.first & 15) >= numShCoeffs || (p.second & 15) >= numShCoeffs;
+  }), pairs.end());
 }
+
+inline void applyGsShRemap(
+  PCCPointSet3& pointCloud, const std::vector<std::pair<int, int>>& pairs)
+{
+  const size_t voxelCount = pointCloud.getPointCount();
+  for (const auto& p : pairs) {
+    const int c0 = p.first >> 4;
+    const int m0 = p.first & 15;
+    const int c1 = p.second >> 4;
+    const int m1 = p.second & 15;
+    auto& sh0 = pointCloud.getSHCoefficient(m0);
+    auto& sh1 = pointCloud.getSHCoefficient(m1);
+    for (size_t n = 0; n < voxelCount; ++n)
+      std::swap(sh0[n][c0], sh1[n][c1]);
+  }
+}
+
+//============================================================================
+// The decoded frame is written by the PLY writer of tmc3 (ply::write) in the
+// in-memory file system, then read back: the output is the same as the one of
+// "tmc3 --mode=1 --convertPlyColourspace=1 --outputBinaryPly=1" (inverse SH
+// transform, SH non-uniform dequantisation, colour space conversion, scale
+// power transform, rotation formats), without duplicating that code here.
+
+static const char* kOutputPly = "/tmc13_decoded.ply";
 
 class TMC13Decoder {
 public:
@@ -192,31 +228,38 @@ public:
         emscripten::val view = emscripten::val(typed_memory_view(length, bitstream.data()));
         view.call<void>("set", data);
 
-        Parameters params;
+        // same values as the defaults of the tmc3 command line (decoder)
+        Parameters params{};
         params.isDecoder = 1;
-        params.convertColourspace = 0;
+        params.convertColourspace = 1;
         params.outputBinaryPly = 1;
-        params.outputUnitLength = 1.0;
+        params.outputUnitLength = 1.0;  // srcUnitLength
         params.outputSystem = OutputSystem::kExternal;
+        params.outputFpBits = -1;
+        params.firstFrameNum = 0;
+        params.maxAttributeNumberPerGroup = 1;
+        params.encoder.externalPrePost = false;
         params.decoder.minGeomNodeSizeLog2 = 0;
+        params.decoder.minGeomNodeSizeLog2forSH = 0;
+        params.decoder.decodeMaxPoints = 0;
+        params.decoder.outputFpBits = params.outputFpBits;
+        params.decoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
+        params.decoder.targetSHDegree = -1;
         params.decoder.gs_ext = 1;
-        params.decoder.maxAttributeNumberPerGroup = 1;
         SequenceDecoder seqDec = SequenceDecoder(&params);
-        std::vector<pcc::PayloadBuffer*> attr_bufs;
 
         int readSize = 0;
-        bool isFirstADU=true;
         while (true) {
-            pcc::PayloadBuffer* buf_ptr = new pcc::PayloadBuffer;
+            pcc::PayloadBuffer buf;
 
-            readTlv(bitstream, buf_ptr, readSize);
+            readTlv(bitstream, &buf, readSize);
 
-            if (seqDec.getDecoder().decompress(buf_ptr, seqDec.callback())) {
+            if (seqDec.getDecoder().decompress(&buf, seqDec.callback())) {
               std::cout << "Error: can't decompress point cloud!" << std::endl;
               return false;
             }
 
-            if (readSize == length)
+            if (readSize >= (int)length)
               break;
         }
 
@@ -226,146 +269,29 @@ public:
         }
 
         auto& outframe = seqDec.getDecoder().getOutputFrame();
-        PCCPointSet3& pc = outframe.cloud;
-
-        const size_t N = m_pointCount = pc.getPointCount();
-
-        // 3 + 48 + 4 + 3 + 1 = 59
-        m_attrs.resize(59);
-        for (int i = 0; i < 59; i++)
-          m_attrs[i].resize(N);
-
-
-        int attr_count = 0;
-        // positions: m_attrs[0~2]
         {
-            auto plyScale  = seqDec.outputScale(outframe) / (1 << outframe.outputFpBits);
-            auto plyOrigin = seqDec.outputOrigin(outframe);
-
-            const float scale  = plyScale;
-
-            const float offset_x = plyOrigin[0];
-            const float offset_y = plyOrigin[1];
-            const float offset_z = plyOrigin[2];
-
-            std::vector<float>& pos_x = m_attrs[attr_count++];
-            std::vector<float>& pos_y = m_attrs[attr_count++];
-            std::vector<float>& pos_z = m_attrs[attr_count++];
-
-
-
-            for (size_t i = 0; i < N; ++i) {
-                const auto& p = pc[i];  // pc[i][0..2]
-
-                pos_x[i] = p[0] * scale + offset_x;
-                pos_y[i] = p[1] * scale + offset_y;
-                pos_z[i] = p[2] * scale + offset_z;
-            }
-        }
-
-        {
-          auto& desc = outframe.attrDesc[0];
-          const float scale  = float(desc.params.attr_scale_minus1 + 1) / float(1 << desc.params.attr_frac_bits);
-          const float offset = desc.params.attr_offset;
-          
-          // src (quantized)
-          const std::vector<Vec3<attr_t>>& srcDc =  pc.getSHCoefficient(0);
-
-          // dst (float)
-          std::vector<float>& dstR = m_attrs[attr_count++];
-          std::vector<float>& dstG = m_attrs[attr_count++];
-          std::vector<float>& dstB = m_attrs[attr_count++];
-
-          for (size_t i = 0; i < N; ++i) {
-            float y = srcDc[i][0] * scale + offset;
-            float u = srcDc[i][1] * scale + offset;
-            float v = srcDc[i][2] * scale + offset;
-            
-            YUV2RGB(y, u, v);
-
-            dstR[i] = y;
-            dstG[i] = u;
-            dstB[i] = v;
+          // copy of the point cloud modified according to the output options
+          PCCPointSet3 pointCloud(outframe.cloud);
+          if (outframe.gs_sh_remap_enabled_flag && pointCloud.hasSHCoefficients()) {
+            std::vector<std::pair<int, int>> gs_sh_remap_pairs =
+              {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36},
+               {11, 33}, {12, 34}, {13, 35}, {14, 24}, {15, 40},
+               {26, 41}, {27, 37}, {28, 38}, {29, 39}, {31, 46}};
+            filterInvalidShRemapPairs(gs_sh_remap_pairs, pointCloud.getNumSHCoeffs());
+            applyGsShRemap(pointCloud, gs_sh_remap_pairs);
           }
+          outframe.cloud.clear();
 
-          // m = SH / coefficient index
-          for (int m = 1; m < 16; ++m) {
-            auto& desc = outframe.attrDesc[m];
-            const float scale  = float(desc.params.attr_scale_minus1 + 1) / float(1 << desc.params.attr_frac_bits);
-            const float offset = desc.params.attr_offset;
-
-            const std::vector<Vec3<attr_t>>& srcAc =  pc.getSHCoefficient(m);
-
-            std::vector<float>& dstR = m_attrs[attr_count++];
-            std::vector<float>& dstG = m_attrs[attr_count++];
-            std::vector<float>& dstB = m_attrs[attr_count++];
-
-            for (size_t i = 0; i < N; ++i) {
-              float y = srcAc[i][0] * scale + offset;
-              float u = srcAc[i][1] * scale + offset;
-              float v = srcAc[i][2] * scale + offset;
-
-              YUV2RGB(y, u, v);
-
-              dstR[i] = y;
-              dstG[i] = u;
-              dstB[i] = v;
-            }
-          }
+          pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock;
+          seqDec.writeOutputFrame(&clock, kOutputPly, {}, outframe, pointCloud);
         }
 
-        // scale: m_attrs[51, 52, 53]
-        {
-          auto& desc = outframe.attrDesc[17];
-          const float scale  = float(desc.params.attr_scale_minus1 + 1) / float(1 << desc.params.attr_frac_bits);
-          const float offset = desc.params.attr_offset;
-
-            const std::vector<Vec3<attr_t>>& srcS =  pc.getScale();
-            std::vector<float>& dstSx = m_attrs[attr_count++];
-            std::vector<float>& dstSy = m_attrs[attr_count++];
-            std::vector<float>& dstSz = m_attrs[attr_count++];
-
-            for (size_t i = 0; i < N; ++i) {
-              dstSx[i] = srcS[i][0] * scale + offset;
-              dstSy[i] = srcS[i][1] * scale + offset;
-              dstSz[i] = srcS[i][2] * scale + offset;
-            }
+        const bool ok = readPly(kOutputPly);
+        std::remove(kOutputPly);
+        if (!ok) {
+          std::cout << "Error: can't read the decoded point cloud!" << std::endl;
+          return false;
         }
-
-        // rot: m_attrs[54, 55, 56, 57]
-        {
-          auto& desc = outframe.attrDesc[18];
-          const float scale  = float(desc.params.attr_scale_minus1 + 1) / float(1 << desc.params.attr_frac_bits);
-          const float offset = desc.params.attr_offset;
-          const std::vector<Vec3<attr_t>>& srcR_XYZ = pc.getRotationVec();
-          std::vector<float>& dstR_W = m_attrs[attr_count++];
-          std::vector<float>& dstR_X = m_attrs[attr_count++];
-          std::vector<float>& dstR_Y = m_attrs[attr_count++];
-          std::vector<float>& dstR_Z = m_attrs[attr_count++];
-          for (size_t i = 0; i < N; ++i) {
-            dstR_X[i] = srcR_XYZ[i][0] * scale + offset;
-            dstR_Y[i] = srcR_XYZ[i][1] * scale + offset;
-            dstR_Z[i] = srcR_XYZ[i][2] * scale + offset;
-            dstR_W[i] =
-              std::sqrt(std::min(std::max(
-                1.0 - dstR_X[i] * dstR_X[i] - dstR_Y[i] * dstR_Y[i] - dstR_Z[i] * dstR_Z[i],
-                0.0), 1.0));
-          }
-        }
-
-        // opacity: m_attrs[58]
-        {
-            auto& desc = outframe.attrDesc[16];
-            const float scale  = float(desc.params.attr_scale_minus1 + 1) / float(1 << desc.params.attr_frac_bits);
-            const float offset = desc.params.attr_offset;
-            const std::vector<attr_t>& srcO = pc.getOpacity();
-            std::vector<float>& dstO = m_attrs[attr_count++];
-            for (size_t i = 0; i < N; ++i) {
-              dstO[i] = srcO[i] * scale + offset;
-            }
-        }
-
-        outframe.cloud.clear();
 
         std::cout << " G-PCC finish !!!" << std::endl;
 
@@ -389,8 +315,68 @@ public:
     }
 
 private:
+    // Reads the binary PLY written by ply::write and fills the 59 attribute arrays:
+    // x y z, f_dc_0..2, (f_rest_m, f_rest_15+m, f_rest_30+m) for m = 0..14,
+    // scale_0..2, rot_0..3 (w x y z), opacity. Missing attributes are set to 0.
+    bool readPly(const char* fileName) {
+        std::ifstream fin(fileName, std::ios::binary);
+        if (!fin.is_open())
+            return false;
+        std::string line;
+        size_t N = 0;
+        std::vector<std::string> props;
+        bool binaryLE = false;
+        while (std::getline(fin, line)) {
+            std::istringstream ls(line);
+            std::string w0, w1, w2;
+            ls >> w0 >> w1 >> w2;
+            if (w0 == "format")
+                binaryLE = (w1 == "binary_little_endian");
+            else if (w0 == "element" && w1 == "vertex")
+                N = std::stoul(w2);
+            else if (w0 == "property") {
+                if (w1 != "float")  // non-conformance output: float properties only
+                    return false;
+                props.push_back(w2);
+            } else if (w0 == "end_header")
+                break;
+        }
+        if (!binaryLE || props.empty())
+            return false;
+
+        auto index = [](const std::string& name) -> int {
+            if (name == "x") return 0;
+            if (name == "y") return 1;
+            if (name == "z") return 2;
+            if (name.rfind("f_dc_", 0) == 0) return 3 + std::stoi(name.substr(5));
+            if (name.rfind("f_rest_", 0) == 0) {
+                int k = std::stoi(name.substr(7));
+                return 6 + (k % 15) * 3 + k / 15;
+            }
+            if (name.rfind("scale_", 0) == 0) return 51 + std::stoi(name.substr(6));
+            if (name.rfind("rot_", 0) == 0) return 54 + std::stoi(name.substr(4));
+            if (name == "opacity") return 58;
+            return -1;
+        };
+        std::vector<int> dst(props.size());
+        for (size_t p = 0; p < props.size(); p++)
+            dst[p] = index(props[p]);
+
+        m_pointCount = N;
+        m_attrs.assign(59, std::vector<float>(N, 0.f));
+        std::vector<float> row(props.size());
+        for (size_t i = 0; i < N; ++i) {
+            if (!fin.read(reinterpret_cast<char*>(row.data()), sizeof(float) * row.size()))
+                return false;
+            for (size_t p = 0; p < props.size(); p++)
+                if (dst[p] >= 0 && dst[p] < 59)
+                    m_attrs[dst[p]][i] = row[p];
+        }
+        return true;
+    }
+
     std::vector<std::vector<float>> m_attrs;  // positoin, SHs, scales, rots, opacity
-    int m_pointCount;
+    size_t m_pointCount = 0;
 };
 
 EMSCRIPTEN_BINDINGS(my_module) {
