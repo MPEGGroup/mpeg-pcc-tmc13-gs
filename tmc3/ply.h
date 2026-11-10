@@ -223,7 +223,10 @@ namespace ply {
     std::vector<AttributeDescription>& attrDescs,
     bool convertColourspace,
     bool externalPrePost,
-    Stopwatch* clock
+    Stopwatch* clock,
+    const std::vector<AttributeParameterSet>* apsList = nullptr,
+    bool convertOpacityLogitToLinear = false,
+    bool enableOpacityDeadZone = true
   );
   
   enum class Format { ASCII, BINARY };
@@ -312,6 +315,19 @@ namespace ply {
     std::vector<double>& inputAttrBuf,
     std::vector<AttributeDescription>& attrDescs, 
     std::vector<PropertyInfo>& properties);
+
+  // Converts opacity from the raw logit domain (as stored by 3DGS PLY
+  // files) to linear [0,1] domain prior to quantization.  The inverse
+  // (linear -> logit) is applied in ply::write.  apsList (when provided)
+  // supplies the configured QP so the decision can be rate-aware.
+  bool
+  convertOpacity (
+    int pointCount,
+    std::vector<double>& inputAttrBuf,
+    std::vector<AttributeDescription>& attrDescs,
+    std::vector<PropertyInfo>& properties,
+    bool convertLogitToLinear = false,
+    bool enableDeadZone = true);
 
   bool
   analyzeMinMax (

@@ -115,6 +115,12 @@ struct Parameters {
   // perform attribute colourspace conversion on ply input/output.
   bool convertColourspace;
 
+  // convert input opacity from logit to linear domain before coding.
+  bool convertOpacityLogitToLinear;
+
+  // enable hierarchical dead-zone processing for linear opacity coding.
+  bool enableOpacityDeadZone;
+
   // resort the input points by azimuth angle
   bool sortInputByAzimuth;
 
@@ -688,6 +694,14 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("convertPlyColourspace",
     params.convertColourspace, true,
     "Convert ply colourspace according to attribute colourMatrix")
+
+  ("convertOpacityLogitToLinear",
+    params.convertOpacityLogitToLinear, false,
+    "Convert ply opacity from logit to linear domain before coding")
+
+  ("enableOpacityDeadZone",
+    params.enableOpacityDeadZone, true,
+    "Enable hierarchical dead-zone processing for linear opacity coding")
 
   ("outputBinaryPly",
     params.outputBinaryPly, false,
@@ -2096,7 +2110,7 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
 	}
 
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->convertColourspace, params->encoder.externalPrePost, clock)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->convertColourspace, params->encoder.externalPrePost, clock, &params->encoder.aps, params->convertOpacityLogitToLinear, params->enableOpacityDeadZone)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
