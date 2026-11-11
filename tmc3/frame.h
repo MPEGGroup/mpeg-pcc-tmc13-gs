@@ -85,7 +85,7 @@ struct CloudFrame {
   // Determines parameters according to the sps.
   void setParametersFrom(const SequenceParameterSet& sps, int fixedPointBits);
 
-  bool gs_sh_remap_enabled_flag;
+  bool attr_sh_remap_enabled;
 };
 
 //============================================================================

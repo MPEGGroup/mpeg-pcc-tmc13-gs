@@ -62,7 +62,16 @@ CloudFrame::setParametersFrom(
   this->outputUnitLength = reciprocal(sps.seqGeomScale);
   this->outputUnit = sps.seq_geom_scale_unit_flag;
   this->attrDesc = sps.attributeSets;
-  this->gs_sh_remap_enabled_flag = sps.gs_sh_remap_enabled_flag;
+  
+  bool attr_sh_remap_enabled = false;
+  for (auto& desc : sps.attributeSets) {
+    if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients && 
+        desc.params.attr_sh_coeff_type == 1) {
+      attr_sh_remap_enabled = desc.params.attr_sh_remap_enabled;
+    }
+  }
+
+  this->attr_sh_remap_enabled = attr_sh_remap_enabled;
 }
 
 //============================================================================

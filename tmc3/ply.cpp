@@ -133,16 +133,16 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
 
     for (size_t p = 0; p < pointCount; ++p) {
       for (size_t l = 1; l <= 9; ++l) {
-        for (int ch = 0; ch < 3; ++ch) {
-          double val = shView.sh(p, l, ch);
+        for (int c = 0; c < 3; ++c) {
+          double val = shView.sh(p, l, c);
           sum1 += val;
           sumSq1 += val * val;
         }
       }
       for (int i = 0; i < 3; ++i) {
         size_t l = idx3_arr[i];
-        for (int ch = 0; ch < 3; ++ch) {
-          double val = shView.sh(p, l, ch);
+        for (int c = 0; c < 3; ++c) {
+          double val = shView.sh(p, l, c);
           sum3 += val;
           sumSq3 += val * val;
         }
@@ -164,17 +164,19 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
 
   for (size_t l = 0; l < std::min(numSHCoeffs, 16); ++l) {
     auto& params = attrDescs[l].params;
-    params.shNumRegionsMinus1_.assign(3, 2);
-    params.shTransitionPoints_.clear();
-    params.shStepSizes_.clear();
-    params.shStepSizesFxp_.clear();
-    params.shNumBitsForTransitionPoint_.assign(3, bitDepth);
 
-    for (int ch = 0; ch < 3; ++ch) {
+    for (int c = 0 ; c < 3 ; c++)
+    {
+      params.shNumRegionsMinus1_[c] = 2;
+      params.shNumBitsForTransitionPoint_[c] = bitDepth;
+      params.shTransitionPoints_[c].clear();
+      params.shStepSizes_[c].clear();
+      params.shStepSizesFxp_[c].clear();
       std::vector<double> values;
+
       values.reserve(pointCount);
       for (size_t p = 0; p < pointCount; ++p) {
-        values.push_back(shView.sh(p, l, ch));
+        values.push_back(shView.sh(p, l, c));
       }
 
       double tp_low, tp_high;
@@ -182,7 +184,7 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
       if (useAdaptiveThresholds) {
         double perc_low, perc_high;
         if ( l == 0 ) {
-          if ( ch == 0 ) {
+          if ( c == 0 ) {
             perc_low  = thresh4;
             perc_high = 100 - thresh4;
           } else {
@@ -237,21 +239,20 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
       int tp_low_quant  = static_cast<int>( std::round( ( tp_low - minLim ) / d_code * max_quant_val ) );
       int tp_high_quant = static_cast<int>( std::round( ( tp_high - minLim ) / d_code * max_quant_val ) );
 
-      params.shTransitionPoints_.push_back( std::max( 0, std::min( static_cast<int>( max_quant_val - 1 ), tp_low_quant ) ) );
-      params.shTransitionPoints_.push_back( std::max( tp_low_quant + 1, std::min( static_cast<int>( max_quant_val ), tp_high_quant ) ) );
+      params.shTransitionPoints_[c].push_back( std::max( 0, std::min( static_cast<int>( max_quant_val - 1 ), tp_low_quant ) ) );
+      params.shTransitionPoints_[c].push_back( std::max( tp_low_quant + 1, std::min( static_cast<int>( max_quant_val ), tp_high_quant ) ) );
 
-      params.shStepSizes_.push_back(s_coarse);
-      params.shStepSizes_.push_back(s_fine);
-      params.shStepSizes_.push_back(s_coarse);
+      params.shStepSizes_[c].push_back(s_coarse);
+      params.shStepSizes_[c].push_back(s_fine);
+      params.shStepSizes_[c].push_back(s_coarse);
       const double ss_scale = pow(2.0, SS_SCALE);
       int64_t s_coarseFxp = (int64_t)round(s_coarse * ss_scale);
       int64_t s_fineFxp = (int64_t)round(s_fine * ss_scale);
       if (s_fineFxp == 0) s_fineFxp = 1;
       if (s_coarseFxp == 0) s_coarseFxp = 1;
-      params.shStepSizesFxp_.push_back(s_coarseFxp);
-      params.shStepSizesFxp_.push_back(s_fineFxp);
-      params.shStepSizesFxp_.push_back(s_coarseFxp);
-
+      params.shStepSizesFxp_[c].push_back(s_coarseFxp);
+      params.shStepSizesFxp_[c].push_back(s_fineFxp);
+      params.shStepSizesFxp_[c].push_back(s_coarseFxp);
     }
   }
 
@@ -528,7 +529,6 @@ inline void dequantShChunk(
   size_t numSHCoeffs, 
   bool useShNQ,
   std::array<ShQuantRegion, 48>& shRegions,
-  std::array<int, 48>& ssBaseOffsets,
   const PCCPointSet3& cloud,
   bool convertColourspace
   ) {
@@ -541,23 +541,23 @@ inline void dequantShChunk(
       auto offset = desc.params.attr_offset;
       auto attr_frac_bits = desc.params.attr_frac_bits;
       auto attr_scale = desc.params.attr_scale_minus1 + 1;
-      for (int k = 0; k < 3; k++) {
-        int32_t attr = int32_t(cloud.getSHCoefficient(m, pt)[k]);
-        if (useShNQ && desc.params.shNumRegionsMinus1_[k] > 0) {
-          int idx = m * 3 + k;
-          int M = desc.params.shNumRegionsMinus1_[k];
+      for (int c = 0; c < 3; c++) {
+        int32_t attr = int32_t(cloud.getSHCoefficient(m, pt)[c]);
+        if (useShNQ && desc.params.shNumRegionsMinus1_[c] > 0) {
+          int idx = m * 3 + c;
+          int M = desc.params.shNumRegionsMinus1_[c];
           const auto& reg = shRegions[idx];
           int region_idx = 0;
           while (region_idx < M && attr > reg.tp_int[region_idx]) { region_idx++; }
           int64_t prev_idx_fxp = (region_idx > 0) ? (reg.tp_int[region_idx - 1] << SH_SCALE) : reg.min_offset_fxp;
-          int64_t step_vec_fxp = desc.params.shStepSizesFxp_[ssBaseOffsets[idx] + region_idx];
+          int64_t step_vec_fxp = desc.params.shStepSizesFxp_[c][region_idx];
           int64_t base_real_fxp = reg.region_start_real_fxp[region_idx] << SS_SCALE;
           int64_t attr_fxp = attr << SH_SCALE;
           int64_t val_fxp = base_real_fxp + (attr_fxp - prev_idx_fxp) * step_vec_fxp;
-          g.shFxp[m][k] = val_fxp >> SS_SCALE;
+          g.shFxp[m][c] = val_fxp >> SS_SCALE;
         } else {
           int64_t val = attr * attr_scale + (offset << attr_frac_bits);
-          g.shFxp[m][k] = adjust_frac_bits(val, attr_frac_bits, SH_SCALE);
+          g.shFxp[m][c] = adjust_frac_bits(val, attr_frac_bits, SH_SCALE);
         }
       }
     }
@@ -743,12 +743,11 @@ ply::write(
     std::vector<GSPoint> gsChunk;
     AttributeParameters param_sh{};
     std::array<ShQuantRegion, 48> shRegions;
-    std::array<int, 48>           ssBaseOffsets;
     if (cloud.hasSHCoefficients()) {
       const AttributeDescription& desc_sh = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
       param_sh = desc_sh.params;
-      useGsdTransform2d = param_sh.gsdTransform2dPresentFlag_;
-      useShNQ = param_sh.enableShNonUniformQuantization_;
+      useGsdTransform2d = param_sh.attr_sh_grp_transform_enabled;
+      useShNQ = param_sh.attr_sh_non_uniform_quant_enabled;
 
       for (auto& desc : attrDescs) {
         if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
@@ -760,12 +759,9 @@ ply::write(
           auto& params = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l).params;
           int64_t minLim = params.attr_offset;
           int64_t maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
-          int tpOffset = 0;
-          int ssOffset = 0;
-          for (int ch = 0; ch < 3; ++ch) {
-            int idx = l * 3 + ch;
-            int M = params.shNumRegionsMinus1_[ch];
-            ssBaseOffsets[idx] = ssOffset;
+          for (int c = 0; c < 3; ++c) {
+            int idx = l * 3 + c;
+            int M = params.shNumRegionsMinus1_[c];
 
             if (M > 0) {
               int64_t d_code_fxp = ((maxLim - minLim) * (1 << bitDepth_sh) + ((1ull << params.attr_frac_bits) >> 1)) / (1ull << params.attr_frac_bits);
@@ -773,16 +769,14 @@ ply::write(
               shRegions[idx].region_start_real_fxp.resize(M + 1);
               shRegions[idx].region_start_real_fxp[0] = minLim << SH_SCALE;
               for (int m = 0; m < M; ++m) {
-                int tp_val = params.shTransitionPoints_[tpOffset + m];
+                int tp_val = params.shTransitionPoints_[c][m];
                 shRegions[idx].tp_int[m] = tp_val;
                 int64_t buf = (tp_val * d_code_fxp) + (minLim << bitDepth_sh);
                 shRegions[idx].region_start_real_fxp[m + 1] =
                     adjust_frac_bits(buf, bitDepth_sh, SH_SCALE);
               }
-              shRegions[idx].min_offset_fxp = params.min_offset_fxp[ch];
+              shRegions[idx].min_offset_fxp = params.min_offset_fxp[c];
             }
-            tpOffset += M;
-            ssOffset += M + 1;
           }
         }
       }
@@ -803,7 +797,7 @@ ply::write(
     for (size_t i = 0; i < pointCount; ++i) {
       if ((useGsdTransform2d || useShNQ) && (i % kShChunkSize == 0)) {
         size_t chunkCount = std::min(kShChunkSize, pointCount - i);
-        dequantShChunk(i, chunkCount, gsChunk, param_sh, attrDescs, numSHCoeffs, useShNQ, shRegions, ssBaseOffsets, cloud, convertColourspace);
+        dequantShChunk(i, chunkCount, gsChunk, param_sh, attrDescs, numSHCoeffs, useShNQ, shRegions, cloud, convertColourspace);
       }
 
       if (scaleDesc && scaleDesc->params.scaleParameterPresent
@@ -1268,7 +1262,7 @@ ply::convertColor (
         && desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 
       // Skip SH color conversion when 2D transform is enabled — it handles its own column transform
-      if (desc.params.gsdTransform2dPresentFlag_)
+      if (desc.params.attr_sh_grp_transform_enabled)
         continue;
 
       double* buf[3];
@@ -1543,8 +1537,8 @@ ply::read(
   bool enableShNonUniformQuantization = false;
   for (auto& desc : attrDescs) {
     if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-      if (desc.params.gsdTransform2dPresentFlag_) gsdTransform2dPresentFlag = true;
-      if (desc.params.enableShNonUniformQuantization_) enableShNonUniformQuantization = true;
+      if (desc.params.attr_sh_grp_transform_enabled) gsdTransform2dPresentFlag = true;
+      if (desc.params.attr_sh_non_uniform_quant_enabled) enableShNonUniformQuantization = true;
     }
   }
 
@@ -1579,8 +1573,8 @@ ply::read(
     for (int l = 0; l < numSHCoeffs; ++l) {
       auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l);
       shIndices[l] = getAttrIndices(desc, properties);
-      for (int ch = 0; ch < 3; ++ch) {
-        shBuffers[l * 3 + ch] = &inputAttrBuf[shIndices[l][ch] * pointCount];
+      for (int c = 0; c < 3; ++c) {
+        shBuffers[l * 3 + c] = &inputAttrBuf[shIndices[l][c] * pointCount];
       }
     }
 
@@ -1665,7 +1659,6 @@ ply::read(
       extractSHQuantRegions(witSHCoefficients, shView, pointCount, attrDescs);
 
       std::array<ShQuantRegion, 48> shRegions;
-      std::array<int, 48>           ssBaseOffsets;
       const uint32_t bitDepth_sh = attrDescs[0].bitdepth;
       const uint32_t max_index_sh = 1u << bitDepth_sh;
 
@@ -1674,14 +1667,13 @@ ply::read(
         auto& params = desc.params;
         int tpOffset = 0;
         int ssOffset = 0;
-        for (int ch = 0; ch < 3; ++ch) {
-          int idx = l * 3 + ch;
-          int M = params.shNumRegionsMinus1_[ch];
+        for (int c = 0; c < 3; ++c) {
+          int idx = l * 3 + c;
+          int M = params.shNumRegionsMinus1_[c];
           double minLim = params.attr_offset;
           double maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
           double Range = maxLim - minLim;
           double d_code = std::round(Range * (1 << bitDepth_sh) / (double)(1ull << params.attr_frac_bits));
-          ssBaseOffsets[idx] = ssOffset;
 
           if (M > 0) {
             shRegions[idx].tp_int.resize(M);
@@ -1689,15 +1681,16 @@ ply::read(
             shRegions[idx].region_start_real[0] = minLim;
 
             for (int m = 0; m < M; ++m) {
-              int tp_val = params.shTransitionPoints_[tpOffset + m];
+              int tp_val = params.shTransitionPoints_[c][m];
               shRegions[idx].tp_int[m] = tp_val;
               shRegions[idx].region_start_real[m + 1] = tp_val * d_code / static_cast<double>(max_index_sh) + minLim;
             }
             shRegions[idx].min_offset =
-                shRegions[idx].tp_int[0] - (shRegions[idx].region_start_real[1] - minLim) / params.shStepSizes_[ssOffset];
+                shRegions[idx].tp_int[0] - (shRegions[idx].region_start_real[1] - minLim) / params.shStepSizes_[c][0];
+
             const double sh_scale = (1 << SH_SCALE);
-            params.min_offset_fxp[ch] = (int64_t)round(shRegions[idx].min_offset * sh_scale);
-            params.min_offset[ch] = shRegions[idx].min_offset;
+            params.min_offset_fxp[c] = (int64_t)round(shRegions[idx].min_offset * sh_scale);
+            params.min_offset[c] = shRegions[idx].min_offset;
           }
           tpOffset += M;
           ssOffset += M + 1;
@@ -1712,16 +1705,16 @@ ply::read(
         int64_t offset = params.attr_offset;
         int64_t attr_scale = params.attr_scale_minus1 + 1;
 
-        for (int ch = 0; ch < 3; ++ch) {
-          double* src = &inputAttrBuf[getAttrIndices(desc, properties)[ch] * pointCount];
+        for (int c = 0; c < 3; ++c) {
+          double* src = &inputAttrBuf[getAttrIndices(desc, properties)[c] * pointCount];
           auto& dst = cloud.getAttrVec(desc);
 
           for (int i = 0; i < pointCount; i++) {
             double attr = src[i];
-            int idx = l * 3 + ch;
-            int M = params.shNumRegionsMinus1_[ch];
+            int idx = l * 3 + c;
+            int M = params.shNumRegionsMinus1_[c];
             if (M == 0) {
-              dst[i][ch] = attr_t(PCCClip(
+              dst[i][c] = attr_t(PCCClip(
                   std::llround((attr - offset) * attr_frac_bits_scale / attr_scale),
                   0, clip_max));
             } else {
@@ -1729,10 +1722,10 @@ ply::read(
               int region_idx = 0;
               while (region_idx < M && attr > reg.region_start_real[region_idx + 1]) { region_idx++; }
               double prev_idx = (region_idx > 0) ? reg.tp_int[region_idx - 1] : reg.min_offset;
-              double step_vec = params.shStepSizes_[ssBaseOffsets[idx] + region_idx];
+              double step_vec = params.shStepSizes_[c][region_idx];
               double base_real = reg.region_start_real[region_idx];
               double q_vals = std::round((attr - base_real) / step_vec + prev_idx);
-              dst[i][ch] = attr_t(PCCClip(static_cast<int64_t>(q_vals), int64_t(0), clip_max));
+              dst[i][c] = attr_t(PCCClip(static_cast<int64_t>(q_vals), int64_t(0), clip_max));
             }
           }
         }

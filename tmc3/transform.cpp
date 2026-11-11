@@ -52,7 +52,7 @@ namespace pcc {
 //============================================================================
 /// Initialize SH 2D transform parameters
 void initializeShTransformParams(AttributeParameters& params) {
-  if (!params.gsdTransform2dPresentFlag_) {
+  if (!params.attr_sh_grp_transform_enabled) {
     params.shTrTypeCol_.clear();
     params.shTrGrpRow_.clear();
     params.shTrTypeRow_.clear();
@@ -305,7 +305,7 @@ bool sphericalHarmonicsInvTransform2D(bool witSHCoefficients, std::vector<GSPoin
 
 bool sphericalHarmonicsInvTransform(bool witSHCoefficients, std::vector<GSPoint>& gsBuf,
   size_t pointCount, AttributeParameters& params, bool convertColourspace){
-  if ( params.gsdTransform2dPresentFlag_ ) {
+  if ( params.attr_sh_grp_transform_enabled ) {
     return sphericalHarmonicsInvTransform2D(witSHCoefficients, gsBuf, pointCount, params ); }
   else{
     if (!convertColourspace) return true;
@@ -573,7 +573,7 @@ bool sphericalHarmonicsTransform2D(bool witSHCoefficients, SHBufferView& shView,
 bool sphericalHarmonicsTransform(bool witSHCoefficients, SHBufferView& shView,
   size_t pointCount, AttributeParameters& params, bool convertColourspace) {
   if (!witSHCoefficients) return false;
-  if (params.gsdTransform2dPresentFlag_) {
+  if (params.attr_sh_grp_transform_enabled) {
     bool anyKlt = false;
     for (int flag : params.shKltFlag_) {
       if (flag == 1) { anyKlt = true; break; }

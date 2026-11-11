@@ -860,10 +860,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.sps.entropy_continuation_enabled_flag, false,
     "Propagate context state between slices")
 
-  ("gsShRemapEnabled",
-    params.encoder.sps.gs_sh_remap_enabled_flag, false,
-    "Controls Remapping of Spherical Harmonics Coefficients.")
-
   ("disableAttributeCoding",
     params.disableAttributeCoding, false,
     "Ignore attribute coding configuration")
@@ -1133,7 +1129,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  8: YCgCo")
 
 	("numSHCoeffBandsMinus1", 
-		params_attr.desc.params.num_sh_coefficient_degrees_minus1, 3,
+		params_attr.desc.params.attr_num_sh_coeff_degrees_minus1, 3,
     "number of SH coefficient bands.\n"
     "   <0: Clipped to 0.\n"
     " 0-16: Force coding up to the specified degree.\n"
@@ -1173,7 +1169,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 		"  1: Degree")
 
   ("gsdTransform2dPresentFlag",
-    params_attr.desc.params.gsdTransform2dPresentFlag_, false,
+    params_attr.desc.params.attr_sh_grp_transform_enabled, false,
     "Enable 2D transform for SH coefficients (0: simple RGB->YUV, 1: 2D KLT/DCT)")
 
   ("dataAdaptiveShTransform",
@@ -1185,7 +1181,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Enable PCA for DC component of SH")
 
   ("enableShNonUniformQuantization",
-    params_attr.desc.params.enableShNonUniformQuantization_, false,
+    params_attr.desc.params.attr_sh_non_uniform_quant_enabled, false,
     "Enable non-uniform quantization for SH coefficients")
 
   ("shNqRangeMode",
@@ -1196,9 +1192,13 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.desc.params.shAdaptiveTpOptEnabled_, false,
     "Enable adaptive transition point optimization")
 
-  ("nonUniformQuantScale",
-    params_attr.desc.params.scaleParameterPresent, false,
+  ("attrScaleNonUniformQuantEnabled",
+    params_attr.desc.params.attr_scale_non_uniform_quant_enabled, false,
     "Enable non-uniform quantization for Scale pre- and post-processing")
+
+  ("gsShRemapEnabled",
+    params_attr.desc.params.attr_sh_remap_enabled, false,
+    "Controls Remapping of Spherical Harmonics Coefficients.")
 
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
@@ -1667,12 +1667,11 @@ sanitizeEncoderOpts(
 		}
 
     if (it.first == "scale") {
+      attrMeta.scaleParameterPresent = true;
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kScale;
       attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-    } else {
-      attrMeta.scaleParameterPresent = false;
-    }
+    } 
 
 		if (!it.first.compare(0, 8, "rotation")) {
 			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
@@ -1698,22 +1697,22 @@ sanitizeEncoderOpts(
       attrMeta.cicpParametersPresent = true;
 
 			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
-				attrMeta.sh_dc_coefficient_flag = true;
+				attrMeta.attr_sh_coeff_type = true;
 			else 
-				attrMeta.sh_dc_coefficient_flag = false;
+				attrMeta.attr_sh_coeff_type = false;
 			attrMeta.shCoefficientParameterPresent = true;
 		  
-      int numShBandMinus1 = attrMeta.num_sh_coefficient_degrees_minus1;
+      int numShBandMinus1 = attrMeta.attr_num_sh_coeff_degrees_minus1;
       if (numShBandMinus1 > 16)
-        attrMeta.num_sh_coefficient_degrees_minus1 = 16;
+        attrMeta.attr_num_sh_coeff_degrees_minus1 = 16;
       else if (numShBandMinus1 < 0)
-        attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+        attrMeta.attr_num_sh_coeff_degrees_minus1 = 0;
       
       int numShCoefficients = ((numShBandMinus1+1) * (numShBandMinus1+1));
       if (int(attrMeta.sh_coefficient_label) >= numShCoefficients)
       {
         const auto& SH_label = attr_sps.params.sh_coefficient_label;
-        err.error() << "Invalid numSHCoeffBandsMinus1 ("<< attrMeta.num_sh_coefficient_degrees_minus1 <<") for " << attr_sps << "s_" << (int)SH_label <<".\n";
+        err.error() << "Invalid numSHCoeffBandsMinus1 ("<< attrMeta.attr_num_sh_coeff_degrees_minus1 <<") for " << attr_sps << "s_" << (int)SH_label <<".\n";
       }
 		}
 
@@ -2165,7 +2164,15 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
 
-  if (params->encoder.sps.gs_sh_remap_enabled_flag) {
+  bool attr_sh_remap_enabled = false;
+  for (auto& desc : params->encoder.sps.attributeSets) {
+    if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients && 
+        desc.params.attr_sh_coeff_type == 1) {
+      attr_sh_remap_enabled = desc.params.attr_sh_remap_enabled;
+    }
+  }
+
+  if (attr_sh_remap_enabled) {
     const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
     std::vector<std::pair<int, int>> gs_sh_remap_pairs =
       {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 
@@ -2286,7 +2293,7 @@ SequenceDecoder::onOutputCloud(const CloudFrame& frame)
   // copy the point cloud in order to modify it according to the output options
   PCCPointSet3 pointCloud(frame.cloud);
 
-  if (frame.gs_sh_remap_enabled_flag) {
+  if (frame.attr_sh_remap_enabled) {
     const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
     std::vector<std::pair<int, int>> gs_sh_remap_pairs =
       {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 

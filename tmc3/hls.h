@@ -385,9 +385,10 @@ struct AttributeParameters {
   std::vector<double> input_attr_default_value;
 
   // Gaussian Splat Compression
-  bool sh_dc_coefficient_flag = false;
-  bool dc_only_flag = false;
-  int num_sh_coefficient_degrees_minus1 = -1;
+  bool attr_sh_coeff_type = 1; // SH type: 0 (AC), 1 (DC)
+  bool attr_dc_only_present = false;
+  int attr_num_sh_coeff_degrees_minus1 = -1;
+  bool attr_sh_remap_enabled = false;
 
   bool shCoefficientParameterPresent = false;
   SHCoefficientLabel sh_coefficient_label;
@@ -397,10 +398,11 @@ struct AttributeParameters {
   EulerAngleUnitType euler_angle_unit_type;
 
   bool scaleParameterPresent = false;
+  bool attr_scale_non_uniform_quant_enabled = false;
   PCCScalePowerParameters scalePowerParams;
 
   // SH 2D Transform
-  bool gsdTransform2dPresentFlag_ = false;
+  bool attr_sh_grp_transform_enabled = false;
   bool dataAdaptiveShTransformEnabled_ = true;
   /// DC PCA Flag
   bool gsdPcaDcFlag_ = false;
@@ -411,16 +413,17 @@ struct AttributeParameters {
   std::vector<PCCKltParameters> shKltParams_;
 
   // SH Non-Uniform Quantization
-  bool enableShNonUniformQuantization_ = false;
+  bool attr_sh_non_uniform_quant_enabled = false;
   bool shAdaptiveTpOptEnabled_ = false;
   int shNqRangeMode_ = 0;  // 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band
-  std::vector<int> shNumRegionsMinus1_;
-  std::vector<int> shTransitionPoints_;
-  std::vector<double> shStepSizes_;
-  std::vector<int64_t> shStepSizesFxp_;
+  int shNumRegionsMinus1_[3];
+  int shNumBitsForTransitionPoint_[3];
+  std::vector<int> shTransitionPoints_[3];
+  std::vector<int64_t> shStepSizesFxp_[3];
   int64_t min_offset_fxp[3] = {};
+
+  std::vector<double> shStepSizes_[3];
   double min_offset[3] = {};
-  std::vector<int> shNumBitsForTransitionPoint_;
 
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;
@@ -446,7 +449,7 @@ struct AttributeParameters {
     scaleParameterPresent = false;
     scalePowerParams.clear();
 
-    gsdTransform2dPresentFlag_ = false;
+    attr_sh_grp_transform_enabled = false;
     dataAdaptiveShTransformEnabled_ = false;
     gsdPcaDcFlag_ = false;
     shTrTypeCol_.clear();
@@ -454,14 +457,18 @@ struct AttributeParameters {
     shTrTypeRow_.clear();
     shKltFlag_.clear();
     shKltParams_.clear();
-    enableShNonUniformQuantization_ = false;
+    attr_sh_non_uniform_quant_enabled = false;
     shAdaptiveTpOptEnabled_ = false;
     shNqRangeMode_ = 0;
-    shNumRegionsMinus1_.clear();
-    shNumBitsForTransitionPoint_.clear();
-    shTransitionPoints_.clear();
-    shStepSizes_.clear();
-    shStepSizesFxp_.clear();
+
+    for (int c = 0; c < 3; c++) {
+      shNumRegionsMinus1_[c] = -1;
+      shNumBitsForTransitionPoint_[c] = 0;
+      shTransitionPoints_[c].clear();
+      shStepSizes_[c].clear();
+      shStepSizesFxp_[c].clear();
+    }
+
   }
 };
 
@@ -650,7 +657,6 @@ struct SequenceParameterSet {
   // Indicates that context state may be propagated between slices.
   bool entropy_continuation_enabled_flag;
   
-  bool gs_sh_remap_enabled_flag = false;
 };
 
 //============================================================================

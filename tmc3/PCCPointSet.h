@@ -882,8 +882,8 @@ public:
         return;
           
       case KnownAttributeLabel::kSH_coefficients:
-        if (desc.params.sh_dc_coefficient_flag) {
-          setNumSHCoeffsWithNumBandsMinus1(desc.params.num_sh_coefficient_degrees_minus1);
+        if (desc.params.attr_sh_coeff_type) {
+          setNumSHCoeffsWithNumBandsMinus1(desc.params.attr_num_sh_coeff_degrees_minus1);
         }
         withSHCoefficients = true;
         return;

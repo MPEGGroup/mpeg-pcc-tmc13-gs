@@ -186,7 +186,7 @@ operator<<(std::ostream& os, const AttributeDescription& desc)
       os << "rotations_W"; 		
 		break;
   case KnownAttributeLabel::kSH_coefficients: 
-		if (desc.params.sh_dc_coefficient_flag)
+		if (desc.params.attr_sh_coeff_type)
 			os << "SH_dc_coefficient"; 
 		else
       os << "SH_ac_coefficient"; 
@@ -292,96 +292,85 @@ parseAttrParamDefaultValue(
 
 template<typename Bs>
 void
-writeAttrParamSHCoefficientLabel(Bs& bs, const AttributeParameters& param)
+writeAttrParamSHCoefficientLabel
+(const AttributeDescription& desc, Bs& bs, const AttributeParameters& param)
 {
-  bs.write(param.sh_dc_coefficient_flag);
-  if (param.sh_dc_coefficient_flag) {
-    bs.write(param.dc_only_flag);
-    if (param.dc_only_flag == 0)
-	    bs.writeUe(param.num_sh_coefficient_degrees_minus1);
+  bs.write(param.attr_sh_coeff_type);
+  if (param.attr_sh_coeff_type == 1) {
+    bs.write(param.attr_dc_only_present);
+    if (param.attr_dc_only_present == 0) {
+	    bs.writeUe(param.attr_num_sh_coeff_degrees_minus1);
+      bs.write(param.attr_sh_remap_enabled);
+      bs.write(param.attr_sh_grp_transform_enabled);
+      if (param.attr_sh_grp_transform_enabled == 1) {
+        int ColTr[16];
+        for (int i = 0; i < 16; i++)
+          ColTr[i] = 1;
+        bs.writeUn(4, param.shTrGrpRow_.size());
+        int ki = 0;  // Counter for shKltParams_ index (only incremented when KLT is used)
+        for (int i = 0; i < param.shTrGrpRow_.size(); i++) {
+          bs.writeUn(4, param.shTrGrpRow_[i].size() - 1);
+          for (int j = 0; j <= param.shTrGrpRow_[i].size()-1; j++) {
+            bs.writeUn(4, param.shTrGrpRow_[i][j]);
+          }
+          bs.write(param.shKltFlag_[i]);
+          if (param.shKltFlag_[i]) {
+            for (int j = 0; j < param.shTrGrpRow_[i].size(); j++)
+              ColTr[param.shTrGrpRow_[i][j]] = 0;
+            for (int m = 0; m < 3 * (param.shTrGrpRow_[i].size()); m++) {
+              for (int n = 0; n < 3 * (param.shTrGrpRow_[i].size()); n++) {
+                const double klt_scale = (double)(1 << KLT_SCALE);
+                int64_t gsht_klt = (int64_t)round(param.shKltParams_[ki].eigvec[m][n] * klt_scale);
+                bs.writeSn(32, gsht_klt);
+              }
+            }
+            for (int m = 0; m < 3 * param.shTrGrpRow_[i].size(); m++) {
+              bool isDcGroup = (param.shTrGrpRow_[i].size() == 1 && param.shTrGrpRow_[i][0] == 0);
+              if (!isDcGroup) {
+                double klt_sigma_scale = (double)(1 << KLT_SIGMA_SCALE);
+                int64_t gsht_klt_std_dev = (int64_t)round(param.shKltParams_[ki].sigma[m] * klt_sigma_scale);
+                bs.writeSn(32, gsht_klt_std_dev);
+              }
+              double klt_mean_scale = (double)(1 << KLT_MEAN_SCALE);
+              int64_t gsht_klt_mean = (int64_t)round(param.shKltParams_[ki].mean[m] * klt_mean_scale);
+              bs.writeSn(32, gsht_klt_mean);
+            }
+            ki++;
+          }
+          else {
+            bs.writeUn(3, param.shTrTypeRow_[i]);
+          }
+        }
+        for (int k = 0; k < 16; k++) {
+          if (ColTr[k] == 1) {
+            bs.writeUn(3, param.shTrTypeCol_[k]);
+          }
+        }
+      }
+    }
   } else {
     int numSHCoeff = 0;
-    for (int i = 0; i <= param.num_sh_coefficient_degrees_minus1; i++)
+    for (int i = 0; i <= param.attr_num_sh_coeff_degrees_minus1; i++)
       numSHCoeff += (2 * i + 1);  // 1 + 3 + 5 + 7
     int numSHCoeffDegreesBits = numBits(numSHCoeff - 1);
 
     bs.writeUn(numSHCoeffDegreesBits, (int)param.sh_coefficient_label - 1);
   }
+  
+  bs.write(param.attr_sh_non_uniform_quant_enabled);
+  if (param.attr_sh_non_uniform_quant_enabled) {
+    for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
+      bs.writeUe(param.shNumRegionsMinus1_[c]);
+      bs.writeUn(4, param.shNumBitsForTransitionPoint_[c]);
+      bs.writeSn(32, param.min_offset_fxp[c]);
 
-  if (param.sh_dc_coefficient_flag) {
-    bs.write(param.gsdTransform2dPresentFlag_);
-    if (param.gsdTransform2dPresentFlag_) {
-      int ColTr[16];
-      for (int i = 0; i < 16; i++)
-        ColTr[i] = 1;
-      bs.writeUn(4, param.shTrGrpRow_.size());
-      int ki = 0;  // Counter for shKltParams_ index (only incremented when KLT is used)
-      for (int i = 0; i < param.shTrGrpRow_.size(); i++) {
-        bs.writeUn(4, param.shTrGrpRow_[i].size() - 1);
-        for (int j = 0; j <= param.shTrGrpRow_[i].size()-1; j++) {
-          bs.writeUn(4, param.shTrGrpRow_[i][j]);
-        }
-        bs.write(param.shKltFlag_[i]);
-        if (param.shKltFlag_[i]) {
-          for (int j = 0; j < param.shTrGrpRow_[i].size(); j++)
-            ColTr[param.shTrGrpRow_[i][j]] = 0;
-          for (int m = 0; m < 3 * (param.shTrGrpRow_[i].size()); m++) {
-            for (int n = 0; n < 3 * (param.shTrGrpRow_[i].size()); n++) {
-              const double klt_scale = (double)(1 << KLT_SCALE);
-              int64_t gsht_klt = (int64_t)round(param.shKltParams_[ki].eigvec[m][n] * klt_scale);
-              bs.writeSn(32, gsht_klt);
-            }
-          }
-          for (int m = 0; m < 3 * param.shTrGrpRow_[i].size(); m++) {
-            bool isDcGroup = (param.shTrGrpRow_[i].size() == 1 && param.shTrGrpRow_[i][0] == 0);
-            if (!isDcGroup) {
-              double klt_sigma_scale = (double)(1 << KLT_SIGMA_SCALE);
-              int64_t gsht_klt_std_dev = (int64_t)round(param.shKltParams_[ki].sigma[m] * klt_sigma_scale);
-              bs.writeSn(32, gsht_klt_std_dev);
-            }
-            double klt_mean_scale = (double)(1 << KLT_MEAN_SCALE);
-            int64_t gsht_klt_mean = (int64_t)round(param.shKltParams_[ki].mean[m] * klt_mean_scale);
-            bs.writeSn(32, gsht_klt_mean);
-          }
-          ki++;
-        }
-        else {
-          bs.writeUn(3, param.shTrTypeRow_[i]);
-        }
-      }
-      for (int k = 0; k < 16; k++) {
-        if (ColTr[k] == 1) {
-          bs.writeUn(3, param.shTrTypeCol_[k]);
-        }
-      }
-    }
-  } 
+      for (int m = 0; m < param.shNumRegionsMinus1_[c]; m++) 
+        bs.writeUn(param.shNumBitsForTransitionPoint_[c], param.shTransitionPoints_[c][m]);
 
-  bs.write(param.enableShNonUniformQuantization_);
-  if (param.enableShNonUniformQuantization_) {
-    int numComponents = 3;
-    for (int i = 0; i < numComponents; i++) {
-      bs.writeUe(param.shNumRegionsMinus1_[i]);
-    }
-    for (int i = 0; i < numComponents; i++) {
-      bs.writeUn(4, param.shNumBitsForTransitionPoint_[i]);
-    }
-    int tpOffset = 0;
-    int ssOffset = 0;
-    for (int i = 0; i < numComponents; i++) {
-      bs.writeSn(32, param.min_offset_fxp[i]);
-      int M = param.shNumRegionsMinus1_[i];
-      for (int m = 0; m < M; m++) {
-        bs.writeUn(param.shNumBitsForTransitionPoint_[i], param.shTransitionPoints_[tpOffset + m]);
-      }
-      tpOffset += M;
-      for (int m = 0; m <= M; m++) {
-        bs.writeSn(32, param.shStepSizesFxp_[ssOffset + m]);
-      }
-      ssOffset += M + 1;
+      for (int m = 0; m <= param.shNumRegionsMinus1_[c]; m++) 
+        bs.writeSn(32, param.shStepSizesFxp_[c][m]);
     }
   }
-
   bs.byteAlign();
 }
 
@@ -389,19 +378,100 @@ writeAttrParamSHCoefficientLabel(Bs& bs, const AttributeParameters& param)
 
 template<typename Bs>
 void
-parseAttrParamSHCoeffieicientLabel(Bs& bs, AttributeParameters* param)
+parseAttrParamSHCoeffieicientLabel
+(const AttributeDescription& desc, Bs& bs, AttributeParameters* param)
 {
-  bs.read(&param->sh_dc_coefficient_flag);
-  if (param->sh_dc_coefficient_flag) {
-    bs.read(&param->dc_only_flag);
-    if (param->dc_only_flag == 0)
-      bs.readUe(&param->num_sh_coefficient_degrees_minus1);
-    else
-      param->num_sh_coefficient_degrees_minus1 = 0;
-		param->sh_coefficient_label = SHCoefficientLabel::kBand0_Order0;		
+  param->sh_coefficient_label = SHCoefficientLabel::kBand0_Order0;
+  
+  bs.read(&param->attr_sh_coeff_type);
+  if (param->attr_sh_coeff_type == 1) {
+    bs.read(&param->attr_dc_only_present);
+    if (param->attr_dc_only_present == 0) {
+      bs.readUe(&param->attr_num_sh_coeff_degrees_minus1);
+      bs.read(&param->attr_sh_remap_enabled);
+      bs.read(&param->attr_sh_grp_transform_enabled);
+      if (param->attr_sh_grp_transform_enabled == 1) {
+        int ColTr[16];
+        for (int i = 0; i < 16; i++)
+          ColTr[i] = 1;
+
+        int gsht_tr_row_num_groups;
+        bs.readUn(4, &gsht_tr_row_num_groups);
+        param->shTrGrpRow_.resize(gsht_tr_row_num_groups);
+        param->shKltFlag_.resize(gsht_tr_row_num_groups);
+        param->shTrTypeRow_.resize(gsht_tr_row_num_groups);
+        param->shKltParams_.resize(gsht_tr_row_num_groups);
+        for (int i = 0; i < param->shTrGrpRow_.size(); i++) {
+          int gsht_row_tr_size_minus1;
+          bs.readUn(4, &gsht_row_tr_size_minus1);
+          param->shTrGrpRow_[i].resize(gsht_row_tr_size_minus1 + 1);
+          for (int j = 0; j < param->shTrGrpRow_[i].size(); j++) {
+            int gsht_tr_row_group_idx;
+            bs.readUn(4, &gsht_tr_row_group_idx);
+            param->shTrGrpRow_[i][j] = gsht_tr_row_group_idx;
+          }
+          int gsht_klt_flag;
+          bs.read(&gsht_klt_flag);
+          param->shKltFlag_[i] = gsht_klt_flag;
+          if (param->shKltFlag_[i]) {
+            for (int j = 0; j < param->shTrGrpRow_[i].size(); j++)
+                ColTr[param->shTrGrpRow_[i][j]] = 0;
+            param->shKltParams_[i].eigvec.resize(3 * param->shTrGrpRow_[i].size());
+            param->shKltParams_[i].eigvecFxp.resize(3 * param->shTrGrpRow_[i].size());
+            for (int m = 0; m < 3 * param->shTrGrpRow_[i].size(); m++) {
+              param->shKltParams_[i].eigvec[m].resize(3 * param->shTrGrpRow_[i].size());
+              param->shKltParams_[i].eigvecFxp[m].resize(3 * param->shTrGrpRow_[i].size());
+              for (int n = 0; n < 3 * (param->shTrGrpRow_[i].size()); n++) {
+                int gsht_klt;
+                const double klt_scale = (double)(1 << KLT_SCALE);
+                bs.readSn(32, &gsht_klt);
+                param->shKltParams_[i].eigvecFxp[m][n] = gsht_klt;
+                param->shKltParams_[i].eigvec[m][n] = (double)gsht_klt / klt_scale;
+              }
+            }
+            param->shKltParams_[i].sigma.resize(3 * param->shTrGrpRow_[i].size());
+            param->shKltParams_[i].mean.resize(3 * param->shTrGrpRow_[i].size());
+            param->shKltParams_[i].sigmaFxp.resize(3 * param->shTrGrpRow_[i].size());
+            param->shKltParams_[i].meanFxp.resize(3 * param->shTrGrpRow_[i].size());
+            for (int m = 0; m < 3 * param->shTrGrpRow_[i].size(); m++) {
+              bool isDcGroup = (param->shTrGrpRow_[i].size() == 1 && param->shTrGrpRow_[i][0] == 0);
+              const double klt_sigma_scale = (double)(1 << KLT_SIGMA_SCALE);
+              const double klt_mean_scale = (double)(1 << KLT_MEAN_SCALE);
+              if (!isDcGroup) {
+                int gsht_klt_std_dev;
+                bs.readSn(32, &gsht_klt_std_dev);
+                param->shKltParams_[i].sigmaFxp[m] = gsht_klt_std_dev;
+                param->shKltParams_[i].sigma[m] = (double)gsht_klt_std_dev / klt_sigma_scale;
+              } else {
+                param->shKltParams_[i].sigmaFxp[m] = 1 << KLT_SIGMA_SCALE;
+                param->shKltParams_[i].sigma[m] = 1.0;
+              }
+              int gsht_klt_mean;
+              bs.readSn(32, &gsht_klt_mean);
+              param->shKltParams_[i].meanFxp[m] = gsht_klt_mean;
+              param->shKltParams_[i].mean[m] = (double)gsht_klt_mean / klt_mean_scale;
+            }
+          }
+          else {
+            int gsht_tr_row_type;
+            bs.readUn(3, &gsht_tr_row_type);
+            param->shTrTypeRow_[i] = gsht_tr_row_type;
+          }
+        }
+        param->shTrTypeCol_.resize(16);
+        param->shTrTypeCol_.assign(16, 0);
+        for (int k = 0; k < 16; k++) {
+          if (ColTr[k] == 1) {
+            int gsht_tr_col_type;
+            bs.readUn(3, &gsht_tr_col_type);
+            param->shTrTypeCol_[k] = gsht_tr_col_type;
+          }
+        }
+      }
+    }
   } else {
     int numSHCoeff = 0;
-    for (int i = 0; i <= param->num_sh_coefficient_degrees_minus1; i++)
+    for (int i = 0; i <= param->attr_num_sh_coeff_degrees_minus1; i++)
       numSHCoeff += (2 * i + 1);  // 1 + 3 + 5 + 7 
     int numSHCoeffDegreesBits = numBits(numSHCoeff - 1);
 
@@ -411,126 +481,20 @@ parseAttrParamSHCoeffieicientLabel(Bs& bs, AttributeParameters* param)
     param->sh_coefficient_label = (SHCoefficientLabel)(shAcCoeffMinus1 + 1);
   }
 
-  if (param->sh_dc_coefficient_flag) {
-  bs.read(&param->gsdTransform2dPresentFlag_);
-  if (param->gsdTransform2dPresentFlag_) {
-    int ColTr[16];
-    for (int i = 0; i < 16; i++)
-        ColTr[i] = 1;
-    int gsht_tr_row_num_groups;
-    bs.readUn(4, &gsht_tr_row_num_groups);
-    param->shTrGrpRow_.resize(gsht_tr_row_num_groups);
-    param->shKltFlag_.resize(gsht_tr_row_num_groups);
-    param->shTrTypeRow_.resize(gsht_tr_row_num_groups);
-    param->shKltParams_.resize(gsht_tr_row_num_groups);
-    for (int i = 0; i < param->shTrGrpRow_.size(); i++) {
-      int gsht_row_tr_size_minus1;
-      bs.readUn(4, &gsht_row_tr_size_minus1);
-      param->shTrGrpRow_[i].resize(gsht_row_tr_size_minus1 + 1);
-      for (int j = 0; j < param->shTrGrpRow_[i].size(); j++) {
-        int gsht_tr_row_group_idx;
-        bs.readUn(4, &gsht_tr_row_group_idx);
-        param->shTrGrpRow_[i][j] = gsht_tr_row_group_idx;
-      }
-      int gsht_klt_flag;
-      bs.read(&gsht_klt_flag);
-      param->shKltFlag_[i] = gsht_klt_flag;
-      if (param->shKltFlag_[i]) {
-        for (int j = 0; j < param->shTrGrpRow_[i].size(); j++)
-            ColTr[param->shTrGrpRow_[i][j]] = 0;
-        param->shKltParams_[i].eigvec.resize(3 * param->shTrGrpRow_[i].size());
-        param->shKltParams_[i].eigvecFxp.resize(3 * param->shTrGrpRow_[i].size());
-        for (int m = 0; m < 3 * param->shTrGrpRow_[i].size(); m++) {
-          param->shKltParams_[i].eigvec[m].resize(3 * param->shTrGrpRow_[i].size());
-          param->shKltParams_[i].eigvecFxp[m].resize(3 * param->shTrGrpRow_[i].size());
-          for (int n = 0; n < 3 * (param->shTrGrpRow_[i].size()); n++) {
-            int gsht_klt;
-            const double klt_scale = (double)(1 << KLT_SCALE);
-            bs.readSn(32, &gsht_klt);
-            param->shKltParams_[i].eigvecFxp[m][n] = gsht_klt;
-            param->shKltParams_[i].eigvec[m][n] = (double)gsht_klt / klt_scale;
-          }
-        }
-        param->shKltParams_[i].sigma.resize(3 * param->shTrGrpRow_[i].size());
-        param->shKltParams_[i].mean.resize(3 * param->shTrGrpRow_[i].size());
-        param->shKltParams_[i].sigmaFxp.resize(3 * param->shTrGrpRow_[i].size());
-        param->shKltParams_[i].meanFxp.resize(3 * param->shTrGrpRow_[i].size());
-        for (int m = 0; m < 3 * param->shTrGrpRow_[i].size(); m++) {
-          bool isDcGroup = (param->shTrGrpRow_[i].size() == 1 && param->shTrGrpRow_[i][0] == 0);
-          const double klt_sigma_scale = (double)(1 << KLT_SIGMA_SCALE);
-          const double klt_mean_scale = (double)(1 << KLT_MEAN_SCALE);
-          if (!isDcGroup) {
-            int gsht_klt_std_dev;
-            bs.readSn(32, &gsht_klt_std_dev);
-            param->shKltParams_[i].sigmaFxp[m] = gsht_klt_std_dev;
-            param->shKltParams_[i].sigma[m] = (double)gsht_klt_std_dev / klt_sigma_scale;
-          } else {
-            param->shKltParams_[i].sigmaFxp[m] = 1 << KLT_SIGMA_SCALE;
-            param->shKltParams_[i].sigma[m] = 1.0;
-          }
-          int gsht_klt_mean;
-          bs.readSn(32, &gsht_klt_mean);
-          param->shKltParams_[i].meanFxp[m] = gsht_klt_mean;
-          param->shKltParams_[i].mean[m] = (double)gsht_klt_mean / klt_mean_scale;
-        }
-      }
-      else {
-        int gsht_tr_row_type;
-        bs.readUn(3, &gsht_tr_row_type);
-        param->shTrTypeRow_[i] = gsht_tr_row_type;
-      }
-    }
-    param->shTrTypeCol_.resize(16);
-    param->shTrTypeCol_.assign(16, 0);
-    for (int k = 0; k < 16; k++) {
-      if (ColTr[k] == 1) {
-        int gsht_tr_col_type;
-        bs.readUn(3, &gsht_tr_col_type);
-        param->shTrTypeCol_[k] = gsht_tr_col_type;
-      }
-    }
-  }
-  } 
+  bs.read(&param->attr_sh_non_uniform_quant_enabled);
+  if (param->attr_sh_non_uniform_quant_enabled) {
+    for (int c = 0; c <= desc.attr_num_dimensions_minus1; c++) {
+      bs.readUe(&param->shNumRegionsMinus1_[c]);
+      bs.readUn(4, &param->shNumBitsForTransitionPoint_[c]);
+      bs.readSn(32, &param->min_offset_fxp[c]);
 
-  bs.read(&param->enableShNonUniformQuantization_);
-  if (param->enableShNonUniformQuantization_) {
-    int numComponents = 3;
-    param->shNumRegionsMinus1_.resize(numComponents);
-    for (int i = 0; i < numComponents; i++) {
-      bs.readUe(&param->shNumRegionsMinus1_[i]);
-    }
-    param->shNumBitsForTransitionPoint_.resize(numComponents);
-    for (int i = 0; i < numComponents; i++){
-      bs.readUn(4, &param->shNumBitsForTransitionPoint_[i]);
-    }
+      param->shTransitionPoints_[c].resize(param->shNumRegionsMinus1_[c]);
+      for (int m = 0; m < param->shNumRegionsMinus1_[c]; m++)
+        bs.readUn(param->shNumBitsForTransitionPoint_[c], &param->shTransitionPoints_[c][m]);
 
-    int totalM = 0;
-    int totalSS = 0;
-    for (int i = 0; i < numComponents; i++) {
-      totalM += param->shNumRegionsMinus1_[i];
-      totalSS += param->shNumRegionsMinus1_[i] + 1;
-    }
-    param->shTransitionPoints_.resize(totalM);
-    param->shStepSizes_.resize(totalSS);
-    param->shStepSizesFxp_.resize(totalSS);
-
-    int tpOffset = 0;
-    int ssOffset = 0;
-    for (int i = 0; i < numComponents; i++) {
-      int min_offset;
-      bs.readSn(32, &min_offset);
-      param->min_offset_fxp[i] = min_offset;
-      int M = param->shNumRegionsMinus1_[i];
-      for (int m = 0; m < M; m++) {
-        bs.readUn(param->shNumBitsForTransitionPoint_[i], &param->shTransitionPoints_[tpOffset + m]);
-      }
-      tpOffset += M;
-      for (int m = 0; m <= M; m++) {
-        int ss;
-        bs.readSn(32, &ss);
-        param->shStepSizesFxp_[ssOffset + m] = ss;
-      }
-      ssOffset += M + 1;
+      param->shStepSizesFxp_[c].resize(param->shNumRegionsMinus1_[c] + 1);
+      for (int m = 0; m <= param->shNumRegionsMinus1_[c]; m++)
+        bs.readSn(32, &param->shStepSizesFxp_[c][m]);
     }
   }
 
@@ -570,34 +534,36 @@ void
 writeAttrParamScaleLabel(
   const AttributeDescription& attr, Bs& bs, const AttributeParameters& param)
 {
-  const auto& scaleParams = param.scalePowerParams;
-  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
-    bs.writeSn(32, scaleParams.powerFactorFxp[c]);
-    bs.writeSn(32, scaleParams.scalingFactorFxp[c]);
-  }
+  bs.write(param.attr_scale_non_uniform_quant_enabled);
+  if (param.attr_scale_non_uniform_quant_enabled == 1)
+  {
+    const auto& scaleParams = param.scalePowerParams;
+    for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
+      bs.writeSn(32, scaleParams.powerFactorFxp[c]);
+      bs.writeSn(32, scaleParams.scalingFactorFxp[c]);
 
-  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
-    int numRegionsMinus1 = scaleParams.numQuantRegionsMinus1[c];
-    int transitionBits = scaleParams.numBitsForTransitionPoint[c];
+      int numRegionsMinus1 = scaleParams.numQuantRegionsMinus1[c];
+      int transitionBits = scaleParams.numBitsForTransitionPoint[c];
 
-    bs.writeUe(numRegionsMinus1);
-    bs.writeUe(transitionBits);
+      bs.writeUe(numRegionsMinus1);
+      bs.writeUn(4,transitionBits);
 
-    const auto& transitionPoints =
-      scaleParams.quantRegionTransitionPoint[c];
-    for (int m = 0; m < numRegionsMinus1; m++) {
-      int transitionPoint = m < int(transitionPoints.size())
-        ? transitionPoints[m]
-        : 0;
-      bs.writeUn(transitionBits, transitionPoint);
-    }
+      const auto& transitionPoints =
+        scaleParams.quantRegionTransitionPoint[c];
+      for (int m = 0; m < numRegionsMinus1; m++) {
+        int transitionPoint = m < int(transitionPoints.size())
+          ? transitionPoints[m]
+          : 0;
+        bs.writeUn(transitionBits, transitionPoint);
+      }
 
-    const auto& stepSizes = scaleParams.regionStepSizeFxp[c];
-    for (int m = 0; m < numRegionsMinus1 + 1; m++) {
-      int64_t stepSize = m < int(stepSizes.size())
-        ? stepSizes[m]
-        : int64_t(1) << GS_SCALE_STEP_SIZE_SCALE;
-      bs.writeSn(32, stepSize);
+      const auto& stepSizes = scaleParams.regionStepSizeFxp[c];
+      for (int m = 0; m <= numRegionsMinus1; m++) {
+        int64_t stepSize = m < int(stepSizes.size())
+          ? stepSizes[m]
+          : int64_t(1) << GS_SCALE_STEP_SIZE_SCALE;
+        bs.writeSn(32, stepSize);
+      }
     }
   }
 
@@ -611,31 +577,29 @@ void
 parseAttrParamScaleLabel(
   const AttributeDescription& attr, Bs& bs, AttributeParameters* param)
 {
-  auto& scaleParams = param->scalePowerParams;
-  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
-    bs.readSn(32, &scaleParams.powerFactorFxp[c]);
-    bs.readSn(32, &scaleParams.scalingFactorFxp[c]);
-  }
+  bs.read(&param->attr_scale_non_uniform_quant_enabled);
+  if(param->attr_scale_non_uniform_quant_enabled == 1)
+  {
+    auto& scaleParams = param->scalePowerParams;
+    for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
+      bs.readSn(32, &scaleParams.powerFactorFxp[c]);
+      bs.readSn(32, &scaleParams.scalingFactorFxp[c]);
 
-  for (int c = 0; c <= attr.attr_num_dimensions_minus1; c++) {
-    int numRegionsMinus1;
-    int transitionBits;
-    bs.readUe(&numRegionsMinus1);
-    bs.readUe(&transitionBits);
+      auto& numRegionsMinus1 = scaleParams.numQuantRegionsMinus1[c];
+      auto& transitionBits = scaleParams.numBitsForTransitionPoint[c];
+      auto& transitionPoints = scaleParams.quantRegionTransitionPoint[c];
 
-    scaleParams.numQuantRegionsMinus1[c] = numRegionsMinus1;
-    scaleParams.numBitsForTransitionPoint[c] = transitionBits;
+      bs.readUe(&numRegionsMinus1);
+      bs.readUn(4, &transitionBits);
+      transitionPoints.resize(numRegionsMinus1);
+      for (int m = 0; m < numRegionsMinus1; m++)
+        bs.readUn(transitionBits, &transitionPoints[m]);
 
-    auto& transitionPoints =
-      scaleParams.quantRegionTransitionPoint[c];
-    transitionPoints.resize(numRegionsMinus1);
-    for (int m = 0; m < numRegionsMinus1; m++)
-      bs.readUn(transitionBits, &transitionPoints[m]);
-
-    auto& stepSizes = scaleParams.regionStepSizeFxp[c];
-    stepSizes.resize(numRegionsMinus1 + 1);
-    for (int m = 0; m < numRegionsMinus1 + 1; m++)
-      bs.readSn(32, &stepSizes[m]);
+      auto& stepSizes = scaleParams.regionStepSizeFxp[c];
+      stepSizes.resize(numRegionsMinus1 + 1);
+      for (int m = 0; m <= numRegionsMinus1; m++)
+        bs.readSn(32, &stepSizes[m]);
+    }
   }
 
   bs.byteAlign();
@@ -742,12 +706,12 @@ writeAttributeParameters(
   if (params.shCoefficientParameterPresent) {
     int attr_param_len = 0;
     auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
-    writeAttrParamSHCoefficientLabel(bsCounter, params);
+    writeAttrParamSHCoefficientLabel(attr, bsCounter, params);
 
     auto attr_param_type = AttributeParameterType::kSHCoefficientLabel;
     bs.writeUn(8, attr_param_type);
     bs.writeUn(8, attr_param_len);
-    writeAttrParamSHCoefficientLabel(bs, params);
+    writeAttrParamSHCoefficientLabel(attr, bs, params);
   }
 
   if (params.rotationParameterPresent) {
@@ -803,7 +767,7 @@ parseAttributeParameter(
     parseAttrParamDefaultValue(attr, bs, &params);
     break;
   case Type::kSHCoefficientLabel:
-    parseAttrParamSHCoeffieicientLabel(bs, &params);
+    parseAttrParamSHCoeffieicientLabel(attr, bs, &params);
     params.shCoefficientParameterPresent = true;
     break;
   case Type::kRotationLabel:
@@ -882,7 +846,6 @@ write(const SequenceParameterSet& sps)
   bs.writeUn(sps.global_scale_fp_bits(), sps.global_scale_rem());
 
   int num_attribute_sets = int(sps.attributeSets.size());
-  int numShCoefDegreesMinus1 = -1;
   bs.writeUe(num_attribute_sets);
   for (const auto& attr : sps.attributeSets) {
     bs.writeUe(attr.attr_num_dimensions_minus1);
@@ -899,27 +862,15 @@ write(const SequenceParameterSet& sps)
       writeOid(bs, label.oid);
 
     writeAttributeParameters(attr, bs, attr.params);
-
-    if (attr.params.shCoefficientParameterPresent)
-      numShCoefDegreesMinus1 = attr.params.num_sh_coefficient_degrees_minus1;
   }
 
   bs.writeUn(3, sps.geometry_axis_order);
   bs.write(sps.cabac_bypass_stream_enabled_flag);
   bs.write(sps.entropy_continuation_enabled_flag);
 
-  bool sps_extension_flag = true;
-  bool sps_gs_extension_flag = true;
+  bool sps_extension_flag = false;
   bs.write(sps_extension_flag);
-  if(sps_extension_flag)
-  {
-    bs.write(sps_gs_extension_flag);
-  }
 
-  if(sps_gs_extension_flag)
-  {
-    bs.write(sps.gs_sh_remap_enabled_flag);
-  }
   bs.byteAlign();
 
   return buf;
@@ -990,9 +941,8 @@ parseSps(const PayloadBuffer& buf)
   bs.readUe(&sps.global_scale_fp_bits());
   bs.readUn(sps.global_scale_fp_bits(), &sps.global_scale_rem());
 
-  int value = -1;
+  int attr_num_sh_coeff_degrees_minus1 = -1;
   int num_attribute_sets = int(bs.readUe());
-  int numShCoefDegreesMinus1 = -1;
   for (int i = 0; i < num_attribute_sets; i++) {
     sps.attributeSets.emplace_back();
     auto& attr = sps.attributeSets.back();
@@ -1016,19 +966,15 @@ parseSps(const PayloadBuffer& buf)
     bs.readUe(&num_attribute_parameters);
     bs.byteAlign();
 
-    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients
-			&& !attr.params.sh_dc_coefficient_flag)			// SH_ac
-      attr.params.num_sh_coefficient_degrees_minus1 = value;
+    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients)
+      attr.params.attr_num_sh_coeff_degrees_minus1 = attr_num_sh_coeff_degrees_minus1;
 
     for (int i = 0; i < num_attribute_parameters; i++)
       parseAttributeParameter(attr, bs, attr.params);
 
-    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients 
-			&& attr.params.sh_dc_coefficient_flag)  // SH_dc
-      value = attr.params.num_sh_coefficient_degrees_minus1;
-    
-    if (attr.params.shCoefficientParameterPresent)
-      numShCoefDegreesMinus1 = attr.params.num_sh_coefficient_degrees_minus1;
+    if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients  
+			&& attr.params.attr_sh_coeff_type == 1)  // SH_dc
+      attr_num_sh_coeff_degrees_minus1 = attr.params.attr_num_sh_coeff_degrees_minus1;
   }
 
   bs.readUn(3, &sps.geometry_axis_order);
@@ -1040,15 +986,6 @@ parseSps(const PayloadBuffer& buf)
     assert(sps.profile.slice_reordering_constraint_flag);
 
   bool sps_extension_flag = bs.read();
-  bool sps_gs_extension_flag = false;
-  if (sps_extension_flag)
-  {
-    sps_gs_extension_flag = bs.read();
-  }
-
-  if (sps_gs_extension_flag) {
-    bs.read(&sps.gs_sh_remap_enabled_flag);
-  }
 
   bs.byteAlign();
 

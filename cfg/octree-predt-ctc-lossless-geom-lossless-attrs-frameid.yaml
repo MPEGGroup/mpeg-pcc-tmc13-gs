@@ -150,7 +150,7 @@ categories:
        - shNqRangeMode: 0 
        - shAdaptiveTpOpt: 0
        - raht_adaptive_block_size_enabled: 0
-       - nonUniformQuantScale: 1
+       - attrScaleNonUniformQuantEnabled: 1
        - colourMatrix: 1
        - ""
        - "# SH coefficients : band 0 (DC) ----------"
