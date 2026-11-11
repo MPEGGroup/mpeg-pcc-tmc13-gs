@@ -609,6 +609,26 @@ parseAttrParamScaleLabel(
 
 template<typename Bs>
 void
+writeAttrParamOpacityDomainTransform(Bs& bs, const AttributeParameters& param)
+{
+  bs.write(param.opacityDomainTransformEnabled);
+  bs.byteAlign();
+}
+
+//----------------------------------------------------------------------------
+
+template<typename Bs>
+void
+parseAttrParamOpacityDomainTransform(Bs& bs, AttributeParameters* param)
+{
+  bs.read(&param->opacityDomainTransformEnabled);
+  bs.byteAlign();
+}
+
+//============================================================================
+
+template<typename Bs>
+void
 writeAttrParamOpaque(Bs& bs, const OpaqueAttributeParameter& param)
 {
   if (param.attr_param_type == AttributeParameterType::kItuT35) {
@@ -736,6 +756,17 @@ writeAttributeParameters(
     writeAttrParamScaleLabel(attr, bs, params);
   }
 
+  if (params.opacityParameterPresent) {
+    int attr_param_len = 0;
+    auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
+    writeAttrParamOpacityDomainTransform(bsCounter, params);
+
+    auto attr_param_type = AttributeParameterType::kOpacityDomainTransform;
+    bs.writeUn(8, attr_param_type);
+    bs.writeUn(8, attr_param_len);
+    writeAttrParamOpacityDomainTransform(bs, params);
+  }
+
   for (const auto& param : params.opaqueParameters) {
     int attr_param_len = 0;
     auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
@@ -777,6 +808,10 @@ parseAttributeParameter(
   case Type::kScaleLabel:
     parseAttrParamScaleLabel(attr, bs, &params);
     params.scaleParameterPresent = true;
+    break;
+
+  case Type::kOpacityDomainTransform:
+    parseAttrParamOpacityDomainTransform(bs, &params);
     break;
 
   case Type::kItuT35:

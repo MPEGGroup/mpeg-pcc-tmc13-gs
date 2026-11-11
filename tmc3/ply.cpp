@@ -65,6 +65,24 @@ int64_t adjust_frac_bits(int64_t val, int curr_frac_bits, int final_frac_bits)
 }
 
 //============================================================================
+// Clamp used on either side of the opacity logit<->linear transform to avoid
+// log(0)/log(inf) at the domain boundaries.
+static constexpr double kOpacityLogitEpsilon = 1e-6;
+
+static double opacityLogitToLinear(double logit)
+{
+  return 1.0 / (1.0 + std::exp(-logit));
+}
+
+static double opacityLinearToLogit(double linear)
+{
+  double clipped = PCCClip(linear, kOpacityLogitEpsilon, 1.0 - kOpacityLogitEpsilon);
+  return std::log(clipped / (1.0 - clipped));
+}
+
+std::vector<int> getAttrIndices(
+  const AttributeDescription& desc,
+  const std::vector<ply::PropertyInfo>& properties);
 static double computeShAcTop10Correlation(SHBufferView& shView, size_t pointCount) {
   int numSHCoeffs = shView.numBands();
   if (pointCount == 0 || numSHCoeffs <= 1) return 0.0;
@@ -917,7 +935,13 @@ ply::write(
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
 				const int32_t& opacity = cloud.getOpacity(i);
         double _opacity = double(opacity) * attr_scale / (1<<attr_frac_bits) + offset;
-				float buf = (float)_opacity/GS_PROPERTY_SCALE;
+        // If the encoder applied the logit->linear transform (convertOpacity),
+        // invert it here; otherwise the dequantized value is already in the
+        // raw (logit) domain expected by 3DGS PLY files.
+        double _opacityOut = desc.params.opacityDomainTransformEnabled
+          ? opacityLinearToLogit(_opacity)
+          : _opacity;
+				float buf = (float)_opacityOut/GS_PROPERTY_SCALE;
         clock->stop();
 				fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
         clock->start();
@@ -1412,6 +1436,77 @@ ply::convertRotationAndScale (
 }
 
 bool
+ply::convertOpacity (
+  int pointCount,
+  std::vector<double>& inputAttrBuf,
+  std::vector<AttributeDescription>& attrDescs,
+  std::vector<PropertyInfo>& properties,
+  bool convertLogitToLinear,
+  bool enableDeadZone)
+{
+  auto it = std::find_if(
+    attrDescs.begin(), attrDescs.end(),
+    [](const AttributeDescription& d) {
+      return d.attributeLabel == KnownAttributeLabel::kOpacity;
+    });
+  if (it == attrDescs.end())
+    return false;
+
+  std::vector<int> indices = getAttrIndices(*it, properties);
+  if (indices.empty() || indices[0] < 0)
+    return false;
+
+  double* buf = &inputAttrBuf[indices[0] * pointCount];
+
+  int numModifiedValues = 0;
+  if (convertLogitToLinear) {
+    for (int i = 0; i < pointCount; ++i)
+      buf[i] = opacityLogitToLinear(buf[i]);
+
+    std::vector<int> scaleIndices =
+      getAttrIndices(KnownAttributeLabel::kScale, properties);
+    const bool hasScale = scaleIndices.size() >= 3
+      && scaleIndices[0] >= 0 && scaleIndices[1] >= 0
+      && scaleIndices[2] >= 0;
+    const double* scale0 = hasScale
+      ? &inputAttrBuf[scaleIndices[0] * pointCount] : nullptr;
+    const double* scale1 = hasScale
+      ? &inputAttrBuf[scaleIndices[1] * pointCount] : nullptr;
+    const double* scale2 = hasScale
+      ? &inputAttrBuf[scaleIndices[2] * pointCount] : nullptr;
+
+    const int maxCode = (1 << it->bitdepth) - 1;
+    const double baseStep = maxCode > 0
+      ? (1.0) / maxCode : 0.0;
+    constexpr double kOpacitySplit = 0.5;
+    constexpr double kSmallGaussianScale = -8.0;
+
+    if (enableDeadZone && baseStep > 0.0) {
+      for (int i = 0; i < pointCount; ++i) {
+        const bool transparent = buf[i] < kOpacitySplit;
+        const bool small = hasScale && std::max(
+          scale0[i], std::max(scale1[i], scale2[i])) < kSmallGaussianScale;
+        const int deadZoneMultiplier = transparent
+          ? (small ? 128 : 32)
+          : (small ? 8 : 1);
+        if (buf[i] <= deadZoneMultiplier * baseStep) {
+          buf[i] = 0.0;
+          ++numModifiedValues;
+        }
+      }
+    }
+  }
+
+  Stats opacityStat;
+  for (int i = 0; i < pointCount; i++)
+    opacityStat.update(buf[i]);
+
+  it->params.opacityDomainTransformEnabled = convertLogitToLinear;
+
+  return true;
+}
+
+bool
 ply::analyzeMinMax (
   int pointCount,
   std::vector<double>& inputAttrBuf,
@@ -1548,7 +1643,9 @@ ply::read(
   std::vector<AttributeDescription>& attrDescs,
   bool convertColourspace,
   bool externalPrePost,
-  Stopwatch* clock)
+  Stopwatch* clock,
+  bool convertOpacityLogitToLinear,
+  bool enableOpacityDeadZone)
 {
   std::ifstream ifs(fileName,std::ifstream::in | std::ios::binary);
   if (!ifs.is_open()) {
@@ -1587,6 +1684,12 @@ ply::read(
 
     // Rotation and Scale conversion
     convertRotationAndScale(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
+
+    // Opacity: logit (raw 3DGS PLY domain) -> linear, prior to quantization.
+    // The inverse (linear -> logit) is applied in ply::write.
+    convertOpacity(
+      cloud.getPointCount(), inputAttrBuf, attrDescs, properties,
+      convertOpacityLogitToLinear, enableOpacityDeadZone);
 
     // Analyze Min-Max
     analyzeMinMax(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);

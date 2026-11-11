@@ -234,6 +234,7 @@ enum class AttributeParameterType : uint8_t
   kSHCoefficientLabel = 5,
   kRotationLabel = 6,
   kScaleLabel = 7,
+  kOpacityDomainTransform = 8,
   /* [3, 127] are reserved for future use */
   /* [128, 255] are specified according to the attribute label */
 };
@@ -401,6 +402,12 @@ struct AttributeParameters {
   bool attr_scale_non_uniform_quant_enabled = false;
   PCCScalePowerParameters scalePowerParams;
 
+  // Encoder-decided, content-adaptive: whether opacity was converted from
+  // its raw (logit) domain to linear [0,1] prior to quantization.  Absent
+  // (default false) means opacity is coded directly in its raw domain.
+  bool opacityParameterPresent = false;
+  bool opacityDomainTransformEnabled = false;
+
   // SH 2D Transform
   bool attr_sh_grp_transform_enabled = false;
   bool dataAdaptiveShTransformEnabled_ = true;
@@ -433,7 +440,7 @@ struct AttributeParameters {
     int count = opaqueParameters.size() + cicpParametersPresent
       + scalingParametersPresent + !attr_default_value.empty()
       + shCoefficientParameterPresent + rotationParameterPresent
-      + scaleParameterPresent;
+      + scaleParameterPresent + opacityParameterPresent;
     return count;
   }
 
@@ -448,6 +455,8 @@ struct AttributeParameters {
     rotationParameterPresent = false;
     scaleParameterPresent = false;
     scalePowerParams.clear();
+    opacityParameterPresent = false;
+    opacityDomainTransformEnabled = false;
 
     attr_sh_grp_transform_enabled = false;
     dataAdaptiveShTransformEnabled_ = false;
