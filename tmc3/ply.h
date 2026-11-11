@@ -285,11 +285,12 @@ namespace ply {
     std::string name;
     KnownAttributeLabel attrLabel;
     int channel;
+    int maxChannel;
     PlyType type;
     int attr_idx;
   };
 
-  bool stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx);
+  bool stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx, int& maxChannelIdx);
 
   bool parseHeader(std::ifstream& ifs, PCCPointSet3& cloud, Format& format, std::vector<PropertyInfo>& properties);
 

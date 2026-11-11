@@ -631,15 +631,15 @@ ply::write(
 	  fout << "property float f_dc_0" << std::endl;
 	  fout << "property float f_dc_1" << std::endl;
 	  fout << "property float f_dc_2" << std::endl;
-
-	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
+    const int numAcCoeffs = cloud.getNumSHCoeffs() - 1;
+	  for (int i = 0; i < numAcCoeffs; i++)
 		  fout << "property float f_rest_" << i << std::endl;
 
-	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
-		  fout << "property float f_rest_" << 15 + i << std::endl;
+	  for (int i = 0; i < numAcCoeffs; i++)
+		  fout << "property float f_rest_" << numAcCoeffs + i << std::endl;
 
-	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
-		  fout << "property float f_rest_" << 30 + i << std::endl;
+	  for (int i = 0; i < numAcCoeffs; i++)
+		  fout << "property float f_rest_" << 2 * numAcCoeffs + i << std::endl;
   }
   if (cloud.hasOpacities()) {
 	  fout << "property float opacity" << std::endl;
@@ -866,52 +866,43 @@ ply::write(
 						}
 					}
 				} else {
-					double shdc[3];
-          auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
-          auto offset = desc.params.attr_offset;
-          auto attr_frac_bits = desc.params.attr_frac_bits;
-          auto attr_scale     = desc.params.attr_scale_minus1 + 1;
-          for (int k = 0; k < 3; k++) {
-            int32_t attr = int32_t(cloud.getSHCoefficient(0, i)[k]);
-            double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
-            shdc[k]= buf;
+          const int numShCoeffs = cloud.getNumSHCoeffs();
+          double sh_buffer[numShCoeffs][3];
+          for (int i = 0; i < numShCoeffs; i++)
+            for (int j = 0; j < 3; j++)
+              sh_buffer[i][j] = 0.0;
+              
+          auto& shAttrIds = cloud.getAttrIds(KnownAttributeLabel::kSH_coefficients);
+          // Post-processing
+          for (auto& attrId : shAttrIds)
+          {
+            auto& desc = attrDescs[attrId];
+            int offset = desc.params.attr_offset;
+            int attr_frac_bits = desc.params.attr_frac_bits;
+            int attr_scale = desc.params.attr_scale_minus1 + 1;
+            int numCh = desc.attr_num_dimensions_minus1 + 1;
+
+            int shCoeffIdx = int(desc.params.sh_coefficient_label);
+            const Vec3<attr_t>& attr = cloud.getSHCoefficient(shCoeffIdx, i);
+            for (int c = 0 ; c < numCh ; c++ ) {
+              sh_buffer[shCoeffIdx][c] = double(attr[c]) * attr_scale / (1ll<<attr_frac_bits) + offset;
+            }
+            if (!externalPrePost && convertColourspace){
+              convertToRgb(
+                desc.params.cicp_matrix_coefficients_idx, sh_buffer[shCoeffIdx]);
+            }
           }
 
-          if (!externalPrePost && convertColourspace){
-            convertToRgb(
-              desc.params.cicp_matrix_coefficients_idx, shdc);
-          }
-
-          Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
+          // write SHDC
+          Vec3<float> val32b_dc{ float(sh_buffer[0][0])/GS_PROPERTY_SCALE, float(sh_buffer[0][1])/GS_PROPERTY_SCALE, float(sh_buffer[0][2])/GS_PROPERTY_SCALE };
           clock->stop();
           fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
           clock->start();
 
-					// SH AC
-          double shac[15][3];
+          // write SHAC 
           for (int k = 0; k < 3; k++) {
-            for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
-            desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
-            offset = desc.params.attr_offset;
-            attr_frac_bits = desc.params.attr_frac_bits;
-            attr_scale     = desc.params.attr_scale_minus1 + 1;
-            int32_t attr = int32_t(cloud.getSHCoefficient(m, i)[k]);
-            double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
-            shac[m-1][k] = buf;
-            }
-          }
-          
-          if (!externalPrePost && convertColourspace) {
-            for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
-            {
-              convertToRgb(
-                desc.params.cicp_matrix_coefficients_idx, shac[m]);
-            }
-          }
-
-          for (int k = 0; k < 3; k++) {
-						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
-							float val32b_ac = float(shac[m-1][k])/GS_PROPERTY_SCALE;
+						for (int m = 1; m < numShCoeffs; m++) {
+							float val32b_ac = float(sh_buffer[m][k])/GS_PROPERTY_SCALE;
               clock->stop();
 							fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
               clock->start();
@@ -1010,8 +1001,9 @@ ply::write(
 
 //============================================================================
 
-bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx) 
+bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx, int& maxChannelIdx) 
 {
+  maxChannelIdx = 3;
   if (propName == "x")
     channelIdx = 0;
   else if (propName == "y")
@@ -1033,22 +1025,27 @@ bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAtt
   else if (propName == "reflectance") {
     kAttrLabel = KnownAttributeLabel::kReflectance;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "opacity") {
     kAttrLabel = KnownAttributeLabel::kOpacity;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "frame_index" || propName == "frameindex") {
     kAttrLabel = KnownAttributeLabel::kFrameIndex;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "frame_number") {
     kAttrLabel = KnownAttributeLabel::kFrameNumber;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "material_id") {
     kAttrLabel = KnownAttributeLabel::kMaterialId;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "nx") {
     kAttrLabel = KnownAttributeLabel::kNormal;
@@ -1070,21 +1067,17 @@ bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAtt
     kAttrLabel = KnownAttributeLabel::kRotation;
     channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
   }
-  else if (propName.find("f_dc_") == 0) {
-    kAttrLabel = KnownAttributeLabel::kSH_coefficients;
-    channelIdx = 16 * std::stoi(propName.substr(propName.find_last_of('_') + 1));
-  } else if (propName.find("f_rest_") == 0) {
+  else if (propName.rfind("f_dc_", 0) == 0) {
     kAttrLabel = KnownAttributeLabel::kSH_coefficients;
     channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
-    channelIdx = 16 * (channelIdx / 15)  + (channelIdx % 15) + 1;
-    if (channelIdx > 47) {
-      std::cerr << "Error: can not support (" << propName << ")" << std::endl;
-      return false;
-    }
+  } else if (propName.rfind("f_rest_", 0) == 0) {
+    kAttrLabel = KnownAttributeLabel::kSH_coefficients; 
+    channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1)) + 3;
   } 
   else {
     kAttrLabel = KnownAttributeLabel::kOid;
     channelIdx = 0;
+    maxChannelIdx = 1;
   }
 
   return true;
@@ -1120,18 +1113,61 @@ bool ply::parseHeader(
       iss >> typeStr >> nameStr;
       
       KnownAttributeLabel attrLabel;
-      int channel;
-      if (!stringToAttributeLabelAndChannel(nameStr, attrLabel, channel)) {
+      int channel, maxChannel;
+      if (!stringToAttributeLabelAndChannel(nameStr, attrLabel, channel, maxChannel)) {
         return false;
       }
-      properties.push_back({nameStr, attrLabel, channel, stringToPlyType(typeStr)});
+      properties.push_back({nameStr, attrLabel, channel, maxChannel, stringToPlyType(typeStr)});
     }
     else if (token == "end_header") {
       cloud.resize(vertexCount);
-      return vertexCount > 0 && !properties.empty();
+      break;
+      
     }
   }
-  return false;
+
+  // convert SH index from exteral to internal
+  if (cloud.hasSHCoefficients())
+  {
+    int maxShIdx = -1;
+    for (const auto& p : properties) {
+      if (p.attrLabel == KnownAttributeLabel::kSH_coefficients)
+        maxShIdx = std::max(maxShIdx, p.channel);
+    }
+
+    if (maxShIdx >= 0) {
+      int numBands = 1;
+      while (3 * numBands * numBands - 1 < maxShIdx)
+        ++numBands;
+
+      const int maxNumShCoeffs = numBands * numBands;
+      const int numAcCoeffs = maxNumShCoeffs - 1;
+
+      for (auto& p : properties) {
+        if (p.attrLabel != KnownAttributeLabel::kSH_coefficients)
+          continue;
+
+        p.maxChannel = maxNumShCoeffs;
+
+        if (p.channel < 3) {
+          p.channel *= maxNumShCoeffs;
+        } else {
+          const int acIdx = p.channel - 3;
+          p.channel =
+            (acIdx / numAcCoeffs) * maxNumShCoeffs +
+            (acIdx % numAcCoeffs) + 1;
+        }
+      }
+
+      if (maxNumShCoeffs < cloud.getNumSHCoeffs()) {
+        std::cerr << "Error: SH Coefficients are not configured." << std::endl;
+        return false;
+      }
+    }
+  }
+
+  cloud.resize(vertexCount);
+  return vertexCount > 0 && !properties.empty();
 }
 
 bool ply::isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDescription>& attrDescs) {
@@ -1140,7 +1176,7 @@ bool ply::isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDe
     {
       if (desc.attributeLabel.known_attribute_label == KnownAttributeLabel::kSH_coefficients)
       {
-        if (int(desc.params.sh_coefficient_label) == (prop.channel % 16))
+        if (int(desc.params.sh_coefficient_label) == (prop.channel % prop.maxChannel))
           return true;
       } else {
         return true;
@@ -1202,8 +1238,8 @@ std::vector<int> getAttrIndices(const AttributeDescription& desc, const std::vec
     {
       if (prop.attr_idx < 0) continue;
 
-      if (int(desc.params.sh_coefficient_label) == (prop.channel % 16)) {
-        target_idx = prop.channel / 16;
+      if (int(desc.params.sh_coefficient_label) == (prop.channel % prop.maxChannel)) {
+        target_idx = prop.channel / prop.maxChannel;
       }
     } 
     else if (desc.attributeLabel == KnownAttributeLabel::kRotation)

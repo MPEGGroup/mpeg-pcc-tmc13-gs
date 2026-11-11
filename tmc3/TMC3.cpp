@@ -2090,8 +2090,9 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   std::string srcName{expandNum(params->uncompressedDataPath, frameNum)};
   PCCPointSet3 pointCloud;
 
-	for (auto& desc: params->encoder.sps.attributeSets) {
-    pointCloud.activateAttribute(desc);
+	for (int attrId = 0 ; attrId < params->encoder.sps.attributeSets.size() ; attrId++ ) {
+    auto& desc = params->encoder.sps.attributeSets[attrId];
+    pointCloud.activateAttribute(desc, attrId);
 	}
 
   if (

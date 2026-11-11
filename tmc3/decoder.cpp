@@ -358,8 +358,9 @@ PCCTMC3Decoder3::decodeGeometryBrick(const PayloadBuffer& buf)
   std::cout << "positions bitstream size " << buf.size() << " B\n";
 	
 	_currentPointCloud.clear();
-  for (auto& attrSet : _sps->attributeSets) {
-    _currentPointCloud.activateAttribute(attrSet);
+  for (int attrId = 0 ; attrId < _sps->attributeSets.size() ; attrId++ ) {
+    auto& attrSet = _sps->attributeSets[attrId];
+    _currentPointCloud.activateAttribute(attrSet, attrId);
 	}
 
   pcc::chrono::Stopwatch<pcc::chrono::utime_inc_children_clock> clock_user;

@@ -277,6 +277,15 @@ public:
     swap(withScalarRotations, other.withScalarRotations);
     swap(withRotations, other.withRotations);
     swap(withSHCoefficients, other.withSHCoefficients);
+
+    swap(colors_attr_indices, other.colors_attr_indices);
+    swap(reflectances_attr_indices, other.reflectances_attr_indices);
+    swap(frameidx_attr_indices, other.frameidx_attr_indices);
+    swap(opacities_attr_indices, other.opacities_attr_indices);
+    swap(scales_attr_indices, other.scales_attr_indices);
+    swap(rotations_attr_indices, other.rotations_attr_indices);
+    swap(sh_coefficients_attr_indices, other.sh_coefficients_attr_indices);
+    swap(others_attr_indices, other.others_attr_indices);
   }
 
   PointType operator[](const size_t index) const
@@ -687,6 +696,15 @@ public:
     for (int i = 0; i < sh_coefficients.size(); i++)
       sh_coefficients[i].clear();
     sh_coefficients.clear();
+
+    colors_attr_indices.clear();
+    reflectances_attr_indices.clear();
+    frameidx_attr_indices.clear();
+    opacities_attr_indices.clear();
+    scales_attr_indices.clear();
+    rotations_attr_indices.clear();
+    sh_coefficients_attr_indices.clear();
+    others_attr_indices.clear();
   }
 
   size_t removeDuplicatePointInQuantizedPoint(int minGeomNodeSizeLog2)
@@ -709,6 +727,7 @@ public:
   void append(const PCCPointSet3& src)
   {
     if (!getPointCount()) {
+      copyAttrIds(src);
       if (src.hasSHCoefficients())
         setNumSHCoeffs(src.getNumSHCoeffs());
       addRemoveAttributes(
@@ -851,26 +870,31 @@ public:
     return bbox;
   }
 
-  void activateAttribute(const AttributeDescription& desc) {
+  void activateAttribute(const AttributeDescription& desc, int attrId) {
     switch (desc.attributeLabel.known_attribute_label) {
       case KnownAttributeLabel::kColour:
         withColors = true;
+        colors_attr_indices.push_back(attrId);
         return; 
           
       case KnownAttributeLabel::kReflectance:
         withReflectances = true;
+        reflectances_attr_indices.push_back(attrId);
         return;
       
       case KnownAttributeLabel::kFrameIndex:
         withFrameIndex = true;
+        frameidx_attr_indices.push_back(attrId);
         return;
 
       case KnownAttributeLabel::kOpacity:
         withOpacities = true;
+        opacities_attr_indices.push_back(attrId);
         return;
           
       case KnownAttributeLabel::kScale:
         withScales = true;
+        scales_attr_indices.push_back(attrId);
         return;
           
       case KnownAttributeLabel::kRotation:
@@ -879,6 +903,7 @@ public:
         } else {
           withRotations = true;
         }
+        rotations_attr_indices.push_back(attrId);
         return;
           
       case KnownAttributeLabel::kSH_coefficients:
@@ -886,13 +911,55 @@ public:
           setNumSHCoeffsWithNumBandsMinus1(desc.params.attr_num_sh_coeff_degrees_minus1);
         }
         withSHCoefficients = true;
+        sh_coefficients_attr_indices.push_back(attrId);
         return;
           
       default:
+        others_attr_indices.push_back(attrId);
         break;
     }
   }
 
+  void copyAttrIds(const PCCPointSet3& others) {
+    colors_attr_indices = others.colors_attr_indices;
+    reflectances_attr_indices = others.reflectances_attr_indices;
+    frameidx_attr_indices = others.frameidx_attr_indices;
+    opacities_attr_indices = others.opacities_attr_indices;
+    scales_attr_indices = others.scales_attr_indices;
+    rotations_attr_indices = others.rotations_attr_indices;
+    sh_coefficients_attr_indices = others.sh_coefficients_attr_indices;
+    others_attr_indices = others.others_attr_indices;
+  }
+
+  const std::vector<int>& getAttrIds(KnownAttributeLabel labal) const {
+    switch (labal) {
+      case KnownAttributeLabel::kColour:
+        return colors_attr_indices; 
+          
+      case KnownAttributeLabel::kReflectance:
+        return reflectances_attr_indices;
+      
+      case KnownAttributeLabel::kFrameIndex:
+        return frameidx_attr_indices;
+
+      case KnownAttributeLabel::kOpacity:
+        return opacities_attr_indices;
+          
+      case KnownAttributeLabel::kScale:
+        return scales_attr_indices;
+          
+      case KnownAttributeLabel::kRotation:
+        return rotations_attr_indices;
+          
+      case KnownAttributeLabel::kSH_coefficients:
+        return sh_coefficients_attr_indices;
+          
+      default:
+        return others_attr_indices;
+    }
+  }
+  
+  
   std::vector<Vec3<attr_t>>& getAttrVec(AttributeDescription& desc) {
     if (desc.attributeLabel == KnownAttributeLabel::kColour)
       return getColor();
@@ -944,6 +1011,15 @@ private:
   bool withScalarRotations;
   bool withRotations;
   bool withSHCoefficients;
+
+  std::vector<int> colors_attr_indices;
+  std::vector<int> reflectances_attr_indices;
+  std::vector<int> frameidx_attr_indices;
+  std::vector<int> opacities_attr_indices;
+  std::vector<int> scales_attr_indices;
+  std::vector<int> rotations_attr_indices;
+  std::vector<int> sh_coefficients_attr_indices;
+  std::vector<int> others_attr_indices;
 };
 
 //===========================================================================

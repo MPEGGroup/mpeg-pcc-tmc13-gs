@@ -1108,6 +1108,7 @@ PCCPointSet3
 getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 {
   PCCPointSet3 dst;
+  dst.copyAttrIds(src);
   if (src.hasSHCoefficients())
 	  dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(
@@ -1180,6 +1181,7 @@ getPartition(
   }
 
   PCCPointSet3 dst;
+  dst.copyAttrIds(src);
   if (src.hasSHCoefficients())
     dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
