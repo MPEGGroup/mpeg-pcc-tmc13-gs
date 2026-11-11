@@ -180,6 +180,14 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
     }
   }
 
+  // NQ skip: signal non-retained channels with M=0.
+  std::vector<bool> shDrRetainedMask;
+  const bool doNqSkip = attrDescs[0].params.enableShDimensionReduction_
+    && attrDescs[0].params.enableShDimensionReductionNqSkipNonretained_
+    && !attrDescs[0].params.shNumRetainComponents_.empty();
+  if (doNqSkip)
+    buildShDimRedRetainedMask(attrDescs[0].params, shDrRetainedMask);
+
   for (size_t l = 0; l < std::min(numSHCoeffs, 16); ++l) {
     auto& params = attrDescs[l].params;
 
@@ -190,6 +198,22 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
       params.shTransitionPoints_[c].clear();
       params.shStepSizes_[c].clear();
       params.shStepSizesFxp_[c].clear();
+      
+      if (doNqSkip && !shDrRetainedMask[l * 3 + c]) {
+        params.shNumRegionsMinus1_[c] = 0;
+        params.min_offset_fxp[c] = 0; 
+        double minLim = params.attr_offset;
+        double maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
+        double d_code = std::round((maxLim - minLim) * (1 << bitDepth) /
+                                   (double)(1ull << params.attr_frac_bits));
+        double s_uniform = d_code / (double)(max_quant_val + 1);
+        params.shStepSizes_[c].push_back(s_uniform);
+        int64_t s_uniformFxp = (int64_t)round(s_uniform * pow(2.0, SS_SCALE));
+        if (s_uniformFxp == 0) s_uniformFxp = 1;
+        params.shStepSizesFxp_[c].push_back(s_uniformFxp);
+        continue; 
+      }
+
       std::vector<double> values;
 
       values.reserve(pointCount);
@@ -539,23 +563,26 @@ AttributeDescription& getAttributeDescription(
 }
 
 inline void dequantShChunk(
-  size_t chunkStart, 
-  size_t chunkCount, 
-  std::vector<GSPoint>& gsChunk, 
-  AttributeParameters& param_sh, 
-  const std::vector<AttributeDescription>& attrDescs, 
-  size_t numSHCoeffs, 
+  size_t chunkStart, size_t chunkCount, std::vector<GSPoint>& gsChunk,
+  AttributeParameters& param_sh,
+  const std::vector<AttributeDescription>& attrDescs, int numSHCoeffs,
   bool useShNQ,
-  std::array<ShQuantRegion, 48>& shRegions,
-  const PCCPointSet3& cloud,
-  bool convertColourspace
-  ) {
+  std::array<ShQuantRegion, AttributeParameters::kShDrNumSlots>& shRegions,
+  const PCCPointSet3& cloud, bool convertColourspace)
+{
   for (size_t i = 0; i < chunkCount; ++i) {
     size_t pt = chunkStart + i;
     GSPoint& g = gsChunk[i];
     for (int m = 0; m < numSHCoeffs; m++) {
       g.fxpScale[m] = SH_SCALE;
       auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
+      if (param_sh.enableShDimensionReduction_
+          && !desc.params.attr_default_value.empty()) {
+        g.shFxp[m][0] = 0;
+        g.shFxp[m][1] = 0;
+        g.shFxp[m][2] = 0;
+        continue;
+      }
       auto offset = desc.params.attr_offset;
       auto attr_frac_bits = desc.params.attr_frac_bits;
       auto attr_scale = desc.params.attr_scale_minus1 + 1;
@@ -581,7 +608,7 @@ inline void dequantShChunk(
     }
   }
   sphericalHarmonicsInvTransform(true, gsChunk, chunkCount, param_sh, convertColourspace);
-};
+}
 
 bool
 ply::write(
@@ -739,7 +766,7 @@ ply::write(
     bool isRealRotCoded = false;
     bool isEulerRot = false;
     double rotScaleValue = 1.0;
-    for (auto desc: attrDescs) {
+    for (const auto& desc: attrDescs) {
       if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
         if (desc.attr_num_dimensions_minus1 == 1) {
           isRealRotCoded = true;
@@ -760,7 +787,7 @@ ply::write(
     int numSHCoeffs = 0;
     std::vector<GSPoint> gsChunk;
     AttributeParameters param_sh{};
-    std::array<ShQuantRegion, 48> shRegions;
+    std::array<ShQuantRegion, AttributeParameters::kShDrNumSlots> shRegions;
     if (cloud.hasSHCoefficients()) {
       const AttributeDescription& desc_sh = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
       param_sh = desc_sh.params;
@@ -802,6 +829,7 @@ ply::write(
         gsChunk.resize(kShChunkSize);
       }
     }
+
     constexpr size_t kScalePowerWriteChunkSize = 65536;
     const AttributeDescription* scaleDesc = nullptr;
     std::vector<Vec3<float>> scalePowerWriteValues;
@@ -815,7 +843,9 @@ ply::write(
     for (size_t i = 0; i < pointCount; ++i) {
       if ((useGsdTransform2d || useShNQ) && (i % kShChunkSize == 0)) {
         size_t chunkCount = std::min(kShChunkSize, pointCount - i);
-        dequantShChunk(i, chunkCount, gsChunk, param_sh, attrDescs, numSHCoeffs, useShNQ, shRegions, cloud, convertColourspace);
+        dequantShChunk(i, chunkCount, gsChunk, param_sh, attrDescs,
+                       numSHCoeffs, useShNQ, shRegions, cloud,
+                       convertColourspace);
       }
 
       if (scaleDesc && scaleDesc->params.scaleParameterPresent
@@ -1732,6 +1762,9 @@ ply::read(
 
       initializeShTransformParams(shParams);
       sphericalHarmonicsTransform(witSHCoefficients, shView, pointCount, shParams, convertColourspace);
+      computeShDimensionReductionParams(shParams);
+      shParams.shAcRangeShared_ = useSharedAc;
+      applyShDimensionReduction(shView, pointCount, shParams);
 
       if (useSharedAc) {
         // Shared AC + lround: one DC range (band 0) + one AC range (bands 1-15)
@@ -1797,7 +1830,7 @@ ply::read(
     if (enableShNonUniformQuantization) {
       extractSHQuantRegions(witSHCoefficients, shView, pointCount, attrDescs);
 
-      std::array<ShQuantRegion, 48> shRegions;
+      std::array<ShQuantRegion, AttributeParameters::kShDrNumSlots> shRegions;
       const uint32_t bitDepth_sh = attrDescs[0].bitdepth;
       const uint32_t max_index_sh = 1u << bitDepth_sh;
 
@@ -1939,7 +1972,7 @@ ply::read(
       }
     }
   }
-  
+
   clock->stop();
 
   return true;

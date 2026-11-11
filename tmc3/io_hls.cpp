@@ -307,6 +307,7 @@ writeAttrParamSHCoefficientLabel
         for (int i = 0; i < 16; i++)
           ColTr[i] = 1;
         bs.writeUn(4, param.shTrGrpRow_.size());
+        bs.write(param.enableShDimensionReduction_);
         int ki = 0;  // Counter for shKltParams_ index (only incremented when KLT is used)
         for (int i = 0; i < param.shTrGrpRow_.size(); i++) {
           bs.writeUn(4, param.shTrGrpRow_[i].size() - 1);
@@ -317,14 +318,27 @@ writeAttrParamSHCoefficientLabel
           if (param.shKltFlag_[i]) {
             for (int j = 0; j < param.shTrGrpRow_[i].size(); j++)
               ColTr[param.shTrGrpRow_[i][j]] = 0;
-            for (int m = 0; m < 3 * (param.shTrGrpRow_[i].size()); m++) {
-              for (int n = 0; n < 3 * (param.shTrGrpRow_[i].size()); n++) {
+
+            const int fullSize = 3 * (int)param.shTrGrpRow_[i].size();
+            int kltSize = fullSize;
+            if (param.enableShDimensionReduction_) {
+              int retain = (ki < (int)param.shNumRetainComponents_.size())
+                ? param.shNumRetainComponents_[ki] : fullSize;
+              if (retain < 1) retain = 1;
+              if (retain > fullSize) retain = fullSize;
+              bs.writeUn(numBits(fullSize - 1), retain - 1);
+              kltSize = retain;
+            }
+
+            for (int m = 0; m < kltSize; m++) {
+              for (int n = 0; n < fullSize; n++) {
                 const double klt_scale = (double)(1 << KLT_SCALE);
                 int64_t gsht_klt = (int64_t)round(param.shKltParams_[ki].eigvec[m][n] * klt_scale);
                 bs.writeSn(32, gsht_klt);
               }
             }
-            for (int m = 0; m < 3 * param.shTrGrpRow_[i].size(); m++) {
+
+            for (int m = 0; m < fullSize; m++) {
               bool isDcGroup = (param.shTrGrpRow_[i].size() == 1 && param.shTrGrpRow_[i][0] == 0);
               if (!isDcGroup) {
                 double klt_sigma_scale = (double)(1 << KLT_SIGMA_SCALE);
@@ -397,10 +411,12 @@ parseAttrParamSHCoeffieicientLabel
 
         int gsht_tr_row_num_groups;
         bs.readUn(4, &gsht_tr_row_num_groups);
+        bs.read(&param->enableShDimensionReduction_);
         param->shTrGrpRow_.resize(gsht_tr_row_num_groups);
         param->shKltFlag_.resize(gsht_tr_row_num_groups);
         param->shTrTypeRow_.resize(gsht_tr_row_num_groups);
         param->shKltParams_.resize(gsht_tr_row_num_groups);
+        param->shNumRetainComponents_.assign(gsht_tr_row_num_groups, 0);
         for (int i = 0; i < param->shTrGrpRow_.size(); i++) {
           int gsht_row_tr_size_minus1;
           bs.readUn(4, &gsht_row_tr_size_minus1);
@@ -413,15 +429,25 @@ parseAttrParamSHCoeffieicientLabel
           int gsht_klt_flag;
           bs.read(&gsht_klt_flag);
           param->shKltFlag_[i] = gsht_klt_flag;
+          const int fullSize = 3 * (int)param->shTrGrpRow_[i].size();
           if (param->shKltFlag_[i]) {
             for (int j = 0; j < param->shTrGrpRow_[i].size(); j++)
                 ColTr[param->shTrGrpRow_[i][j]] = 0;
-            param->shKltParams_[i].eigvec.resize(3 * param->shTrGrpRow_[i].size());
-            param->shKltParams_[i].eigvecFxp.resize(3 * param->shTrGrpRow_[i].size());
-            for (int m = 0; m < 3 * param->shTrGrpRow_[i].size(); m++) {
-              param->shKltParams_[i].eigvec[m].resize(3 * param->shTrGrpRow_[i].size());
-              param->shKltParams_[i].eigvecFxp[m].resize(3 * param->shTrGrpRow_[i].size());
-              for (int n = 0; n < 3 * (param->shTrGrpRow_[i].size()); n++) {
+            int kltSize = fullSize;
+            if (param->enableShDimensionReduction_) {
+              int gsht_num_retained_components_minus1 = 0;
+              bs.readUn(numBits(fullSize - 1), &gsht_num_retained_components_minus1);
+              kltSize = gsht_num_retained_components_minus1 + 1;
+              if (kltSize < 1) kltSize = 1;
+              if (kltSize > fullSize) kltSize = fullSize;
+            }
+            param->shNumRetainComponents_[i] = kltSize;
+            // Zero-pad to fullSize, so non-retained coded coefficients contribute
+            // exactly 0 to the inverse KLT (no new logic).
+            param->shKltParams_[i].eigvec.assign(fullSize, std::vector<double>(fullSize, 0.0));
+            param->shKltParams_[i].eigvecFxp.assign(fullSize, std::vector<int64_t>(fullSize, 0));
+            for (int m = 0; m < kltSize; m++) {
+              for (int n = 0; n < fullSize; n++) {
                 int gsht_klt;
                 const double klt_scale = (double)(1 << KLT_SCALE);
                 bs.readSn(32, &gsht_klt);
@@ -429,11 +455,11 @@ parseAttrParamSHCoeffieicientLabel
                 param->shKltParams_[i].eigvec[m][n] = (double)gsht_klt / klt_scale;
               }
             }
-            param->shKltParams_[i].sigma.resize(3 * param->shTrGrpRow_[i].size());
-            param->shKltParams_[i].mean.resize(3 * param->shTrGrpRow_[i].size());
-            param->shKltParams_[i].sigmaFxp.resize(3 * param->shTrGrpRow_[i].size());
-            param->shKltParams_[i].meanFxp.resize(3 * param->shTrGrpRow_[i].size());
-            for (int m = 0; m < 3 * param->shTrGrpRow_[i].size(); m++) {
+            param->shKltParams_[i].sigma.resize(fullSize);
+            param->shKltParams_[i].mean.resize(fullSize);
+            param->shKltParams_[i].sigmaFxp.resize(fullSize);
+            param->shKltParams_[i].meanFxp.resize(fullSize);
+            for (int m = 0; m < fullSize; m++) {
               bool isDcGroup = (param->shTrGrpRow_[i].size() == 1 && param->shTrGrpRow_[i][0] == 0);
               const double klt_sigma_scale = (double)(1 << KLT_SIGMA_SCALE);
               const double klt_mean_scale = (double)(1 << KLT_MEAN_SCALE);
@@ -456,6 +482,7 @@ parseAttrParamSHCoeffieicientLabel
             int gsht_tr_row_type;
             bs.readUn(3, &gsht_tr_row_type);
             param->shTrTypeRow_[i] = gsht_tr_row_type;
+            param->shNumRetainComponents_[i] = fullSize;   // non-KLT: all retained
           }
         }
         param->shTrTypeCol_.resize(16);

@@ -145,6 +145,18 @@ bool sphericalHarmonicsTransform(bool withSHCoefficients, SHBufferView& shView,
 bool sphericalHarmonicsInvTransform(bool withSHCoefficients, SHBufferView& shView,
     size_t pointCount, AttributeParameters& params, bool convertColourspace);
 
+// Compute per-KLT-group retain counts (variance threshold).
+void computeShDimensionReductionParams(AttributeParameters& params);
+
+// Zero non-retained components in shView. 
+void applyShDimensionReduction(SHBufferView& shView, size_t pointCount,
+    const AttributeParameters& params);
+
+// Build the retained-component mask (kShDrNumSlots) from the DR params; used
+// by NQ skip to zero the M of non-retained components. 
+void buildShDimRedRetainedMask(const AttributeParameters& params,
+    std::vector<bool>& mask);
+
 // Original GSPoint-based interface (deprecated, kept for backward compatibility)
 bool extractSHQuantRegions(bool withSHCoefficients, const std::vector<GSPoint>& gsBuf,
     size_t pointCount, std::vector<AttributeDescription>& attrDescs,

@@ -38,7 +38,8 @@
 #include "PCCMisc.h"
 #include "PCCPointSet.h"
 #include "PCCSymEigen.h"
-
+#include <array>
+#include <map>
 #include <numeric>
 #include <string>
 #include <unordered_map>
@@ -142,6 +143,9 @@ bool computeShKlt(const std::vector<GSPoint>& gsBuf, size_t pointCount,
   for ( int i = 0; i < n; ++i ) { eigPairs.push_back( { w[i], i } ); }
   std::sort( eigPairs.rbegin(), eigPairs.rend() );
 
+  klt.eigvals.resize(n);
+  for ( int i = 0; i < n; ++i ) { klt.eigvals[i] = eigPairs[i].first; }
+
   // Jacobi returns eigenvectors in columns of V (column-major).
   for ( int j = 0; j < n; ++j ) {
     int srcIdx = eigPairs[j].second;
@@ -234,13 +238,15 @@ bool sphericalHarmonicsInvTransform2D(bool witSHCoefficients, std::vector<GSPoin
         }
       } else {
         std::vector<int64_t> Y(fullSize);
+        const int kltRetain = (size_t)i < params.shNumRetainComponents_.size()
+          ? std::min<int>(params.shNumRetainComponents_[i], fullSize) : fullSize;
         for (size_t p = 0; p < pointCount; ++p) {
           auto& sh = gsBuf[p].shFxp;
           for (int j = 0; j < fullSize; j++) { Y[j] = sh[groupidx[j / 3]][j % 3]; }
 
           for (int i_ = 0; i_ < fullSize; i_++) {
             int64_t x_norm = 0;
-            for (int j = 0; j < fullSize; j++) { x_norm += klt.eigvecFxp[j][i_] * Y[j] * 35; }
+            for (int j = 0; j < kltRetain; j++) { x_norm += klt.eigvecFxp[j][i_] * Y[j] * 35; }
             x_norm = x_norm >> (KLT_SCALE + 1);
             x_norm = (x_norm * klt.sigmaFxp[i_]) >> KLT_SIGMA_SCALE;
             sh[groupidx[i_ / 3]][i_ % 3] = x_norm + klt.meanFxp[i_];
@@ -393,6 +399,9 @@ static bool computeShKltFromView(SHBufferView& shView, size_t pointCount,
   for (int i = 0; i < n; ++i) { eigPairs.push_back({w[i], i}); }
   std::sort(eigPairs.rbegin(), eigPairs.rend());
 
+  klt.eigvals.resize(n);
+  for (int i = 0; i < n; ++i) { klt.eigvals[i] = eigPairs[i].first; }
+
   // Store eigenvectors
   for (int j = 0; j < n; ++j) {
     int srcIdx = eigPairs[j].second;
@@ -495,6 +504,10 @@ bool sphericalHarmonicsTransform2D(bool witSHCoefficients, SHBufferView& shView,
         for (int i = 0; i < dcSize; ++i)
           eigPairs.push_back({eigResult.eigenvalues[i], i});
         std::sort(eigPairs.rbegin(), eigPairs.rend());
+
+        klt.eigvals.resize(dcSize);
+        for (int i = 0; i < dcSize; ++i) klt.eigvals[i] = eigPairs[i].first;
+
         for (int j = 0; j < dcSize; ++j) {
           int srcIdx = eigPairs[j].second;
           for (int i = 0; i < dcSize; ++i)
@@ -629,6 +642,89 @@ bool sphericalHarmonicsTransform(bool witSHCoefficients, SHBufferView& shView,
   return true;
 }
 
+
+//============================================================================
+
+void computeShDimensionReductionParams(AttributeParameters& params) {
+    const double kShDrVarianceThreshold = params.shDimRedVarianceThreshold_;
+
+    params.shNumRetainComponents_.clear();
+    params.shTotalRetainedComponents_ = 0;
+    if (!params.enableShDimensionReduction_) {
+        return;
+    }
+  
+    if (params.shKltParams_.empty()) {
+        params.enableShDimensionReduction_ = false;
+        return;
+    }
+    const int numGroups = int(params.shKltParams_.size());
+    
+    const int dcGroup = params.gsdPcaDcFlag_ ? numGroups - 1 : -1;
+    for (int g = 0; g < numGroups; ++g) {
+        const auto& klt = params.shKltParams_[g];
+        const int n = static_cast<int>(klt.eigvals.size());
+        if (n == 0) {
+            params.shNumRetainComponents_.push_back(0);
+            continue;
+        }
+        int retain = n;
+        if (g != dcGroup) {
+            double total = 0.0;
+            for (int i = 0; i < n; ++i) total += std::max(0.0, klt.eigvals[i]);
+            if (total > 1e-12) {
+                double cum = 0.0;
+                retain = n; 
+                for (int i = 0; i < n; ++i) {
+                    cum += std::max(0.0, klt.eigvals[i]);
+                    if (cum / total >= kShDrVarianceThreshold) { retain = i + 1; break; }
+                }
+            }
+        }
+        params.shNumRetainComponents_.push_back(retain);
+        params.shTotalRetainedComponents_ += retain;
+    }
+}
+
+//============================================================================
+
+void buildShDimRedRetainedMask(const AttributeParameters& params, std::vector<bool>& mask) {
+  mask.assign(AttributeParameters::kShDrNumSlots, false);
+  if (!params.enableShDimensionReduction_ || params.shNumRetainComponents_.empty())
+    return;
+  const int numGroups = (int)std::min<size_t>(params.shNumRetainComponents_.size(),
+                                              params.shTrGrpRow_.size());
+  for (int g = 0; g < numGroups; ++g) {
+    const auto& groupidx = params.shTrGrpRow_[g];
+    const int retain = params.shNumRetainComponents_[g];
+    for (int j = 0; j < retain; ++j) {
+      if ((j / 3) >= (int)groupidx.size()) break;
+      mask[groupidx[j / 3] * 3 + (j % 3)] = true;
+    }
+  }
+}
+
+//============================================================================
+
+void applyShDimensionReduction(SHBufferView& shView, size_t pointCount,
+    const AttributeParameters& params) {
+    if (!params.enableShDimensionReduction_) {
+        return;
+    }
+    // Zero-out: zero components [retain .. fullSize-1] per group.
+    for (int g = 0; g < int(params.shKltParams_.size()); ++g) {
+        const auto& groupidx = params.shTrGrpRow_[g];
+        const int fullSize = int(groupidx.size()) * 3;
+        const int retain = params.shNumRetainComponents_[g];
+        for (int j = retain; j < fullSize; ++j) {
+            int band = groupidx[j / 3];
+            int ch = j % 3;
+            for (size_t p = 0; p < pointCount; ++p) {
+                shView.sh(p, band, ch) = 0.0f;
+            }
+        }
+    }
+}
 
 //============================================================================
 

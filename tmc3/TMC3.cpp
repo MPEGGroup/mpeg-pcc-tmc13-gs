@@ -1198,6 +1198,22 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.desc.params.attr_sh_non_uniform_quant_enabled, false,
     "Enable non-uniform quantization for SH coefficients")
 
+  ("enableShDimensionReduction",
+    params_attr.desc.params.enableShDimensionReduction_, false,
+    "Enable dimension reduction for SH KLT (retain components >= 0.995 variance per group)")
+
+  ("enableShDimensionReductionNqSkipNonretained",
+    params_attr.desc.params.enableShDimensionReductionNqSkipNonretained_, false,
+    "With SH dimRed, signal non-retained components with M=0 (skip their NQ TP/SS)")
+
+  ("enableShDimensionReductionDaduSkip",
+    params_attr.desc.params.enableShDimensionReductionDaduSkip_, true,
+    "With SH dimRed, force fully-discarded SH bands to DADU (attr_DU_modes=2) so their DU payload is not coded")
+
+  ("shDimRedVarianceThreshold",
+    params_attr.desc.params.shDimRedVarianceThreshold_, 0.995,
+    "SH dimRed cumulative-variance ratio for choosing retained components per KLT group (encoder-only, e.g. 0.9, 0.99, 1.0)")
+
   ("shNqRangeMode",
     params_attr.desc.params.shNqRangeMode_, 0,
     "NQ range mode for SH: 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band")

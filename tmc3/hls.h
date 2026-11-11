@@ -340,6 +340,7 @@ struct PCCKltParameters {
     std::vector<std::vector<int64_t>> eigvecFxp;
     std::vector<int64_t>              meanFxp;
     std::vector<int64_t>              sigmaFxp;
+    std::vector<double>              eigvals;  // sorted descending, for dimension reduction
 };
 
 //============================================================================
@@ -427,10 +428,28 @@ struct AttributeParameters {
   int shNumBitsForTransitionPoint_[3];
   std::vector<int> shTransitionPoints_[3];
   std::vector<int64_t> shStepSizesFxp_[3];
+
+  // Result of the auto range-mode decision (set at encode time): all AC bands
+  // share one (offset, scale).
+  bool shAcRangeShared_ = false;
   int64_t min_offset_fxp[3] = {};
 
   std::vector<double> shStepSizes_[3];
   double min_offset[3] = {};
+
+  // SH Dimension Reduction 
+  bool enableShDimensionReduction_ = false;
+  // Variance ratio deciding retained components per KLT group
+  double shDimRedVarianceThreshold_ = 0.995;
+  bool enableShDimensionReductionNqSkipNonretained_ = false;
+  // With DR, force fully-discarded SH bands to DADU (attr_DU_modes = 2) with a
+  // zero default so their DU payload is not coded.
+  bool enableShDimensionReductionDaduSkip_ = true;
+  std::vector<int> shNumRetainComponents_;  // per shKltParams_ entry
+  int shTotalRetainedComponents_ = 0;
+  static constexpr int kShNumCoefficients = 16;   // SH degree 3 (1+3+5+7)
+  static constexpr int kShNumChannels     = 3;    // RGB colour channels
+  static constexpr int kShDrNumSlots = kShNumCoefficients * kShNumChannels;  // = 48
 
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;
@@ -469,7 +488,7 @@ struct AttributeParameters {
     attr_sh_non_uniform_quant_enabled = false;
     shAdaptiveTpOptEnabled_ = false;
     shNqRangeMode_ = 0;
-
+    shAcRangeShared_ = false;
     for (int c = 0; c < 3; c++) {
       shNumRegionsMinus1_[c] = -1;
       shNumBitsForTransitionPoint_[c] = 0;
@@ -478,6 +497,12 @@ struct AttributeParameters {
       shStepSizesFxp_[c].clear();
     }
 
+    enableShDimensionReduction_ = false;
+    enableShDimensionReductionNqSkipNonretained_ = false;
+    enableShDimensionReductionDaduSkip_ = true;
+    shDimRedVarianceThreshold_ = 0.995;
+    shNumRetainComponents_.clear();
+    shTotalRetainedComponents_ = 0;
   }
 };
 

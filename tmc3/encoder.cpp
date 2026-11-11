@@ -308,6 +308,38 @@ PCCTMC3Encoder3::compress(
   PartitionSet partitions;
   SrcMappedPointSet quantizedInput = quantization(inputPointCloud);
 
+  // Fully-discarded SH bands (no retained component) force DADU with a 0 default.
+  // Must run before the SPS write below so attr_default_value lands in the SPS.
+  for (int attrIdx = 0; attrIdx < (int)_sps->attributeSets.size(); attrIdx++) {
+    auto& attr_sps = const_cast<AttributeDescription&>(_sps->attributeSets[attrIdx]);
+    if (attr_sps.attributeLabel.known_attribute_label != KnownAttributeLabel::kSH_coefficients)
+      continue;
+    const AttributeParameters* dr = &attr_sps.params;
+    for (const auto& a : _sps->attributeSets) {
+      if (a.attributeLabel.known_attribute_label == KnownAttributeLabel::kSH_coefficients
+          && int(a.params.sh_coefficient_label) == 0) { dr = &a.params; break; }
+    }
+    if (!dr->enableShDimensionReduction_
+        || dr->shNumRetainComponents_.empty())
+      continue;
+    const int shBand = int(attr_sps.params.sh_coefficient_label);
+    // Zero-out keeps the source layout, so a band is skippable only when none
+    // of its own components is retained.
+    bool skipBand = true;
+    for (size_t g = 0; g < dr->shNumRetainComponents_.size() && skipBand; ++g) {
+      const int retain = dr->shNumRetainComponents_[g];
+      const auto& groupidx = dr->shTrGrpRow_[g];
+      for (int j = 0; j < retain; ++j) {
+        if (groupidx[j / 3] == shBand) { skipBand = false; break; }
+      }
+    }
+    if (skipBand && dr->enableShDimensionReductionDaduSkip_) {
+      params->attr_DU_modes[attrIdx] = 2;  // DADU
+      attr_sps.params.attr_default_value.assign(3, 0);
+      attr_sps.params.input_attr_default_value.assign(3, 0.0);
+    }
+  }
+
   // write out all parameter sets prior to encoding
   callback->onOutputBuffer(write(*_sps));
   callback->onOutputBuffer(write(*_sps, *_gps));
