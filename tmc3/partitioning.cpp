@@ -597,6 +597,83 @@ mergePartition(Partition& a, const Partition& b)
   a.origin = minOrigin(a.origin, b.origin);
 }
 
+constexpr int kMaxSliceExtent = (1 << 21) - 1;
+
+Box3<int32_t>
+computeBBox(
+  const PCCPointSet3& cloud,
+  const std::vector<int32_t>& pointIndexes)
+{
+  Box3<int32_t> bbox;
+
+  if (pointIndexes.empty())
+    return bbox;
+
+  bbox.min = bbox.max = cloud[pointIndexes[0]];
+
+  for (auto idx : pointIndexes) {
+    for (int k = 0; k < 3; ++k) {
+      bbox.min[k] = std::min(bbox.min[k], int32_t(cloud[idx][k]));
+      bbox.max[k] = std::max(bbox.max[k], int32_t(cloud[idx][k]));
+    }
+  }
+
+  return bbox;
+}
+
+bool
+needSplit(const Box3<int32_t>& bbox)
+{
+  auto extent = bbox.max - bbox.min;
+
+  return extent[0] > kMaxSliceExtent
+      || extent[1] > kMaxSliceExtent
+      || extent[2] > kMaxSliceExtent;
+}
+
+void
+splitSliceByExtentRecursive(
+  const PCCPointSet3& cloud,
+  const Partition& inputSlice,
+  std::vector<Partition>& outputSlices)
+{
+  auto bbox = computeBBox(cloud, inputSlice.pointIndexes);
+  
+  if (!needSplit(bbox)) {
+    outputSlices.push_back(inputSlice);
+    return;
+  }
+
+  const int axis = longestAxis(bbox);
+
+  const int32_t splitPos =
+    bbox.min[axis] + (bbox.max[axis] - bbox.min[axis]) / 2;
+
+  Partition left;
+  Partition right;
+
+  left.tileId = inputSlice.tileId;
+  right.tileId = inputSlice.tileId;
+
+  for (auto idx : inputSlice.pointIndexes) {
+    if (cloud[idx][axis] < splitPos)
+      left.pointIndexes.push_back(idx);
+    else
+      right.pointIndexes.push_back(idx);
+  }
+
+  if (left.pointIndexes.empty() || right.pointIndexes.empty()) {
+    outputSlices.push_back(inputSlice);
+    return;
+  }
+
+  splitSliceByExtentRecursive(
+    cloud, left, outputSlices);
+
+  splitSliceByExtentRecursive(
+    cloud, right, outputSlices);
+}
+
 //=============================================================================
 // first split slices still having too many points(more than maxPoints)
 // then merge slices with too few points(less than minPoints)

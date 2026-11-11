@@ -101,7 +101,9 @@ scaleGeometry(
   size_t numPoints = cloud.getPointCount();
   for (size_t i = 0; i < numPoints; i++) {
     auto& pos = cloud[i];
-    pos = (pos * gs.numerator + (gs.denominator >> 1)) >> gsDenominatorLog2;
+    pos[0] = (int64_t(pos[0]) * gs.numerator + (gs.denominator >> 1)) >> gsDenominatorLog2;
+    pos[1] = (int64_t(pos[1]) * gs.numerator + (gs.denominator >> 1)) >> gsDenominatorLog2;
+    pos[2] = (int64_t(pos[2]) * gs.numerator + (gs.denominator >> 1)) >> gsDenominatorLog2;
   }
 }
 

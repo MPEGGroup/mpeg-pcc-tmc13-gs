@@ -83,6 +83,54 @@ PCCTMC3Encoder3::PCCTMC3Encoder3() : _frameCounter(-1)
 
 PCCTMC3Encoder3::~PCCTMC3Encoder3() = default;
 
+static int
+chooseFpBitsMinExact(double m, int maxBits = 16)
+{
+  for (int b = 0; b <= maxBits; ++b) {
+    const double x = (m - 1.0) * (1 << b);
+
+    if (std::abs(x - std::round(x)) < 1e-12)
+      return b;
+  }
+
+  return maxBits;
+}
+
+static
+void deriveGlobalScale(
+  double seqGeomScale,
+  double codedGeomScale,
+  SequenceParameterSet::GlobalScale& globalScale)
+{
+  const double val = seqGeomScale / codedGeomScale;
+
+  int exp = static_cast<int>(std::floor(std::log2(val)));
+  const double mant = val / std::ldexp(1.0, exp);
+  int fpBits = chooseFpBitsMinExact(mant, 16);
+
+  int rem =
+    static_cast<int>(
+      std::llround((mant - 1.0) * (1 << fpBits)));
+
+  const int maxRem = (1 << fpBits) - 1;
+
+  if (rem > maxRem) {
+    ++exp;
+    rem = 0;
+  }
+  
+  globalScale.numeratorMulLog2 = exp;
+  globalScale.denominatorLog2 = fpBits;
+  globalScale.numeratorModDenominator = rem;
+
+  const double recon =  (1.0 + globalScale.numeratorModDenominator / double(1 << globalScale.denominatorLog2)) 
+                        * std::ldexp(1.0, globalScale.numeratorMulLog2);
+
+  assert(globalScale.numeratorMulLog2 >= 0);
+  assert(globalScale.denominatorLog2 >= 0);
+  assert(std::abs(recon - val) < 1e-12);
+}
+
 //============================================================================
 int
 PCCTMC3Encoder3::compress(
@@ -142,43 +190,10 @@ PCCTMC3Encoder3::compress(
       int64_t seqSizeGlobal = (seqMaxGlobal - seqOriginGlobal);
 
       params->codedGeomScale = (double)std::pow(2, params->geomMinMaxBitDepth ) / (inputscale*(double)seqSizeGlobal);
-      params->sps.globalScale = Rational(params->seqGeomScale / params->codedGeomScale);
-
-      
-
-      const double val = params->seqGeomScale / params->codedGeomScale;  
-
-      int exp = static_cast<int>(std::floor(std::log2(val)));
-      const double mant = val / std::ldexp(1.0, exp);  
-
-      auto choose_fp_bits_min_exact = [](double m, int maxBits = 16) -> int {
-        for (int b = 0; b <= maxBits; ++b) {
-          const double x = (m - 1.0) * (1 << b);
-          if (std::abs(x - std::round(x)) < 1e-12)
-            return b;
-        }
-        return maxBits;  
-      };
-
-      int fp_bits = choose_fp_bits_min_exact(mant, 16);
-      int rem = static_cast<int>(std::llround((mant - 1.0) * (1 << fp_bits)));
-
-      const int maxRem = (1 << fp_bits) - 1;
-      if (rem > maxRem) {
-        // carry into exponent
-        ++exp;
-        rem = 0;
+      if (params->codedGeomScale > params->seqGeomScale) {
+        params->codedGeomScale = params->seqGeomScale;
       }
-
-      params->sps.globalScale.numeratorMulLog2 = exp;     // mul_log2 (ue)
-      params->sps.globalScale.denominatorLog2 = fp_bits;  // fp_bits (ue)
-      params->sps.globalScale.numeratorModDenominator = rem;  // rem     (u(fp_bits))
-
-      const double recon =  (1.0 + params->sps.globalScale.numeratorModDenominator / double(1 << params->sps.globalScale.denominatorLog2)) * std::ldexp(1.0, params->sps.globalScale.numeratorMulLog2);
-
-      assert(params->sps.globalScale.numeratorMulLog2 >= 0);
-      assert(params->sps.globalScale.denominatorLog2 >= 0);
-      assert(std::abs(recon - val) < 1e-12);
+      deriveGlobalScale(params->seqGeomScale, params->codedGeomScale, params->sps.globalScale);
 
       for (int k = 0; k < 3; ++k) {
         params->sps.seqBoundingBoxOrigin[k] = (int)seqOriginGlobal* inputscale;
@@ -186,16 +201,10 @@ PCCTMC3Encoder3::compress(
       }
 
       auto gs = Rational(params->sps.globalScale);  
-      int64_t L = gs.numerator; 
-      
-      seqOriginGlobal *= inputscale;
-      seqMaxGlobal *= inputscale;
-      seqSizeGlobal *= inputscale;
 
       for (int k = 0; k < 3; ++k) {
-        _originInSeqCoords_rem[k] = (int)(seqOriginGlobal % L);
-        _originInCodingCoords[k] = (double)seqOriginGlobal;
-        _originInCodingCoords[k] /= (double)gs; 
+        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k] / (double)gs;
+        _originInSeqCoords_rem[k] = params->sps.seqBoundingBoxOrigin[k] - ((_originInCodingCoords[k] * (double)gs));
       }
     }
     else{    
@@ -216,16 +225,10 @@ PCCTMC3Encoder3::compress(
         // as P_c is reconstructed as (0,0,0):
         //   0 = P_c * globalScale + seqOrigin
         auto gs = Rational(params->sps.globalScale);
-        /* int rem = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
-      rem += rem < 0 ? gs.numerator : 0;
-      params->sps.seqBoundingBoxOrigin[k] -= rem;
-      params->sps.seqBoundingBoxSize[k] += rem;*/
-        _originInSeqCoords_rem[k] =
-          params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
-
         // Convert the origin to coding coordinate system
-        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k];
-        _originInCodingCoords[k] /= double(gs);
+        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k] / (double)gs;
+        _originInSeqCoords_rem[k] = params->sps.seqBoundingBoxOrigin[k] - ((_originInCodingCoords[k] * (double)gs));
+
       }
     }
 
@@ -446,6 +449,16 @@ PCCTMC3Encoder3::compress(
         curSlices = partitionByNpts(params->partition, tileCloud, tile_id);
         break;
       }
+      
+      std::vector<Partition> refinedSlices;
+      for (int i = 0; i < curSlices.size(); i++) {
+        splitSliceByExtentRecursive(
+          tileCloud,
+          curSlices[i],
+          refinedSlices);
+      }
+      curSlices.swap(refinedSlices);
+
       // Map slice indexes to tile indexes(the original indexes)
       for (int i = 0; i < curSlices.size(); i++) {
         for (int p = 0; p < curSlices[i].pointIndexes.size(); p++) {
@@ -512,8 +525,7 @@ PCCTMC3Encoder3::deriveParameterSets(EncoderParams* params)
   // NB: globalScale is constrained, eg 1.1 is not representable
   // todo: consider adjusting seqGeomScale to make a valid globalScale
   // todo: consider adjusting codedGeomScale to make a valid globalScale
-  params->sps.globalScale =
-    Rational(params->seqGeomScale / params->codedGeomScale);
+  deriveGlobalScale(params->seqGeomScale, params->codedGeomScale, params->sps.globalScale);
 }
 
 //----------------------------------------------------------------------------

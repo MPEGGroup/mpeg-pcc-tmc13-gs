@@ -154,4 +154,12 @@ void refineSlicesByAdjacentInfo(
 
 //============================================================================
 
+void splitSliceByExtentRecursive(
+  const PCCPointSet3& cloud,
+  const Partition& inputSlice,
+  std::vector<Partition>& outputSlices);
+
+//============================================================================
+
+
 }  // namespace pcc
