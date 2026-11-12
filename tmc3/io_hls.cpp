@@ -42,6 +42,7 @@
 #include <iomanip>
 #include <iterator>
 #include <algorithm>
+#include <limits>
 #include <sstream>
 
 namespace pcc {
@@ -290,10 +291,17 @@ parseAttrParamDefaultValue(
 
 //============================================================================
 
+inline int calNumSHCoeff(int attrNumDimensionsMinus1) {
+  int numSHCoeff = 0;
+  for (int i = 0; i <= attrNumDimensionsMinus1; i++)
+    numSHCoeff += 2 * i + 1;  // 1 + 3 + 5 + 7
+  return numSHCoeff;
+}
+
 template<typename Bs>
 void
 writeAttrParamSHCoefficientLabel
-(const AttributeDescription& desc, Bs& bs, const AttributeParameters& param)
+(Bs& bs, const AttributeDescription& desc, const AttributeParameters& param)
 {
   bs.write(param.attr_sh_coeff_type);
   if (param.attr_sh_coeff_type == 1) {
@@ -301,6 +309,20 @@ writeAttrParamSHCoefficientLabel
     if (param.attr_dc_only_present == 0) {
 	    bs.writeUe(param.attr_num_sh_coeff_degrees_minus1);
       bs.write(param.attr_sh_remap_enabled);
+      bs.write(param.attr_ac_scaling_enabled_flag);
+      if (param.attr_ac_scaling_enabled_flag) {
+        assert(param.attr_ac_scaling_Coefficient != 0);
+        bs.writeSe(param.attr_ac_scaling_Coefficient);
+
+        int numSHCoeff = calNumSHCoeff(param.attr_num_sh_coeff_degrees_minus1);
+        int numComponents = desc.attr_num_dimensions_minus1 + 1;
+        assert(param.attr_ac_scaling_center.size() >= numComponents * (numSHCoeff - 1));
+
+        for (int i = 0; i < numSHCoeff - 1; i++)
+          for (int c = 0; c < numComponents; c++)
+            bs.writeUe(param.attr_ac_scaling_center[i * numComponents + c]);
+      }
+
       bs.write(param.attr_sh_grp_transform_enabled);
       if (param.attr_sh_grp_transform_enabled == 1) {
         int ColTr[16];
@@ -393,7 +415,7 @@ writeAttrParamSHCoefficientLabel
 template<typename Bs>
 void
 parseAttrParamSHCoeffieicientLabel
-(const AttributeDescription& desc, Bs& bs, AttributeParameters* param)
+(Bs& bs, const AttributeDescription& desc, AttributeParameters* param)
 {
   param->sh_coefficient_label = SHCoefficientLabel::kBand0_Order0;
   
@@ -403,6 +425,19 @@ parseAttrParamSHCoeffieicientLabel
     if (param->attr_dc_only_present == 0) {
       bs.readUe(&param->attr_num_sh_coeff_degrees_minus1);
       bs.read(&param->attr_sh_remap_enabled);
+      
+      bs.read(&param->attr_ac_scaling_enabled_flag);
+      if (param->attr_ac_scaling_enabled_flag) {
+        bs.readSe(&param->attr_ac_scaling_Coefficient);
+
+        int numSHCoeff = calNumSHCoeff(param->attr_num_sh_coeff_degrees_minus1);
+        int numComponents = desc.attr_num_dimensions_minus1 + 1;
+        param->attr_ac_scaling_center.resize(numComponents * (numSHCoeff - 1));
+        for (int i = 0; i < numSHCoeff - 1; i++)
+          for (int c = 0; c < numComponents; c++)
+            bs.readUe(&param->attr_ac_scaling_center[i * numComponents + c]);
+      }
+
       bs.read(&param->attr_sh_grp_transform_enabled);
       if (param->attr_sh_grp_transform_enabled == 1) {
         int ColTr[16];
@@ -497,11 +532,8 @@ parseAttrParamSHCoeffieicientLabel
       }
     }
   } else {
-    int numSHCoeff = 0;
-    for (int i = 0; i <= param->attr_num_sh_coeff_degrees_minus1; i++)
-      numSHCoeff += (2 * i + 1);  // 1 + 3 + 5 + 7 
+    int numSHCoeff = calNumSHCoeff(param->attr_num_sh_coeff_degrees_minus1);
     int numSHCoeffDegreesBits = numBits(numSHCoeff - 1);
-
     int shAcCoeffMinus1 = 0;
     bs.readUn(numSHCoeffDegreesBits, &shAcCoeffMinus1);
 
@@ -753,12 +785,12 @@ writeAttributeParameters(
   if (params.shCoefficientParameterPresent) {
     int attr_param_len = 0;
     auto bsCounter = makeBitWriter(InsertionCounter(&attr_param_len));
-    writeAttrParamSHCoefficientLabel(attr, bsCounter, params);
+    writeAttrParamSHCoefficientLabel(bsCounter, attr, params);
 
     auto attr_param_type = AttributeParameterType::kSHCoefficientLabel;
     bs.writeUn(8, attr_param_type);
     bs.writeUn(8, attr_param_len);
-    writeAttrParamSHCoefficientLabel(attr, bs, params);
+    writeAttrParamSHCoefficientLabel(bs, attr, params);
   }
 
   if (params.rotationParameterPresent) {
@@ -825,7 +857,7 @@ parseAttributeParameter(
     parseAttrParamDefaultValue(attr, bs, &params);
     break;
   case Type::kSHCoefficientLabel:
-    parseAttrParamSHCoeffieicientLabel(attr, bs, &params);
+    parseAttrParamSHCoeffieicientLabel(bs, attr, &params);
     params.shCoefficientParameterPresent = true;
     break;
   case Type::kRotationLabel:

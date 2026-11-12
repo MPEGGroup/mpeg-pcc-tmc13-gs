@@ -1129,6 +1129,14 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.desc.bitdepth, 8,
     "Attribute bitdepth")
 
+  ("attr_ac_scaling_enabled_flag",
+    params_attr.desc.params.attr_ac_scaling_enabled_flag, false,
+    "Enable SH AC scaling")
+
+  ("attr_ac_scaling_Coefficient",
+    params_attr.desc.params.attr_ac_scaling_Coefficient,  400,
+    "SH AC scaling Coefficient")
+
   ("defaultValue",
     params_attr.desc.params.input_attr_default_value, {},
     "Default attribute component value(s) in case of data omission")
@@ -2094,6 +2102,9 @@ SequenceEncoder::SequenceEncoder(Parameters* params) : SequenceCodec(params)
 int
 SequenceEncoder::compress(Stopwatch* clock)
 {
+  if (!validateShAcScalingAttributeOrder(params->encoder.sps.attributeSets))
+    return -1;
+
   bytestreamFile.open(params->compressedStreamPath, ios::binary);
   if (!bytestreamFile.is_open()) {
     return -1;
@@ -2109,6 +2120,41 @@ SequenceEncoder::compress(Stopwatch* clock)
   bytestreamFile.close();
 
   return 0;
+}
+
+//----------------------------------------------------------------------------
+
+static void
+deriveShAcCenters(
+  const PCCPointSet3& pointCloud, std::vector<AttributeDescription>& attrDescs)
+{
+  if (!pointCloud.hasSHCoefficients() || !pointCloud.getPointCount())
+    return;
+
+  const int numPoints = int(pointCloud.getPointCount());
+  for (auto& desc : attrDescs) {
+    auto& params = desc.params;
+    if (desc.attributeLabel != KnownAttributeLabel::kSH_coefficients || !params.attr_sh_coeff_type 
+      || params.attr_dc_only_present || !params.attr_ac_scaling_enabled_flag) {
+      continue;
+    }
+
+    const int numComponents = desc.attr_num_dimensions_minus1 + 1;
+    const int numSHCoeffs = pointCloud.getNumSHCoeffs();
+    params.attr_ac_scaling_center.resize(numComponents * (numSHCoeffs - 1));
+    for (int m = 1; m < numSHCoeffs; m++) {
+      std::vector<int64_t> sum(numComponents);
+      for (int i = 0; i < numPoints; i++) {
+        auto sh = pointCloud.getSHCoefficient(m, i);
+        for (int k = 0; k < numComponents; k++)
+          sum[k] += sh[k];
+      }
+
+      for (int k = 0; k < numComponents; k++)
+        params.attr_ac_scaling_center[(m - 1) * numComponents + k] =
+          int((sum[k] + numPoints / 2) / numPoints);
+    }
+  }
 }
 
 //----------------------------------------------------------------------------
@@ -2195,6 +2241,8 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (params->convertColourspace)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
+  if (frameNum == params->firstFrameNum)
+    deriveShAcCenters(pointCloud, params->encoder.sps.attributeSets);
 
   bool attr_sh_remap_enabled = false;
   for (auto& desc : params->encoder.sps.attributeSets) {

@@ -788,6 +788,7 @@ PCCTMC3Encoder3::compressPartition(
     }
   }
 
+  bool shAcScalingEnabled = false;
   // for each attribute
   for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
@@ -891,6 +892,15 @@ PCCTMC3Encoder3::compressPartition(
       attrEncoder = makeAttributeEncoder();
 
     auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
+
+    // Only the SH DC attribute that carries the scaling flag triggers the
+    // forward scaling: it must be applied once, just before the SH
+    // coefficients are coded, and only for the attribute that enables it.
+    if (isShAcScalingEnabled(attr_sps)) {
+      shAcScalingEnabled = true;
+      applyShAcInterAttributeScaling(pointCloud, _sps->attributeSets, true);
+    }
+
     attrEncoder->encode(
       *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, payload, &bufferRahtCoefficients);
 
@@ -957,6 +967,8 @@ PCCTMC3Encoder3::compressPartition(
     }
   }
 
+  if (shAcScalingEnabled)
+    applyShAcInterAttributeScaling(pointCloud, _sps->attributeSets, false);
   // Note the current slice id for loss detection with entropy continuation
   _prevSliceId = _sliceId;
 

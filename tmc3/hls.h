@@ -38,6 +38,7 @@
 #include "PCCMath.h"
 
 #include <cstdint>
+#include <limits>
 #include <ostream>
 #include <vector>
 
@@ -391,6 +392,9 @@ struct AttributeParameters {
   bool attr_dc_only_present = false;
   int attr_num_sh_coeff_degrees_minus1 = -1;
   bool attr_sh_remap_enabled = false;
+  bool attr_ac_scaling_enabled_flag = false;
+  int attr_ac_scaling_Coefficient = 0;
+  std::vector<int> attr_ac_scaling_center;
 
   bool shCoefficientParameterPresent = false;
   SHCoefficientLabel sh_coefficient_label;
@@ -476,6 +480,9 @@ struct AttributeParameters {
     scalePowerParams.clear();
     opacityParameterPresent = false;
     opacityDomainTransformEnabled = false;
+    attr_ac_scaling_enabled_flag = false;
+    attr_ac_scaling_Coefficient = 0;
+    attr_ac_scaling_center.clear();
 
     attr_sh_grp_transform_enabled = false;
     dataAdaptiveShTransformEnabled_ = false;

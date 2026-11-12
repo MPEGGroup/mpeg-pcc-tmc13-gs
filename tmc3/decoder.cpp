@@ -146,6 +146,15 @@ PCCTMC3Decoder3::outputCurrentCloud(PCCTMC3Decoder3::Callbacks* callback)
 
   std::swap(_outCloud.cloud, _accumCloud);
 
+  // SH AC inter-attribute scaling: only apply when an SH coefficient
+  // attribute with the scaling flag set is present.
+  const bool shAcScalingEnabled = std::any_of(
+    _sps->attributeSets.begin(), _sps->attributeSets.end(),
+    [](const AttributeDescription& attr) { return isShAcScalingEnabled(attr); });
+
+  if (shAcScalingEnabled)
+    applyShAcInterAttributeScaling(_outCloud.cloud, _sps->attributeSets, false);
+
   // Apply global scaling to output for integer conformance
   // todo: add other output scaling modes
   // NB: if accumCloud is reused for future inter-prediction, global scaling
@@ -289,6 +298,7 @@ void
 PCCTMC3Decoder3::storeSps(SequenceParameterSet&& sps)
 {
   // todo(df): handle replacement semantics
+  validateShAcScalingAttributeOrder(sps.attributeSets);
   _spss.emplace(std::make_pair(sps.sps_seq_parameter_set_id, sps));
 }
 

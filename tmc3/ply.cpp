@@ -49,6 +49,15 @@
 #include <unordered_map>
 
 namespace pcc {
+
+const AttributeDescription& getAttributeDescription(
+  const std::vector<AttributeDescription>& attrDescs,
+  KnownAttributeLabel attributeLabel, int index);
+
+AttributeDescription& getAttributeDescription(
+  std::vector<AttributeDescription>& attrDescs,
+  KnownAttributeLabel attributeLabel, int index);
+
 //============================================================================
 
 int64_t adjust_frac_bits(int64_t val, int curr_frac_bits, int final_frac_bits)
@@ -133,11 +142,12 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
     size_t pointCount, std::vector<AttributeDescription>& attrDescs) {  if (pointCount == 0 || !withSHCoefficients) return false;
 
   int numSHCoeffs = shView.numBands();
-  const uint32_t bitDepth = attrDescs[0].bitdepth;
-  const uint32_t max_quant_val = (1u << bitDepth) - 1;
+  auto& firstShParams =
+    getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0).params;
+  const bool shAcScalingEnabled = firstShParams.attr_ac_scaling_enabled_flag;
 
-  const bool useAdaptiveThresholds = attrDescs[0].params.shAdaptiveTpOptEnabled_
-                                   && attrDescs[0].params.dataAdaptiveShTransformEnabled_;
+  const bool useAdaptiveThresholds = firstShParams.shAdaptiveTpOptEnabled_
+                                   && firstShParams.dataAdaptiveShTransformEnabled_;
 
   int thresh1 = 15, thresh2 = 30, thresh3 = 40, thresh4 = 5, thresh5 = 10;
   const int idx3_arr[3] = { 11, 13, 12 };
@@ -189,7 +199,11 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
     buildShDimRedRetainedMask(attrDescs[0].params, shDrRetainedMask);
 
   for (size_t l = 0; l < std::min(numSHCoeffs, 16); ++l) {
-    auto& params = attrDescs[l].params;
+    auto& params =
+      getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l).params;
+    const uint32_t bitDepth =
+      (shAcScalingEnabled && l > 0) ? params.attr_frac_bits : firstShParams.attr_frac_bits;
+    const uint32_t max_quant_val = (1u << bitDepth) - 1;
 
     for (int c = 0 ; c < 3 ; c++)
     {
@@ -798,10 +812,12 @@ ply::write(
         if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
           numSHCoeffs++;
       }
-      const uint32_t bitDepth_sh = desc_sh.bitdepth;
+      const bool shAcScalingEnabled = desc_sh.params.attr_ac_scaling_enabled_flag;
       if (useShNQ) {
         for (int l = 0; l < numSHCoeffs; ++l) {
           auto& params = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l).params;
+          const uint32_t bitDepth_sh =
+            (shAcScalingEnabled && l > 0) ? params.attr_frac_bits : desc_sh.params.attr_frac_bits;
           int64_t minLim = params.attr_offset;
           int64_t maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
           for (int c = 0; c < 3; ++c) {
@@ -1831,14 +1847,12 @@ ply::read(
       extractSHQuantRegions(witSHCoefficients, shView, pointCount, attrDescs);
 
       std::array<ShQuantRegion, AttributeParameters::kShDrNumSlots> shRegions;
-      const uint32_t bitDepth_sh = attrDescs[0].bitdepth;
-      const uint32_t max_index_sh = 1u << bitDepth_sh;
-
+      const bool shAcScalingEnabled = shParams.attr_ac_scaling_enabled_flag;
       for (int l = 0; l < numSHCoeffs; ++l) {
         auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l);
         auto& params = desc.params;
-        int tpOffset = 0;
-        int ssOffset = 0;
+        const uint32_t bitDepth_sh = (shAcScalingEnabled && l > 0) ? params.attr_frac_bits : shParams.attr_frac_bits;
+        const uint32_t max_index_sh = 1u << bitDepth_sh;
         for (int c = 0; c < 3; ++c) {
           int idx = l * 3 + c;
           int M = params.shNumRegionsMinus1_[c];
@@ -1864,8 +1878,6 @@ ply::read(
             params.min_offset_fxp[c] = (int64_t)round(shRegions[idx].min_offset * sh_scale);
             params.min_offset[c] = shRegions[idx].min_offset;
           }
-          tpOffset += M;
-          ssOffset += M + 1;
         }
       }
 

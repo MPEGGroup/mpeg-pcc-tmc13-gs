@@ -184,6 +184,10 @@ void inverseScalePowerTransform(
     const AttributeDescription& desc, const Vec3<attr_t>* src,
     Vec3<float>* dst, int pointCount);
 
+// Inverse power transform for a single quantized code value (per component).
+double inverseScalePowerTransformValue(
+    const AttributeDescription& desc, int c, int code);
+
 namespace ply {
 
   //============================================================================
