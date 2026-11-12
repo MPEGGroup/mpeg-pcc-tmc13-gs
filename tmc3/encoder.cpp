@@ -46,6 +46,7 @@
 #include "geometry_params.h"
 #include "hls.h"
 #include "pointset_processing.h"
+#include "RAHT.h"
 #include "geometry.h"
 #include "geometry_octree.h"
 #include "geometry_predictive.h"
@@ -343,9 +344,6 @@ PCCTMC3Encoder3::compress(
   // write out all parameter sets prior to encoding
   callback->onOutputBuffer(write(*_sps));
   callback->onOutputBuffer(write(*_sps, *_gps));
-  for (auto aps : _aps) {
-    callback->onOutputBuffer(write(*_sps, *aps));
-  }
 
   std::vector<std::vector<int32_t>> tileMaps;
   if (params->partition.tileSize) {
@@ -503,6 +501,18 @@ PCCTMC3Encoder3::compress(
     }
     std::cout << "Slice number: " << partitions.slices.size() << std::endl;
   } while (0);
+
+  if (params->maxRahtPrecisionDerivationEnabled) {
+    int maxSlicePoints = 0;
+    for (const auto& partition : partitions.slices) {
+      maxSlicePoints = std::max(maxSlicePoints, int(partition.pointIndexes.size()));
+    }
+    deriveRahtPrecision(params, maxSlicePoints);
+  }
+
+  for (auto aps : _aps) {
+    callback->onOutputBuffer(write(*_sps, *aps));
+  }
 
   // Encode each partition:
   //  - create a pointset comprising just the partitioned points
@@ -674,6 +684,52 @@ PCCTMC3Encoder3::fixupParameterSets(EncoderParams* params)
 
     attr_enc.abh.attr_layer_qp_delta_luma.resize(numLayers, lastDeltaLuma);
     attr_enc.abh.attr_layer_qp_delta_chroma.resize(numLayers, lastDeltaChroma);
+  }
+}
+
+//----------------------------------------------------------------------------
+// Derive the RAHT fixed-point precision signalled by each APS.
+
+void
+PCCTMC3Encoder3::deriveRahtPrecision(
+  const EncoderParams* params, int maxSlicePoints)
+{
+  // Later frames or trisoup may produce larger slices than this frame
+  if (params->frameCount != 1 || _gps->trisoup_enabled_flag)
+    maxSlicePoints =
+      std::max(maxSlicePoints, params->partition.sliceMaxPoints);
+
+  std::vector<int> precisions(_aps.size());
+  int minPrecision = std::numeric_limits<int>::max();
+  for (int attrIdx = 0; attrIdx < _aps.size(); attrIdx++) {
+    const auto& attr_sps = _sps->attributeSets[attrIdx];
+    if (_aps[attrIdx]->attr_encoding != AttributeEncoding::kRAHTransform)
+      continue;
+    precisions[attrIdx] = maxRahtPrecision(maxSlicePoints, attr_sps.bitdepth);
+    minPrecision = std::min(minPrecision, precisions[attrIdx]);
+  }
+
+  // jointly transformed attributes must use the same precision
+  if (params->maxAttributeNumberPerGroup > 1)
+    std::fill(precisions.begin(), precisions.end(), minPrecision);
+
+  for (int attrIdx = 0; attrIdx < _aps.size(); attrIdx++) {
+    auto& attr_aps = *_aps[attrIdx];
+    if (attr_aps.attr_encoding != AttributeEncoding::kRAHTransform)
+      continue;
+
+    // Parameter sets cannot change during the sequence
+    if (_frameCounter > 0) {
+      int precision = attr_aps.raht_fixed_point_precision_minus15 + 15;
+      if (precisions[attrIdx] < precision)
+        throw std::runtime_error(
+          std::string("slice point count (")
+          + std::to_string(maxSlicePoints)
+          + ") exceeds the limit of the signalled RAHT precision");
+      continue;
+    }
+
+    attr_aps.raht_fixed_point_precision_minus15 = precisions[attrIdx] - 15;
   }
 }
 

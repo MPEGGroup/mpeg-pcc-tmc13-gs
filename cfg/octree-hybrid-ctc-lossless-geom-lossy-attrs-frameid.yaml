@@ -134,6 +134,7 @@ categories:
        - sequenceScale: 1
        - externalScale: 0
        - geomMinMaxBitDepth: '${geomBD}'
+       - maxRahtPrecisionDerivationEnabled: 1
        - attrFracBits: 12
        - "# All attributes have the same bitdepth"
        - bitdepth: 12

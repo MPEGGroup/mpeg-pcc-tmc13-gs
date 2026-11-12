@@ -779,6 +779,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.geomMinMaxBitDepth, 21,
     "Bitdepth used to geometry min-max quantization.\n")
 
+  ("maxRahtPrecisionDerivationEnabled",
+    params.encoder.maxRahtPrecisionDerivationEnabled, false,
+    "Enable encoder-side derivation of the maximum RAHT fixed-point precision.\n")
+
   (po::Section("Decoder"))
 
   ("skipOctreeLayers",
@@ -1501,6 +1505,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 
   params.encoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
   params.decoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
+  params.encoder.frameCount = params.frameCount;
   // report the current configuration (only in the absence of errors so
   // that errors/warnings are more obvious and in the same place).
   if (err.is_errored)

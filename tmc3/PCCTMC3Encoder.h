@@ -106,6 +106,9 @@ struct EncoderParams {
   // Maximum number of attribute groups merged into one RAHT encoding pass.
   int maxAttributeNumberPerGroup;
 
+  // Number of frames in the sequence to be coded.
+  int frameCount;
+
   // Encoder specific parameters for geometry
   OctreeEncOpts geom;
 
@@ -152,6 +155,8 @@ struct EncoderParams {
 	int refImageHeight;
 
   int geomMinMaxBitDepth; 
+
+  bool maxRahtPrecisionDerivationEnabled;
 };
 
 //============================================================================
@@ -185,6 +190,8 @@ public:
 
 private:
   void appendSlice(PCCPointSet3& cloud);
+
+  void deriveRahtPrecision(const EncoderParams* params, int maxSlicePoints);
 
   void encodeGeometryBrick(const EncoderParams*, PayloadBuffer* buf);
 
