@@ -189,6 +189,8 @@ quantizePositions(
       src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
 		  src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
       src.hasSHCoefficients(), src.hasFrameIndex());
+    if (src.hasScores())
+      dst->addScores();
     dst->resize(numSrcPoints);
   }
 
@@ -247,6 +249,11 @@ quantizePositions(
 		  for (int k = 0; k < src.getNumSHCoeffs(); k++)
 			  dst->setSHCoefficient(k, i, src.getSHCoefficient(k, i));
 	  }
+  }
+
+  if (src.hasScores()) {
+    for (int i = 0; i < numSrcPoints; ++i)
+      dst->setScore(i, src.getScore(i));
   }
 }
 

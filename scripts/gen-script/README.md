@@ -40,8 +40,70 @@ git clone https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-me
 git clone https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-tools
 ```
 Build each project separately.
-### PLY Files (with Camera Positions)
-Prepare all input PLY files with camera positions (`*.camerapos.ply`) using **gsTools** located in `mpeg-gsc-tools/gsTools`
+### PLY Files with Camera Positions and Importance Scores
+
+#### 1. Embed Camera Positions into PLY Files (`*.ply`)
+
+Embed the camera parameters into the source PLY files (`*.ply`) using using **embed_ply_data** located in:
+
+```text
+scripts/embed_ply_data
+```
+An example script is provided in `run-embed-camera.sh`.
+
+```bash
+bash ./batch_embed_data.sh \
+    --dataset-path /path/to/dataset \
+    --config /path/to/dataset.config.sh \
+    --gstools-bin /path/to/gstools \
+    --embed-scores \
+    --overwrite
+```
+
+#### 2. Generate Importance Score Files
+
+Generate importance score files (`*.impScores.txt`) for all PLY files using **batch_importance_scores** located in:
+
+```text
+scripts/batch_importance_scores
+```
+
+An example script is provided in `run.sh`.
+
+```bash
+cd scripts/batch_importance_scores
+
+bash ./batch_importance_scores.sh \
+  --dataset-path "/path/to/<dataset-root>/" \
+  --config ./testset_inputs/dataset.config.ctc.sh \
+  --bin /path/to/mpeg-gsc-importance/build/Release/bin/importance-scores \
+  --plys-subfolder plys
+```
+
+#### 3. Embed Importance Scores into PLY Files (`*.camerapos.ply`)
+
+Embed the generated importance scores into the camera-position-enabled PLY files (`*.camerapos.ply`) using **embed_ply_data** located in:
+
+```text
+scripts/embed_ply_data
+```
+An example script is provided in `run-embed-score.sh`.
+
+```bash
+cd scripts/batch_importance_scores
+
+bash ./batch_embed_data.sh \
+  --dataset-path "/path/to/<dataset-root>/" \
+  --config ./testset_inputs/dataset.config.ctc.sh \
+  --gstools-bin "/path/to/mpeg-gsc-tools/gsTools/build/msvc/Release/bin/gstools" \
+  --embed-scores \
+  --scores-subfolder scores \
+  --scores-suffix .impScores.txt \
+  --scores-output-suffix .camerapos.ply \
+  --score-name score \
+  --score-percentile 1.0 \
+  --overwrite
+```
 
 ### Python Package Dependency
 Install the `openpyxl` Python package (version 3.1.5) to handle XLSM files:
@@ -54,8 +116,8 @@ Clone the repository:
 ```bash
 git clone https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs
 cd mpeg-pcc-tmc13-gs
-git fetch origin tag v3.0-rc2
-git checkout tags/v3.0-rc2
+git fetch origin tag v4.0
+git checkout tags/v4.0
 ```
 Build the project:
 ```bash
@@ -69,7 +131,7 @@ Edit `gen-script.sh` to set the sequence, binary, and configuration directories.
 
 ### Experiment Name
 ```bash
-JOBNAME="TM13-GS-v3.0-rc2"
+JOBNAME="TM13-GS-v4.0"
 ```
 ### Experiment Settings
 For 1F evaluation:
@@ -127,6 +189,7 @@ bash gen-script.sh
 
 When script generation is complete, the following scripts will be created in the `output/jobs` directory:
 
+* `step0_preprocess.sh` – Pre-processing jobs
 * `step1_run_gpcc.sh` – GPCC encode/decode jobs
 * `step2_run_metric.sh` – Metric calculation jobs
 * `step3_run_summary.sh` – Summary results
@@ -161,7 +224,7 @@ Progress: 4930/4930 (100%)
 All simulation outputs are organized under:
 ```
 /path/to/output/
-└── TM13-GS-v3.0-rc2/
+└── TM13-GS-v4.0/
     ├── bin/                                           # Executables or binaries used for the run
     ├── cfg/                                           # Configurations for each sequences
     ├── jobs/                                          # Job scripts and logs

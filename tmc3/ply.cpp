@@ -1182,9 +1182,11 @@ bool ply::parseHeader(
       std::string typeStr, nameStr;
       iss >> typeStr >> nameStr;
       
-      KnownAttributeLabel attrLabel;
-      int channel, maxChannel;
-      if (!stringToAttributeLabelAndChannel(nameStr, attrLabel, channel, maxChannel)) {
+      KnownAttributeLabel attrLabel = KnownAttributeLabel::kReflectance;
+      int channel = 0, maxChannel = 0;
+      if (nameStr == "score") {
+        cloud.addScores();
+      } else if (!stringToAttributeLabelAndChannel(nameStr, attrLabel, channel, maxChannel)) {
         return false;
       }
       properties.push_back({nameStr, attrLabel, channel, maxChannel, stringToPlyType(typeStr)});
@@ -1241,6 +1243,9 @@ bool ply::parseHeader(
 }
 
 bool ply::isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDescription>& attrDescs) {
+  if (prop.name == "score")
+    return false;
+    
   for (auto &desc: attrDescs) {
     if (desc.attributeLabel.known_attribute_label == prop.attrLabel)
     {
@@ -1284,6 +1289,8 @@ bool ply::readVertices(
       }
       if (prop.name == "x" || prop.name == "y" || prop.name == "z") {
         cloud[i][prop.channel] = value * positionScale;
+      } else if (prop.name == "score" && cloud.hasScores()) {
+        cloud.setScore(i, value);
       } else if (prop.attr_idx > -1) {
         inputAttrBuf[prop.attr_idx * pointCount + i] = value;
       }

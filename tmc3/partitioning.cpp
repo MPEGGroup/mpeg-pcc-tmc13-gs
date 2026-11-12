@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <iostream>
 #include <map>
 #include <stdint.h>
 
@@ -74,6 +75,98 @@ halfQualified(const std::vector<Partition> slices, int maxPoints)
   }
 
   return ((double)Qualified / (double)slices.size()) > 0.5;
+}
+
+std::vector<Partition>
+partitionByImportanceScore(
+  const PartitionParams& params, const PCCPointSet3& cloud, int tileID)
+{
+  const auto& percentages = params.scoreSlicePointPercentages;
+  if (percentages.empty() || !cloud.hasScores()) {
+    std::cerr << "[ERROR] importance-score partitioning requires score data "
+                 "and scoreSlicePointPercentages\n";
+    std::exit(1);
+  }
+
+  int sum = 0;
+  for (int percentage : percentages) {
+    if (percentage < 0)
+      std::exit(1);
+    sum += percentage;
+  }
+  if (sum != 100) {
+    std::cerr << "[ERROR] scoreSlicePointPercentages must sum to 100\n";
+    std::exit(1);
+  }
+
+  std::vector<int32_t> rankedIndexes(cloud.getPointCount());
+  for (int32_t i = 0; i < int32_t(rankedIndexes.size()); ++i)
+    rankedIndexes[i] = i;
+  std::sort(
+    rankedIndexes.begin(), rankedIndexes.end(),
+    [&cloud](int32_t a, int32_t b) {
+      const float sa = cloud.getScore(a);
+      const float sb = cloud.getScore(b);
+      return sa != sb ? sa > sb : a < b;
+    });
+
+  std::vector<Partition> slices(percentages.size());
+  int start = 0;
+  for (size_t level = 0; level < percentages.size(); ++level) {
+    const int count = level + 1 == percentages.size()
+      ? int(rankedIndexes.size()) - start
+      : int(rankedIndexes.size() * int64_t(percentages[level]) / 100);
+    slices[level].sliceId = level;
+    slices[level].tileId = tileID;
+    slices[level].origin = Vec3<int>{0};
+    slices[level].location = Vec3<int>{int(level), 0, 0};
+    slices[level].pointIndexes.assign(
+      rankedIndexes.begin() + start, rankedIndexes.begin() + start + count);
+    start += count;
+  }
+
+  if (params.scoreSliceSuppressionEnabled) {
+    slices.erase(
+      std::remove_if(
+        slices.begin(), slices.end(), [&](const Partition& slice) {
+          double total = 0.;
+          for (int index : slice.pointIndexes)
+            total += cloud.getScore(index);
+          return slice.pointIndexes.empty()
+            || total / slice.pointIndexes.size() < params.scoreSliceMinAvgScore;
+        }),
+      slices.end());
+  } else {
+    slices.erase(
+      std::remove_if(
+        slices.begin(), slices.end(),
+        [](const Partition& slice) { return slice.pointIndexes.empty(); }),
+      slices.end());
+  }
+
+  std::vector<Partition> refined;
+  for (auto& slice : slices) {
+    if (params.sliceMaxPoints <= 0
+        || int(slice.pointIndexes.size()) <= params.sliceMaxPoints) {
+      refined.push_back(std::move(slice));
+      continue;
+    }
+    for (int start = 0; start < int(slice.pointIndexes.size());
+         start += params.sliceMaxPoints) {
+      Partition sub;
+      sub.tileId = slice.tileId;
+      sub.origin = slice.origin;
+      sub.location = slice.location;
+      const int end = std::min(
+        start + params.sliceMaxPoints, int(slice.pointIndexes.size()));
+      sub.pointIndexes.assign(
+        slice.pointIndexes.begin() + start, slice.pointIndexes.begin() + end);
+      refined.push_back(std::move(sub));
+    }
+  }
+  for (int i = 0; i < int(refined.size()); ++i)
+    refined[i].sliceId = i;
+  return refined;
 }
 
 //============================================================================

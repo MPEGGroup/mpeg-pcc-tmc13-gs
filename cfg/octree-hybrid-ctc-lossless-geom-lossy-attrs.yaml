@@ -9,6 +9,11 @@ categories:
        - !conditional '"${group}" =~ m{^catGS}'
        - mainProfileCompliant: 0
        - gsProfileCompliant: 1
+       - partitionMethod: 6
+       - scoreSlicePointPercentages: '45,30,15,10'
+       - pruningPercentage: 0
+       - scoreSliceSuppressionEnabled: 0
+       - scoreSliceMinAvgScore: 1e-10
        - ""
 
      -
@@ -138,6 +143,8 @@ categories:
        - attrFracBits: 12
        - "# All attributes have the same bitdepth"
        - bitdepth: 12
+       - aps_slice_qp_deltas_present_flag: 1
+       - qpSliceOffsetsLuma: '0,2,4,6'
        - calcQPLayerOffsetsEnabled: 0
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 

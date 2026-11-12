@@ -38,6 +38,7 @@
 #include <memory>
 
 #include "PCCTMC3Encoder.h"
+#include "PCCGaussianSplatPruning.h"
 #include "PCCTMC3Decoder.h"
 #include "constants.h"
 #include "ply.h"
@@ -108,6 +109,9 @@ struct Parameters {
 
   // Filename for saving pre inverse scaled point cloud (decoder).
   std::string preInvScalePath;
+
+  // Filename of the importance scores for each point/splat.
+  std::string importanceScoreTxtPath;
 
   pcc::EncoderParams encoder;
   pcc::DecoderParams decoder;
@@ -545,6 +549,7 @@ operator<<(std::ostream& out, const PartitionMethod& val)
   case PartitionMethod::kOctreeUniform: out << "3 (UniformOctree)"; break;
   case PartitionMethod::kUniformSquare: out << "4 (UniformSquare)"; break;
   case PartitionMethod::kNpoints: out << "5 (NPointSpans)"; break;
+  case PartitionMethod::kImportanceScore: out << "6 (ImportanceScore)"; break;
   default: out << int(val) << " (Unknown)"; break;
   }
   return out;
@@ -690,6 +695,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("preInvScalePath",
     params.preInvScalePath, {},
     "Pre inverse scaled pointcloud file path (decoder only)")
+
+  ("importanceScoreTxtPath",
+    params.importanceScoreTxtPath, {},
+    "Path to the file containing importance scores for each splat")
 
   ("convertPlyColourspace",
     params.convertColourspace, true,
@@ -852,7 +861,24 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  2: n Uniform-geometry partition bins along the longest edge\n"
     "  3: Uniform geometry partition at n octree depth\n"
     "  4: Uniform square partition\n"
-    "  5: n-point spans of input")
+    "  5: n-point spans of input\n"
+    "  6: importance-score ranked slices")
+
+  ("pruningPercentage",
+    params.encoder.pruningPercentage, 0.0,
+    "Score-based pruning percentage before partitioning")
+
+  ("scoreSlicePointPercentages",
+    params.encoder.partition.scoreSlicePointPercentages, {},
+    "Point percentages per importance-score slice, summing to 100")
+
+  ("scoreSliceSuppressionEnabled",
+    params.encoder.partition.scoreSliceSuppressionEnabled, false,
+    "Drop score slices below scoreSliceMinAvgScore")
+
+  ("scoreSliceMinAvgScore",
+    params.encoder.partition.scoreSliceMinAvgScore, 1e-6,
+    "Minimum average score for a retained slice")
 
   ("partitionOctreeDepth",
     params.encoder.partition.octreeDepth, 1,
@@ -1398,6 +1424,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("qpLayerOffsetsChroma",
       params_attr.encoder.abh.attr_layer_qp_delta_chroma, {},
       "Attribute's per layer chroma QP offsets")
+
+    ("qpSliceOffsetsLuma",
+      params_attr.encoder.qpSliceOffsetsLuma, {},
+      "Attribute's per importance-score slice luma QP offsets")
 
    ("calcQPLayerOffsetsEnabled",
     params.encoder.adjustQPLayerOffsetsEnabled, false,
@@ -2167,6 +2197,7 @@ deriveShAcCenters(
 }
 
 //----------------------------------------------------------------------------
+bool readImportance(const std::string& fileName, PCCPointSet3& pointcloud);
 
 int
 SequenceEncoder::compressOneFrame(Stopwatch* clock)
@@ -2187,6 +2218,15 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
     cout << "Error: can't open input file!" << endl;
     return -1;
   }
+  
+  if (pointCloud.hasScores() == false &&
+      params->importanceScoreTxtPath.empty() == false) 
+  {
+    std::string importanceName{expandNum(params->importanceScoreTxtPath, frameNum)};
+    if (!readImportance(importanceName, pointCloud)) {
+      return -1;
+    }
+  }
 
   // Some evaluations wish to scan the points in azimuth order to simulate
   // real-time acquisition (since the input has lost its original order).
@@ -2194,6 +2234,20 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (params->sortInputByAzimuth)
     sortByAzimuth(
       pointCloud, 0, pointCloud.getPointCount(), 0., _angularOrigin);
+
+    params->encoder.pruningInputPointCount = pointCloud.getPointCount();
+    params->encoder.pruningPrePartitionRemovedPointCount = 0;
+    params->encoder.pruningPostPartitionRemovedPointCount = 0;
+    params->encoder.pruningRemainingPointCount = pointCloud.getPointCount();
+    if (params->encoder.pruningPercentage > 0.) {
+      if (!pruneGaussianSplatsByScore(
+            pointCloud, params->encoder.pruningPercentage)) {
+        cout << "Error: can't apply score-based pruning!" << endl;
+        return -1;
+      }
+      params->encoder.pruningPrePartitionRemovedPointCount =
+        params->encoder.pruningInputPointCount - pointCloud.getPointCount();
+    }
 
   auto hasAttr = [&](const std::string& name) {
       return std::find_if(params->encoder.attributeIdxMap.begin(), 
@@ -2631,3 +2685,43 @@ SequenceCodec::scaleAttributesForOutput(
 }
 
 //============================================================================
+
+bool readImportance(const std::string& fileName, PCCPointSet3& pointcloud) {
+  std::ifstream ifs(fileName);
+  if (!ifs.is_open()) {
+    std::cerr << "Error: can not open file (" << fileName << ")" << std::endl;
+    return false;
+  }
+
+  pointcloud.addScores();
+  const size_t pointCount = pointcloud.getPointCount();
+  
+  std::string line;
+  float value = 0.0f;
+  size_t i = 0;
+
+  while (std::getline(ifs, line)) {
+    if (line.empty()) continue;
+
+    std::istringstream iss(line);
+    if (!(iss >> value)) {
+      std::cerr << "Error: invalid float value at line " << (i + 1) << std::endl;
+      return false;
+    }
+
+    if (i >= pointCount) {
+      std::cerr << "Error: too many importance scores in file (" << fileName << ")" << std::endl;
+      return false;
+    }
+    std::cout << value << std::endl;
+    pointcloud.setScore(i++, value);
+  }
+
+  if (i != pointCount) {
+    std::cerr << "Error: the number of importance score values (" << i 
+              << ") is mismatched with the number of point/splat (" << pointCount << ")" << std::endl;
+    return false;
+  }
+
+  return true;
+}

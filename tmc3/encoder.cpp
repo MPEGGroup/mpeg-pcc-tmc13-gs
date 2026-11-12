@@ -140,6 +140,8 @@ PCCTMC3Encoder3::compress(
   PCCTMC3Encoder3::Callbacks* callback,
   CloudFrame* reconCloud)
 {
+  params->pruningPostPartitionRemovedPointCount = 0;
+
   // start of frame
   _frameCounter++;
 
@@ -288,6 +290,7 @@ PCCTMC3Encoder3::compress(
   // initial geometry IDs
   _tileId = 0;
   _sliceId = 0;
+  _scoreSliceId = -1;
   _sliceOrigin = Vec3<int>{0};
   _firstSliceInFrame = true;
 
@@ -442,7 +445,8 @@ PCCTMC3Encoder3::compress(
 
       // don't partition if partitioning would result in a single slice.
       auto partitionMethod = params->partition.method;
-      if (tileCloud.getPointCount() < params->partition.sliceMaxPoints)
+      if (params->partition.method != PartitionMethod::kImportanceScore
+          && tileCloud.getPointCount() < params->partition.sliceMaxPoints)
         partitionMethod = PartitionMethod::kNone;
 
       // use the largest trisoup node size as a partitioning boundary for
@@ -477,6 +481,17 @@ PCCTMC3Encoder3::compress(
 
       case PartitionMethod::kNpoints:
         curSlices = partitionByNpts(params->partition, tileCloud, tile_id);
+        break;
+      case PartitionMethod::kImportanceScore:
+        curSlices = partitionByImportanceScore(
+          params->partition, tileCloud, tile_id);
+        {
+          size_t keptPoints = 0;
+          for (const auto& slice : curSlices)
+            keptPoints += slice.pointIndexes.size();
+          params->pruningPostPartitionRemovedPointCount +=
+            tileCloud.getPointCount() - keptPoints;
+        }
         break;
       }
       
@@ -526,6 +541,8 @@ PCCTMC3Encoder3::compress(
       getPartition(inputPointCloud, quantizedInput, partition.pointIndexes);
 
     _tileId = partition.tileId;
+    _scoreSliceId = params->partition.method == PartitionMethod::kImportanceScore
+      ? partition.location[0] : -1;
     _sliceOrigin = sliceCloud.computeBoundingBox().min;
     compressPartition(sliceCloud, sliceSrcCloud, params, callback, reconCloud);
   }
@@ -867,8 +884,14 @@ PCCTMC3Encoder3::compressPartition(
     abh.attr_attr_parameter_set_id_v1 = abh.attr_attr_parameter_set_id - (abh.attr_attr_parameter_set_id_extension_2bits << 4);
     abh.attr_sps_attr_idx = attrIdx;
     abh.attr_geom_slice_id = _sliceId;
-    abh.attr_qp_delta_luma = 0;
-    abh.attr_qp_delta_chroma = 0;
+    int sliceQpDeltaLuma = 0;
+    if (params->partition.method == PartitionMethod::kImportanceScore
+        && !attr_enc.qpSliceOffsetsLuma.empty()
+        && _scoreSliceId >= 0
+        && _scoreSliceId < int(attr_enc.qpSliceOffsetsLuma.size()))
+      sliceQpDeltaLuma = attr_enc.qpSliceOffsetsLuma[_scoreSliceId];
+    abh.attr_qp_delta_luma = sliceQpDeltaLuma;
+    abh.attr_qp_delta_chroma = sliceQpDeltaLuma;
     if (params->adjustQPLayerOffsetsEnabled) {
       abh.attr_layer_qp_delta_luma = qpLayers;
       abh.attr_layer_qp_delta_chroma = qpLayers;
@@ -1215,6 +1238,8 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
     src.hasColors(), src.hasReflectances(), src.hasOpacities(),
     src.hasScales(), src.hasScalarRotations(), src.hasRotations(),
     src.hasSHCoefficients(), src.hasFrameIndex());
+  if (src.hasScores())
+    dst.addScores();
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -1250,6 +1275,9 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 			for (int k = 0; k < src.getNumSHCoeffs(); k++)
 				dst.setSHCoefficient(k, i, src.getSHCoefficient(k, inputIdx));
 		}
+
+    if (src.hasScores())
+      dst.setScore(i, src.getScore(inputIdx));
   }
 
   return dst;

@@ -251,6 +251,7 @@ public:
     withScalarRotations = false;
     withRotations = false;
     withSHCoefficients = false;
+    withScores = false;
   }
   PCCPointSet3(const PCCPointSet3&) = default;
   PCCPointSet3& operator=(const PCCPointSet3& rhs) = default;
@@ -268,6 +269,7 @@ public:
     swap(rotations_vec, other.rotations_vec);
     swap(rotations_scalar, other.rotations_scalar);
     swap(sh_coefficients, other.sh_coefficients);
+    swap(scores, other.scores);
 
     swap(withColors, other.withColors);
     swap(withReflectances, other.withReflectances);
@@ -277,6 +279,7 @@ public:
     swap(withScalarRotations, other.withScalarRotations);
     swap(withRotations, other.withRotations);
     swap(withSHCoefficients, other.withSHCoefficients);
+    swap(withScores, other.withScores);
 
     swap(colors_attr_indices, other.colors_attr_indices);
     swap(reflectances_attr_indices, other.reflectances_attr_indices);
@@ -403,6 +406,34 @@ public:
   {
     withScales = false;
     scales.resize(0);
+  }
+
+  float getScore(const size_t index) const
+  {
+    assert(index < scores.size() && withScores);
+    return scores[index];
+  }
+  float& getScore(const size_t index)
+  {
+    assert(index < scores.size() && withScores);
+    return scores[index];
+  }
+  std::vector<float>& getScores() { return scores; }
+  void setScore(const size_t index, const float score)
+  {
+    assert(index < scores.size() && withScores);
+    scores[index] = score;
+  }
+  bool hasScores() const { return withScores; }
+  void addScores()
+  {
+    withScores = true;
+    resize(getPointCount());
+  }
+  void removeScores()
+  {
+    withScores = false;
+    scores.resize(0);
   }
 
 	Vec3<attr_t> getRotationVec(const size_t index) const
@@ -643,6 +674,8 @@ public:
       for (int i = 0; i < numSHCoeffs; i++)
         sh_coefficients[i].resize(size);
     }
+    if (hasScores())
+      scores.resize(size);
   }
 
   void reserve(const size_t size)
@@ -671,6 +704,8 @@ public:
       for (int i = 0; i < numSHCoeffs; i++)
         sh_coefficients[i].reserve(size);
     }
+    if (hasScores())
+      scores.reserve(size);
   }
   void clear()
   {
@@ -682,6 +717,7 @@ public:
     withScalarRotations = false;
     withRotations = false;
     withSHCoefficients = false;
+    withScores = false;
 
     positions.clear();
     colors.clear();
@@ -705,6 +741,7 @@ public:
     rotations_attr_indices.clear();
     sh_coefficients_attr_indices.clear();
     others_attr_indices.clear();
+    scores.clear();
   }
 
   size_t removeDuplicatePointInQuantizedPoint(int minGeomNodeSizeLog2)
@@ -789,6 +826,10 @@ public:
           std::next(sh_coefficients[i].begin(), dstEnd));
       }
     }
+    if (hasScores() && src.hasScores())
+      std::copy(
+        src.scores.begin(), src.scores.end(),
+        std::next(scores.begin(), dstEnd));
   }
 
   void swapPoints(const size_t index1, const size_t index2)
@@ -822,6 +863,8 @@ public:
       for (int i = 0; i < sh_coefficients.size(); i++)
         std::swap(getSHCoefficient(i, index1), getSHCoefficient(i, index2));
     }
+    if (hasScores())
+      std::swap(getScore(index1), getScore(index2));
   }
 
   Box3<int32_t> computeBoundingBox() const
@@ -1004,6 +1047,7 @@ private:
   std::vector<Vec3<attr_t>> rotations_vec;		// Quaternion (xyz) 
   std::vector<attr_t> rotations_scalar;				// Quaternion (w) 
   std::vector<std::vector<Vec3<attr_t>>> sh_coefficients;
+  std::vector<float> scores;
   int numSHCoeffs = -1;
 
   bool withOpacities;
@@ -1011,6 +1055,7 @@ private:
   bool withScalarRotations;
   bool withRotations;
   bool withSHCoefficients;
+  bool withScores;
 
   std::vector<int> colors_attr_indices;
   std::vector<int> reflectances_attr_indices;
