@@ -136,7 +136,7 @@ categories:
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}'    
        - numSHCoeffBandsMinus1: 3
-       - ""       
+       - "# SH pre-/post-processing parameters ----------"
        - gsdTransform2dPresentFlag: 1 
        -
          - !conditional '"${group}" eq "catGS-FF"'
@@ -149,6 +149,8 @@ categories:
        - enableShNonUniformQuantization: 1
        - shNqRangeMode: 0 
        - shAdaptiveTpOpt: 0
+       - shLowVarPca: 1
+       - "# ---------------------------------------------"  
        - raht_adaptive_block_size_enabled: 0
        - attrScaleNonUniformQuantEnabled: 1
        - colourMatrix: 1

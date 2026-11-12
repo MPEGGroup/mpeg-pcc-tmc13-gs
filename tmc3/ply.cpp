@@ -1843,6 +1843,48 @@ ply::read(
       }
     }
 
+    if (shParams.shLowVarPcaGateOpen_ && numSHCoeffs > 1) {
+      double scaleTab[16][3];
+      for (int b = 0; b < 16; ++b)
+        scaleTab[b][0] = scaleTab[b][1] = scaleTab[b][2] = 1.0;
+      int kiF = 0;
+      for (size_t gi = 0; gi < shParams.shTrGrpRow_.size(); ++gi) {
+        if (shParams.shKltFlag_[gi] != 1) continue;
+        auto&       klt = shParams.shKltParams_[kiF++];
+        const auto& grp = shParams.shTrGrpRow_[gi];
+        if (grp.size() == 1 && grp[0] == 0) continue;
+        int fullSize = int(grp.size()) * 3;
+        for (int j = 0; j < fullSize; ++j) {
+          double rowL2sq = 0.0;
+          for (int i = 0; i < fullSize; ++i)
+            rowL2sq += klt.eigvec[j][i] * klt.eigvec[j][i];
+          scaleTab[grp[j / 3]][j % 3] = std::sqrt(std::max(rowL2sq, 1e-24));
+        }
+      }
+      Stats acVan;
+      const int acBandCount = std::min(numSHCoeffs, 16);
+      for (int l = 1; l < acBandCount; ++l)
+        for (int ch = 0; ch < 3; ++ch) {
+          const double* buf = &inputAttrBuf[shIndices[l][ch] * pointCount];
+          const double  sc = scaleTab[l][ch];
+          for (int p = 0; p < pointCount; ++p) acVan.update(buf[p] * sc);
+        }
+      int rmin = int(std::floor(acVan.min));
+      int rmax = int(std::ceil(acVan.max));
+      if (rmax <= rmin) rmax = rmin + 1;
+      for (auto& desc : attrDescs) {
+        if (desc.attributeLabel != KnownAttributeLabel::kSH_coefficients) continue;
+        if (int(desc.params.sh_coefficient_label) == 0) continue;
+        int64_t fb = 1ll << desc.params.attr_frac_bits;
+        int64_t bs = (1ll << desc.bitdepth) - 1ll;
+        int64_t dcode = int64_t(rmax) - int64_t(rmin);
+        int64_t asc = (dcode * fb + (bs >> 1)) / bs;
+        if (asc <= 0) asc = 1;
+        desc.params.attr_offset = rmin;
+        desc.params.attr_scale_minus1 = asc - 1;
+      }
+    }
+
     if (enableShNonUniformQuantization) {
       extractSHQuantRegions(witSHCoefficients, shView, pointCount, attrDescs);
 

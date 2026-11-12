@@ -330,7 +330,7 @@ bool sphericalHarmonicsInvTransform(bool witSHCoefficients, std::vector<GSPoint>
 //============================================================================
 
 static bool computeShKltFromView(SHBufferView& shView, size_t pointCount,
-  const std::vector<int>& groupidx, PCCKltParameters& klt) {
+  const std::vector<int>& groupidx, PCCKltParameters& klt, bool covMode = false) {
   if (pointCount == 0) return false;
   const size_t size = groupidx.size();
   const size_t fullSize = size * 3;
@@ -364,7 +364,7 @@ static bool computeShKltFromView(SHBufferView& shView, size_t pointCount,
   for (int j = 0; j < fullSize; ++j) {
     sigma[j] = std::sqrt(sigma[j] / (double)pointCount);
     if (sigma[j] < 1e-10) sigma[j] = 1.0;
-    klt.sigma[j] = sigma[j];
+    klt.sigma[j] = covMode ? (1.0 / 17.5) : sigma[j];
   }
 
   // Compute covariance
@@ -424,8 +424,28 @@ static bool computeShKltFromView(SHBufferView& shView, size_t pointCount,
   return true;
 }
 
+static void applyL1RowScaling(PCCKltParameters& klt, int n, double alpha) {
+  for (int j = 0; j < n; ++j) {
+    double rowL1_j = 0.0;
+    for (int i = 0; i < n; ++i) rowL1_j += std::fabs(klt.eigvec[j][i]);
+    double scale = std::pow(rowL1_j, alpha);
+    for (int i = 0; i < n; ++i) {
+      klt.eigvec[j][i] *= scale;
+      klt.eigvecFxp[j][i] = (int64_t)round(klt.eigvec[j][i] * (1 << KLT_SCALE));
+    }
+  }
+}
+
+static constexpr double kRowL1MeanMin = 2.10;
+static constexpr double kRowL1MeanMax = 2.45;
+
+static double computeAlphaFromRowL1Mean(double rowL1Mean) {
+  double a = (rowL1Mean - kRowL1MeanMin) / (kRowL1MeanMax - kRowL1MeanMin);
+  return std::max(0.0, std::min(1.0, a));
+}
+
 bool sphericalHarmonicsTransform2D(bool witSHCoefficients, SHBufferView& shView,
-  size_t pointCount, AttributeParameters& params) {
+  size_t pointCount, AttributeParameters& params, double alphaFrame = 0.0) {
   if (!witSHCoefficients) return false;
 
   const double tr3x3[3][3][3] = {
@@ -536,9 +556,20 @@ bool sphericalHarmonicsTransform2D(bool witSHCoefficients, SHBufferView& shView,
         for (int idx : groupidx) { params.shTrTypeCol_[idx] = -1; }
       } else {
         PCCKltParameters klt;
-        if (!computeShKltFromView(shView, pointCount, groupidx, klt)) continue;
+        if (!computeShKltFromView(shView, pointCount, groupidx, klt,
+                                  params.shLowVarPcaGateOpen_)) continue;
 
         int fullSize = size * 3;
+
+        std::vector<double> rowL2sq(fullSize, 1.0);
+        if (params.shLowVarPcaGateOpen_) {
+          applyL1RowScaling(klt, fullSize, alphaFrame);
+          for (int j = 0; j < fullSize; j++) {
+            rowL2sq[j] = 0.0;
+            for (int i = 0; i < fullSize; i++)
+              rowL2sq[j] += klt.eigvec[j][i] * klt.eigvec[j][i];
+          }
+        }
         std::vector<double> X(fullSize);
         for (size_t p = 0; p < pointCount; ++p) {
           for (int j = 0; j < fullSize; j++) {
@@ -547,7 +578,7 @@ bool sphericalHarmonicsTransform2D(bool witSHCoefficients, SHBufferView& shView,
           for (int j = 0; j < fullSize; j++) {
             double y = 0.0;
             for (int i = 0; i < fullSize; i++) { y += klt.eigvec[j][i] * X[i]; }
-            shView.sh(p, groupidx[j / 3], j % 3) = static_cast<float>(y / 17.5);
+            shView.sh(p, groupidx[j / 3], j % 3) = static_cast<float>(y / rowL2sq[j] / 17.5);
           }
         }
         params.shKltParams_.push_back(klt);
@@ -587,6 +618,7 @@ bool sphericalHarmonicsTransform(bool witSHCoefficients, SHBufferView& shView,
   size_t pointCount, AttributeParameters& params, bool convertColourspace) {
   if (!witSHCoefficients) return false;
   if (params.attr_sh_grp_transform_enabled) {
+    params.shLowVarPcaGateOpen_ = false;
     bool anyKlt = false;
     for (int flag : params.shKltFlag_) {
       if (flag == 1) { anyKlt = true; break; }
@@ -612,16 +644,40 @@ bool sphericalHarmonicsTransform(bool witSHCoefficients, SHBufferView& shView,
         }
         double meanStd = totalStd / count;
         if (meanStd < 0.05) {
-          params.shTrTypeCol_.assign(16, 0);
-          params.shTrTypeCol_[0] = 0;
-          params.shTrGrpRow_ = { { 1, 5, 11 }, { 3, 7, 13 }, { 4, 10 }, { 8, 14 }, { 2, 6, 12 }, { 9, 15 } };
-          params.shTrTypeRow_.assign(6, 2);
-          params.shKltFlag_.assign(6, 0);
-          params.dataAdaptiveShTransformEnabled_ = false;
+          if (params.shLowVarPca_) {
+            params.shLowVarPcaGateOpen_ = true;
+          } else {
+            params.shTrTypeCol_.assign(16, 0);
+            params.shTrTypeCol_[0] = 0;
+            params.shTrGrpRow_ = { { 1, 5, 11 }, { 3, 7, 13 }, { 4, 10 }, { 8, 14 }, { 2, 6, 12 }, { 9, 15 } };
+            params.shTrTypeRow_.assign(6, 2);
+            params.shKltFlag_.assign(6, 0);
+            params.dataAdaptiveShTransformEnabled_ = false;
+          }
         }
       }
     }
-    return sphericalHarmonicsTransform2D(witSHCoefficients, shView, pointCount, params);
+
+    double alphaFrame = 0.0;
+    if (params.shLowVarPcaGateOpen_) {
+      double rowL1Sum = 0.0;
+      int    rowCount = 0;
+      for (const auto& groupidx : params.shTrGrpRow_) {
+        if (groupidx.size() == 1 && groupidx[0] == 0) continue;
+        PCCKltParameters klt;
+        if (!computeShKltFromView(shView, pointCount, groupidx, klt, true)) continue;
+        int fullSize = (int)groupidx.size() * 3;
+        for (int j = 0; j < fullSize; ++j) {
+          double rowL1_j = 0.0;
+          for (int i = 0; i < fullSize; ++i) rowL1_j += std::fabs(klt.eigvec[j][i]);
+          rowL1Sum += rowL1_j;
+          ++rowCount;
+        }
+      }
+      if (rowCount > 0)
+        alphaFrame = computeAlphaFromRowL1Mean(rowL1Sum / rowCount);
+    }
+    return sphericalHarmonicsTransform2D(witSHCoefficients, shView, pointCount, params, alphaFrame);
   }
   else {
     if (!convertColourspace) return true;

@@ -432,14 +432,19 @@ struct AttributeParameters {
   int shNumBitsForTransitionPoint_[3];
   std::vector<int> shTransitionPoints_[3];
   std::vector<int64_t> shStepSizesFxp_[3];
+  std::vector<double> shStepSizes_[3];
+  double min_offset[3] = {};
 
   // Result of the auto range-mode decision (set at encode time): all AC bands
   // share one (offset, scale).
   bool shAcRangeShared_ = false;
+
+  // Parameters of the low variance SH coefficients
+  bool shLowVarPca_ = false;
+  bool shLowVarPcaGateOpen_ = false;
+
   int64_t min_offset_fxp[3] = {};
 
-  std::vector<double> shStepSizes_[3];
-  double min_offset[3] = {};
 
   // SH Dimension Reduction 
   bool enableShDimensionReduction_ = false;
@@ -510,6 +515,8 @@ struct AttributeParameters {
     shDimRedVarianceThreshold_ = 0.995;
     shNumRetainComponents_.clear();
     shTotalRetainedComponents_ = 0;
+    shLowVarPca_ = false;
+    shLowVarPcaGateOpen_ = false;
   }
 };
 

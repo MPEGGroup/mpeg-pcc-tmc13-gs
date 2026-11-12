@@ -141,7 +141,7 @@ categories:
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 
        - numSHCoeffBandsMinus1: 3
-       - ""  
+       - "# SH pre-/post-processing parameters ----------"  
        - gsdTransform2dPresentFlag: 1 
        - dataAdaptiveShTransform: 1
        - enableGsdPcaDc: 1
@@ -149,6 +149,8 @@ categories:
        - shNqRangeMode: 0 
        - shAdaptiveTpOpt: 1
        - attr_ac_scaling_enabled_flag: 1
+       - shLowVarPca: 1
+       - "# ---------------------------------------------"  
        - raht_adaptive_block_size_enabled: 1
        - attrScaleNonUniformQuantEnabled: 1
        - colourMatrix: 1

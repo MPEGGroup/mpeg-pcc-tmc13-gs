@@ -1226,6 +1226,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.desc.params.shNqRangeMode_, 0,
     "NQ range mode for SH: 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band")
 
+  ("shLowVarPca",
+    params_attr.desc.params.shLowVarPca_, false,
+    "On low-variance SH Coefficients (meanStd < 0.05) keep the grouped PCA")
+
   ("shAdaptiveTpOpt",
     params_attr.desc.params.shAdaptiveTpOptEnabled_, false,
     "Enable adaptive transition point optimization")
