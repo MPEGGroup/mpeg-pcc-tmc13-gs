@@ -62,6 +62,9 @@ enum class PartitionMethod
 
   // Paritition into n-point slices
   kNpoints = 5,
+
+  // Partition by per-point importance score
+  kImportanceScore = 6,
 };
 
 //============================================================================
@@ -81,6 +84,10 @@ struct PartitionParams {
 
   // Baseline tile width. (0 => disabled)
   int tileSize;
+
+  std::vector<int> scoreSlicePointPercentages;
+  bool scoreSliceSuppressionEnabled;
+  double scoreSliceMinAvgScore;
 };
 
 //============================================================================
@@ -138,6 +145,9 @@ std::vector<Partition> partitionByNpts(
 std::vector<Partition> partitionNone(
   const PartitionParams& params, const PCCPointSet3& cloud, int tileID);
 
+std::vector<Partition> partitionByImportanceScore(
+  const PartitionParams& params, const PCCPointSet3& cloud, int tileID);
+
 //============================================================================
 
 std::vector<std::vector<int32_t>>
@@ -153,5 +163,13 @@ void refineSlicesByAdjacentInfo(
   const int tileID);
 
 //============================================================================
+
+void splitSliceByExtentRecursive(
+  const PCCPointSet3& cloud,
+  const Partition& inputSlice,
+  std::vector<Partition>& outputSlices);
+
+//============================================================================
+
 
 }  // namespace pcc

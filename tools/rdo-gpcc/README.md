@@ -54,7 +54,7 @@ This project depends on the following third-party libraries. Clone and build eac
 
 | Library | Repository | Tested version |
 |---|---|---|
-| mpeg-pcc-tmc13-gs | https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs | `release-v3.0-rc2` |
+| mpeg-pcc-tmc13-gs | https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs | `release-v4.0-rc1` |
 | mpeg-gsc-metrics | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics | `release_mpeg155` |
 | mpeg-gsc-tools | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-tools | `release_mpeg155` |
 | mpeg-gsc-importance | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-importance | `release_mpeg155` |
@@ -86,6 +86,8 @@ Copy [`scripts/gen-script/gen-script-with-finetuning.sh`](scripts/gen-script/gen
 | `RDOGPCC_DIR`* | This repository (defaults to `${TMC13_DIR}/tools/rdo-gpcc`) |
 | `GSTOOLS_BIN`* | `gstools` binary from `mpeg-gsc-tools` |
 | `IMP_BIN`* | `importance-scores` binary from the pruning build of `mpeg-gsc-metrics` |
+| `FLAG_MULTILAYER`* | Multi-layer joint fine-tuning of the SH layers (m77600) after the fine-tuning (`0`: off, `1`: on; see [`README.multilayer.md`](README.multilayer.md)) |
+| `MULTILAYER_STEPS`* | Training steps of the multi-layer joint fine-tuning (default `10000`) |
 
 `FLAG_FINETUNE` selects the fine-tuning mode:
 

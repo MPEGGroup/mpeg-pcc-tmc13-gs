@@ -50,7 +50,7 @@ WRITE() { echo "$2" >> "$1"; }
 MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 
 ## Experiment name
-JOBNAME="TM13-GS-v3.0-rc2"
+JOBNAME="TM13-GS-v4.0-rc1"
 
 ## Encoder flags
 enc_flags=""
@@ -68,6 +68,7 @@ INPUT_SEQUENCES_CFG="${SCRIPT_DIR}/testset_inputs/dataset.config.ctc.sh"
 ## Dataset path
 DATASET_PATH=/path/to/CTC/dataset
 PLYS_SUBFOLDER="plys"
+CAMERAPOS="${CAMERAPOS:-camerapos}"  # Camera-position filename component
 
 ## Output path
 BASE_OUTPUT="/path/to/output"
@@ -139,8 +140,8 @@ ADD_SEQ() {
 
     if [[ "$seq" == "library" ]]; then
         # Check if the camerapos.ply file exists for the library sequence
-        if [ -f "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" ]; then
-            camera_count=$(grep -v "camera_position" "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.camerapos.ply" | wc -l)
+        if [ -f "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.$CAMERAPOS.ply" ]; then
+            camera_count=$(grep -v "camera_position" "$DATASET_PATH/$seq/$PLYS_SUBFOLDER/frame_0000.$CAMERAPOS.ply" | wc -l)
             if [ "$camera_count" -gt 100 ]; then
                 echo "[ERROR] Please update the library dataset from 4,000 views to the 100-sampled COLMAP version on the content server."
                 exit 1
@@ -178,9 +179,9 @@ for SEQ in "${!PATHs[@]}"; do
         exit 1
     fi
     shopt -s nullglob
-    files=("$PLY_PATH"/*.camerapos.ply)
+    files=("$PLY_PATH"/*.$CAMERAPOS.ply)
     if (( ${#files[@]} < 1 )); then
-        echo "❌ No *.camerapos.ply in $PLY_PATH"
+        echo "❌ No *.$CAMERAPOS.ply in $PLY_PATH"
         exit 1
     fi
 done
@@ -266,7 +267,7 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
 
     for SEQ in "${!PATHs[@]}"; do
         PLY_PATH="${PATHs[$SEQ]}"
-        files=("$PLY_PATH"/*.camerapos.ply)
+        files=("$PLY_PATH"/*.$CAMERAPOS.ply)
         read -r REN_W REN_H <<< "${REND_RESs[$SEQ]}"
         
         # set the start frame, the number of frames, viewpoints sampling period
@@ -286,9 +287,9 @@ for MODE_TOOL in "${MODE_TOOLs[@]}"; do
                 echo "#SBATCH --nodes=1"
                 echo "#SBATCH --mem-per-cpu=16G"
                 if [ $FLAG_GOF == 1 ]; then
-                    echo "$PYTHON \"$PREPROCESS_CONCAT_SCRIPT\" --input-glob \"${PLY_PATH%/}/*.camerapos.ply\" --out-dir \"$PRE_DIR\" --group-frame-count $GOF_GROUP_FRAME_COUNT --prune $PRUNE_PCT --frame-count $NUM_FRAMES --frame-id-scale $FRAME_ID_SCALE"
+                    echo "$PYTHON \"$PREPROCESS_CONCAT_SCRIPT\" --input-glob \"${PLY_PATH%/}/*.$CAMERAPOS.ply\" --out-dir \"$PRE_DIR\" --group-frame-count $GOF_GROUP_FRAME_COUNT --prune $PRUNE_PCT --frame-count $NUM_FRAMES --frame-id-scale $FRAME_ID_SCALE"
                 else
-                    echo "$PYTHON \"$PREPROCESS_CONCAT_SCRIPT\" --input-glob \"${PLY_PATH%/}/*.camerapos.ply\" --out-dir \"$PRE_DIR\" --frame-count $NUM_FRAMES --frame-id-scale $FRAME_ID_SCALE"
+                    echo "$PYTHON \"$PREPROCESS_CONCAT_SCRIPT\" --input-glob \"${PLY_PATH%/}/*.$CAMERAPOS.ply\" --out-dir \"$PRE_DIR\" --frame-count $NUM_FRAMES --frame-id-scale $FRAME_ID_SCALE"
                 fi
                 echo "touch $OUT/jobs/done/pre/\${SLURM_JOB_ID:-UNDEFINED}"
             } > "$PRE_JOB"
@@ -365,7 +366,7 @@ EOF
                 done
             else
             for FILE in "${SelFILEs[@]}"; do
-                FRAME="$(basename "$FILE" .camerapos.ply)"
+                FRAME="$(basename "$FILE" .$CAMERAPOS.ply)"
                 JOBFILE="$BATCH_GPCC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME.sh"
 
                 {
@@ -375,7 +376,7 @@ EOF
                     echo "#SBATCH --nodes=1"
                     echo "#SBATCH --mem-per-cpu=8G"
                     echo "set -euo pipefail"
-                    SRC_PLY="${FILE/.camerapos/}"
+                    SRC_PLY="$FILE"
                     if [ $FLAG_EXT_PP == 1 ]; then
                         echo "$PYTHON ${PRE_SCRIPT} -i \"$SRC_PLY\" -c \"$RESULT_DIR/$FRAME.json\" -o \"$RESULT_DIR/$FRAME.pre.ply\""
                         echo "make -f $TMC13_DIR/scripts/Makefile.tmc13-step -C \"$RESULT_DIR\" VPATH=\"$CFG\" ENCODER=\"$TMC13_BIN\" DECODER=\"$TMC13_BIN\" SRCSEQ=\"$RESULT_DIR/$FRAME.pre.ply\" ENCFLAGS=\"${enc_flags}\""
@@ -387,7 +388,11 @@ EOF
                 } > "$JOBFILE"
                 chmod +x "$JOBFILE"
                 echo "$JOBFILE" >> "$RUN_GPCC"
-
+                if [ $FLAG_EXT_PP == 1 ]; then
+                    METRIC_DECODE="$RESULT_DIR/$FRAME.ply.bin.decoded.ply"
+                else
+                    METRIC_DECODE="$RESULT_DIR/$FRAME.$CAMERAPOS.ply.bin.decoded.ply"
+                fi
                 numVIEWs=$(grep -a "camera_position" "$FILE" | grep -v "camera_position_header" | wc -l)
                 for (( VIEW=0; VIEW<numVIEWs; VIEW+=1 )); do
                     JOBFILE_MET="$BATCH_METRIC/$JOBNAME-$CURTIME-$TOOL-$MODE-$SEQ-$RATE-$FRAME-$VIEW.sh"
@@ -398,7 +403,7 @@ EOF
                         echo "#SBATCH --nodes=1"
                         echo "#SBATCH --mem-per-cpu=8G"
                         echo "set -euo pipefail"
-                        echo "$METRIC --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeOm=0 --computeSsim=0 --computeIvssim=0 --computeQmiv=0 --source=\"$FILE\" --decode=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply\" --output=\"$RESULT_DIR/$FRAME.ply.bin.decoded.ply.v$VIEW.metric\""
+                        echo "$METRIC --startFrame=0 --frameCount=1 --width=$REN_W --height=$REN_H --cpu=1 --threads=1 --useCameraPosition=1 --onlyViewpoint=$VIEW --computeOm=0 --computeSsim=0 --computeIvssim=0 --computeQmiv=0 --source=\"$FILE\" --decode=\"$METRIC_DECODE\" --output=\"$METRIC_DECODE.v$VIEW.metric\""
                         echo "touch $OUT/jobs/done/metric/\${SLURM_JOB_ID:-UNDEFINED}"
                     } > "$JOBFILE_MET"
                     chmod +x "$JOBFILE_MET"

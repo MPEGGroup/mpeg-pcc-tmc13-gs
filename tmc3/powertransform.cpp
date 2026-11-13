@@ -991,6 +991,15 @@ inverseScalePowerTransform(
   }
 }
 
+double
+inverseScalePowerTransformValue(
+  const AttributeDescription& desc, int c, int code)
+{
+  ScalePowerRuntimeContext ctxt = scalePowerMakeRuntimeContext(desc, c);
+  return scalePowerInverseTransform(
+    ctxt, scalePowerInverseRegionValue(ctxt, code));
+}
+
 int
 quantizeScalePowerTransform(
   const AttributeDescription& desc, double value, int c, int64_t clipMax)

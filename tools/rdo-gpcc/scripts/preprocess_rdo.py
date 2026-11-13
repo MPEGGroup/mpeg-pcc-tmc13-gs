@@ -102,6 +102,19 @@ def finetune_splats(
         shN=make_tensor(sh[:, 1:, :]),
     )
 
+    # The model being optimised may differ from the pseudo-GT reference above.
+    if init is None:
+        i_pos, i_sh, i_opacity, i_scale, i_rot = pos, sh, opacity, scale, rot
+    else:
+        i_pos, i_sh, i_opacity, i_scale, i_rot = init
+        if len(i_pos) == n_orig_splats:
+            # Same point set as the reference: drop the invalid gaussians too.
+            i_pos, i_sh = i_pos[mask], i_sh[mask]
+            i_opacity, i_scale, i_rot = i_opacity[mask], i_scale[mask], i_rot[mask]
+        # Otherwise the init model comes from an earlier stage, which has already
+        # removed the invalid gaussians and may also have pruned some.
+        CONSOLE.log(f"Starting optimisation from {config.init_ply_path}.")
+
     # Splats to finetune.
     # We fix positions and optimize the other attributes.
     splats = SplatModel(

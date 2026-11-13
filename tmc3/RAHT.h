@@ -44,6 +44,8 @@
 
 namespace pcc {
 
+int maxRahtPrecision(int numPoints, int bitdepth);
+
 void regionAdaptiveHierarchicalTransform(
   bool raht_prediction_enabled_flag,
   const int predictionThreshold[2],

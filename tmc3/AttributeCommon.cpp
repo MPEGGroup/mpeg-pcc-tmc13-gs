@@ -35,6 +35,10 @@
 
 #include "AttributeCommon.h"
 #include "PCCTMC3Common.h"
+#include "ply.h"
+
+#include <cmath>
+#include <cstdio>
 
 namespace pcc {
 
@@ -383,6 +387,171 @@ void fwdDcShift(
       }
     }
   }
+}
+
+//============================================================================
+
+static double sigmoid(double x)
+{
+  if (x >= 0.0) {
+    double z = std::exp(-x);
+    return 1.0 / (1.0 + z);
+  }
+
+  double z = std::exp(x);
+  return z / (1.0 + z);
+}
+
+void
+applyShAcInterAttributeScaling(
+  pcc::PCCPointSet3& pointCloud,
+  const std::vector<AttributeDescription>& attributeSets,
+  bool isForwardTransform)
+{
+  // Locate the scale, opacity and SH AC scaling attributes. This also
+  // determines whether SH AC scaling is enabled at all.
+  const AttributeDescription* scale_sps = nullptr;
+  const AttributeDescription* opacity_sps = nullptr;
+  int shAcScalingOffset = 0;
+  std::vector<int> shAcScalingCenter;
+
+  std::vector<int> sh_bitdepth(16);
+  std::vector<int> sh_center(16);
+  std::vector<int> sh_num_components(16, 3);
+  for (auto& attributeSet : attributeSets) {
+    if (attributeSet.attributeLabel == KnownAttributeLabel::kScale) {
+      scale_sps = &attributeSet;
+    }
+    else if (attributeSet.attributeLabel == KnownAttributeLabel::kOpacity) {
+      opacity_sps = &attributeSet;
+    }
+    else if (attributeSet.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
+      int sh_coefficient_label = int(attributeSet.params.sh_coefficient_label);
+      sh_bitdepth[sh_coefficient_label] = attributeSet.bitdepth;
+      sh_num_components[sh_coefficient_label] = attributeSet.attr_num_dimensions_minus1 + 1;
+      int64_t attr_scale = attributeSet.params.attr_scale_minus1 + 1;
+      int64_t attr_frac_bits_scale = 1 << attributeSet.params.attr_frac_bits;
+      int64_t clip_max = (1 << attributeSet.bitdepth) - 1;
+      sh_center[sh_coefficient_label] = PCCClip(
+        std::round(-attributeSet.params.attr_offset * double(attr_frac_bits_scale)
+          / attr_scale), 0, clip_max);
+
+      if (attributeSet.params.attr_sh_coeff_type == 1
+          && attributeSet.params.attr_dc_only_present == false
+          && attributeSet.params.attr_ac_scaling_enabled_flag == true) {
+        shAcScalingOffset = attributeSet.params.attr_ac_scaling_Coefficient;
+        shAcScalingCenter = attributeSet.params.attr_ac_scaling_center;
+      }
+    }
+  }
+
+  const int numPoints = static_cast<int>(pointCloud.getPointCount());
+  const int numSHCoeffs = pointCloud.getNumSHCoeffs();
+  double scale[3];
+
+  for (int i = 0; i < numPoints; ++i) {
+    // get scale (inverse power transform recovers the physical value even
+    // when non-uniform quantization / power transform is enabled)
+    for (int k = 0; k < 3; k++) {
+      scale[k] = inverseScalePowerTransformValue(
+        *scale_sps, k, int32_t(pointCloud.getScale(i)[k]));
+    }
+
+    // get opacity
+    auto opacity_offset = opacity_sps->params.attr_offset;
+    auto opacity_frac_bits = opacity_sps->params.attr_frac_bits;
+    auto opacity_scale = opacity_sps->params.attr_scale_minus1 + 1;
+    int32_t attr = int32_t(pointCloud.getOpacity(i));
+    double opacity = double(attr) * opacity_scale / (1 << opacity_frac_bits)
+      + opacity_offset;
+    double opacity_activation = sigmoid(opacity);
+
+    // calculate scale_v
+    double attr_ac_scaling_Coefficient = shAcScalingOffset;
+    double p = 1.6;
+
+    double scale_v = std::exp(p*scale[0] + p*scale[1])
+      + std::exp(p*scale[1] + p*scale[2])
+      + std::exp(p*scale[0] + p*scale[2]);
+
+    scale_v = attr_ac_scaling_Coefficient * opacity_activation * std::pow(scale_v, 0.5 / p);
+    scale_v = PCCClip(scale_v, 0.70, 2.0);
+
+    // scale all SH AC coefficients ( SH index > 0)
+    for (int m = 1; m < numSHCoeffs; ++m) {
+      auto sh = pointCloud.getSHCoefficient(m, i);
+      int numComponents = sh_num_components[m];
+      for (int k = 0; k < numComponents; ++k) {
+        int center = sh_center[m];
+        int centerIdx = numComponents * (m - 1) + k;
+        if (centerIdx < int(shAcScalingCenter.size()))
+          center = shAcScalingCenter[centerIdx];
+
+        int sh_tem;
+        if (!isForwardTransform)
+          sh_tem = std::round((sh[k] - center) / scale_v + center);
+        else
+          sh_tem = std::round((sh[k] - center) * scale_v + center);
+
+        sh[k] = PCCClip(sh_tem, 0, (1 << sh_bitdepth[m]) - 1);
+      }
+      pointCloud.setSHCoefficient(m, i, sh);
+    }
+  }
+}
+
+//============================================================================
+
+bool
+validateShAcScalingAttributeOrder(
+  const std::vector<AttributeDescription>& attributeSets)
+{
+  int opacityIdx = -1;
+  int scaleIdx = -1;
+  int shScalingIdx = -1;
+
+  for (int i = 0; i < int(attributeSets.size()); ++i) {
+    const auto& attr = attributeSets[i];
+    if (attr.attributeLabel == KnownAttributeLabel::kOpacity) {
+      opacityIdx = i;
+    } else if (attr.attributeLabel == KnownAttributeLabel::kScale) {
+      scaleIdx = i;
+    } else if (attr.attributeLabel == KnownAttributeLabel::kSH_coefficients
+               && attr.params.attr_sh_coeff_type
+               && !attr.params.attr_dc_only_present
+               && attr.params.attr_ac_scaling_enabled_flag) {
+      shScalingIdx = i;
+    }
+  }
+
+  // No SH AC scaling configured: nothing to validate.
+  if (shScalingIdx < 0)
+    return true;
+
+  if (opacityIdx < 0 || scaleIdx < 0) {
+    fprintf(stderr,
+      "ERROR: SH AC scaling requires both opacity and scale attributes\n");
+    return false;
+  }
+
+  if (opacityIdx >= shScalingIdx || scaleIdx >= shScalingIdx) {
+    fprintf(stderr,
+      "ERROR: opacity and scale attributes must precede SH coefficients\n");
+    return false;
+  }
+
+  return true;
+}
+
+//============================================================================
+
+bool
+isShAcScalingEnabled(const AttributeDescription& attributeSet)
+{
+  return attributeSet.attributeLabel == KnownAttributeLabel::kSH_coefficients
+    && attributeSet.params.attr_sh_coeff_type
+    && !attributeSet.params.attr_dc_only_present
+    && attributeSet.params.attr_ac_scaling_enabled_flag;
 }
 
 //============================================================================

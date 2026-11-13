@@ -15,7 +15,7 @@ check_symbol_exists(getrusage sys/resource.h HAVE_GETRUSAGE)
 # Fallback to descriptive version if VCS unavailable
 #  NB: the "unconfirmed-" part refers to this being a fallback option
 #      and the reported version may or may not be accurate.
-set(VERSION_FALLBACK "release-v3.0")
+set(VERSION_FALLBACK "release-v4.0-rc1")
 set(VERSION_FILE ${CMAKE_CURRENT_BINARY_DIR}/version.cpp)
 set(VERSION_FILE_IN ${CMAKE_CURRENT_SOURCE_DIR}/version.cpp.in)
 set(VERSION_CACHE_FILE ${CMAKE_CURRENT_BINARY_DIR}/version.cache)
@@ -70,6 +70,7 @@ file(GLOB PROJECT_INC_FILES
   "PCCKdTree.h"
   "PCCMath.h"
   "PCCMisc.h"
+  "PCCGaussianSplatPruning.h"
   "PCCPointSet.h"
   "PCCTMC3Common.h"
   "PCCTMC3Decoder.h"
@@ -141,6 +142,7 @@ file(GLOB PROJECT_CPP_FILES
   "io_tlv.cpp"
   "misc.cpp"
   "osspecific.cpp"
+  "PCCGaussianSplatPruning.cpp"
   "partitioning.cpp"
   "pcc_chrono.cpp"
   "ply.cpp"

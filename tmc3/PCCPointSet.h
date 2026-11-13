@@ -251,6 +251,7 @@ public:
     withScalarRotations = false;
     withRotations = false;
     withSHCoefficients = false;
+    withScores = false;
   }
   PCCPointSet3(const PCCPointSet3&) = default;
   PCCPointSet3& operator=(const PCCPointSet3& rhs) = default;
@@ -268,6 +269,7 @@ public:
     swap(rotations_vec, other.rotations_vec);
     swap(rotations_scalar, other.rotations_scalar);
     swap(sh_coefficients, other.sh_coefficients);
+    swap(scores, other.scores);
 
     swap(withColors, other.withColors);
     swap(withReflectances, other.withReflectances);
@@ -277,6 +279,16 @@ public:
     swap(withScalarRotations, other.withScalarRotations);
     swap(withRotations, other.withRotations);
     swap(withSHCoefficients, other.withSHCoefficients);
+    swap(withScores, other.withScores);
+
+    swap(colors_attr_indices, other.colors_attr_indices);
+    swap(reflectances_attr_indices, other.reflectances_attr_indices);
+    swap(frameidx_attr_indices, other.frameidx_attr_indices);
+    swap(opacities_attr_indices, other.opacities_attr_indices);
+    swap(scales_attr_indices, other.scales_attr_indices);
+    swap(rotations_attr_indices, other.rotations_attr_indices);
+    swap(sh_coefficients_attr_indices, other.sh_coefficients_attr_indices);
+    swap(others_attr_indices, other.others_attr_indices);
   }
 
   PointType operator[](const size_t index) const
@@ -394,6 +406,34 @@ public:
   {
     withScales = false;
     scales.resize(0);
+  }
+
+  float getScore(const size_t index) const
+  {
+    assert(index < scores.size() && withScores);
+    return scores[index];
+  }
+  float& getScore(const size_t index)
+  {
+    assert(index < scores.size() && withScores);
+    return scores[index];
+  }
+  std::vector<float>& getScores() { return scores; }
+  void setScore(const size_t index, const float score)
+  {
+    assert(index < scores.size() && withScores);
+    scores[index] = score;
+  }
+  bool hasScores() const { return withScores; }
+  void addScores()
+  {
+    withScores = true;
+    resize(getPointCount());
+  }
+  void removeScores()
+  {
+    withScores = false;
+    scores.resize(0);
   }
 
 	Vec3<attr_t> getRotationVec(const size_t index) const
@@ -634,6 +674,8 @@ public:
       for (int i = 0; i < numSHCoeffs; i++)
         sh_coefficients[i].resize(size);
     }
+    if (hasScores())
+      scores.resize(size);
   }
 
   void reserve(const size_t size)
@@ -662,6 +704,8 @@ public:
       for (int i = 0; i < numSHCoeffs; i++)
         sh_coefficients[i].reserve(size);
     }
+    if (hasScores())
+      scores.reserve(size);
   }
   void clear()
   {
@@ -673,6 +717,7 @@ public:
     withScalarRotations = false;
     withRotations = false;
     withSHCoefficients = false;
+    withScores = false;
 
     positions.clear();
     colors.clear();
@@ -687,6 +732,16 @@ public:
     for (int i = 0; i < sh_coefficients.size(); i++)
       sh_coefficients[i].clear();
     sh_coefficients.clear();
+
+    colors_attr_indices.clear();
+    reflectances_attr_indices.clear();
+    frameidx_attr_indices.clear();
+    opacities_attr_indices.clear();
+    scales_attr_indices.clear();
+    rotations_attr_indices.clear();
+    sh_coefficients_attr_indices.clear();
+    others_attr_indices.clear();
+    scores.clear();
   }
 
   size_t removeDuplicatePointInQuantizedPoint(int minGeomNodeSizeLog2)
@@ -709,6 +764,7 @@ public:
   void append(const PCCPointSet3& src)
   {
     if (!getPointCount()) {
+      copyAttrIds(src);
       if (src.hasSHCoefficients())
         setNumSHCoeffs(src.getNumSHCoeffs());
       addRemoveAttributes(
@@ -770,6 +826,10 @@ public:
           std::next(sh_coefficients[i].begin(), dstEnd));
       }
     }
+    if (hasScores() && src.hasScores())
+      std::copy(
+        src.scores.begin(), src.scores.end(),
+        std::next(scores.begin(), dstEnd));
   }
 
   void swapPoints(const size_t index1, const size_t index2)
@@ -803,6 +863,8 @@ public:
       for (int i = 0; i < sh_coefficients.size(); i++)
         std::swap(getSHCoefficient(i, index1), getSHCoefficient(i, index2));
     }
+    if (hasScores())
+      std::swap(getScore(index1), getScore(index2));
   }
 
   Box3<int32_t> computeBoundingBox() const
@@ -851,26 +913,31 @@ public:
     return bbox;
   }
 
-  void activateAttribute(const AttributeDescription& desc) {
+  void activateAttribute(const AttributeDescription& desc, int attrId) {
     switch (desc.attributeLabel.known_attribute_label) {
       case KnownAttributeLabel::kColour:
         withColors = true;
+        colors_attr_indices.push_back(attrId);
         return; 
           
       case KnownAttributeLabel::kReflectance:
         withReflectances = true;
+        reflectances_attr_indices.push_back(attrId);
         return;
       
       case KnownAttributeLabel::kFrameIndex:
         withFrameIndex = true;
+        frameidx_attr_indices.push_back(attrId);
         return;
 
       case KnownAttributeLabel::kOpacity:
         withOpacities = true;
+        opacities_attr_indices.push_back(attrId);
         return;
           
       case KnownAttributeLabel::kScale:
         withScales = true;
+        scales_attr_indices.push_back(attrId);
         return;
           
       case KnownAttributeLabel::kRotation:
@@ -879,20 +946,63 @@ public:
         } else {
           withRotations = true;
         }
+        rotations_attr_indices.push_back(attrId);
         return;
           
       case KnownAttributeLabel::kSH_coefficients:
-        if (desc.params.sh_dc_coefficient_flag) {
-          setNumSHCoeffsWithNumBandsMinus1(desc.params.num_sh_coefficient_degrees_minus1);
+        if (desc.params.attr_sh_coeff_type) {
+          setNumSHCoeffsWithNumBandsMinus1(desc.params.attr_num_sh_coeff_degrees_minus1);
         }
         withSHCoefficients = true;
+        sh_coefficients_attr_indices.push_back(attrId);
         return;
           
       default:
+        others_attr_indices.push_back(attrId);
         break;
     }
   }
 
+  void copyAttrIds(const PCCPointSet3& others) {
+    colors_attr_indices = others.colors_attr_indices;
+    reflectances_attr_indices = others.reflectances_attr_indices;
+    frameidx_attr_indices = others.frameidx_attr_indices;
+    opacities_attr_indices = others.opacities_attr_indices;
+    scales_attr_indices = others.scales_attr_indices;
+    rotations_attr_indices = others.rotations_attr_indices;
+    sh_coefficients_attr_indices = others.sh_coefficients_attr_indices;
+    others_attr_indices = others.others_attr_indices;
+  }
+
+  const std::vector<int>& getAttrIds(KnownAttributeLabel labal) const {
+    switch (labal) {
+      case KnownAttributeLabel::kColour:
+        return colors_attr_indices; 
+          
+      case KnownAttributeLabel::kReflectance:
+        return reflectances_attr_indices;
+      
+      case KnownAttributeLabel::kFrameIndex:
+        return frameidx_attr_indices;
+
+      case KnownAttributeLabel::kOpacity:
+        return opacities_attr_indices;
+          
+      case KnownAttributeLabel::kScale:
+        return scales_attr_indices;
+          
+      case KnownAttributeLabel::kRotation:
+        return rotations_attr_indices;
+          
+      case KnownAttributeLabel::kSH_coefficients:
+        return sh_coefficients_attr_indices;
+          
+      default:
+        return others_attr_indices;
+    }
+  }
+  
+  
   std::vector<Vec3<attr_t>>& getAttrVec(AttributeDescription& desc) {
     if (desc.attributeLabel == KnownAttributeLabel::kColour)
       return getColor();
@@ -937,6 +1047,7 @@ private:
   std::vector<Vec3<attr_t>> rotations_vec;		// Quaternion (xyz) 
   std::vector<attr_t> rotations_scalar;				// Quaternion (w) 
   std::vector<std::vector<Vec3<attr_t>>> sh_coefficients;
+  std::vector<float> scores;
   int numSHCoeffs = -1;
 
   bool withOpacities;
@@ -944,6 +1055,16 @@ private:
   bool withScalarRotations;
   bool withRotations;
   bool withSHCoefficients;
+  bool withScores;
+
+  std::vector<int> colors_attr_indices;
+  std::vector<int> reflectances_attr_indices;
+  std::vector<int> frameidx_attr_indices;
+  std::vector<int> opacities_attr_indices;
+  std::vector<int> scales_attr_indices;
+  std::vector<int> rotations_attr_indices;
+  std::vector<int> sh_coefficients_attr_indices;
+  std::vector<int> others_attr_indices;
 };
 
 //===========================================================================

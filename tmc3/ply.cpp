@@ -49,6 +49,15 @@
 #include <unordered_map>
 
 namespace pcc {
+
+const AttributeDescription& getAttributeDescription(
+  const std::vector<AttributeDescription>& attrDescs,
+  KnownAttributeLabel attributeLabel, int index);
+
+AttributeDescription& getAttributeDescription(
+  std::vector<AttributeDescription>& attrDescs,
+  KnownAttributeLabel attributeLabel, int index);
+
 //============================================================================
 
 int64_t adjust_frac_bits(int64_t val, int curr_frac_bits, int final_frac_bits)
@@ -65,6 +74,24 @@ int64_t adjust_frac_bits(int64_t val, int curr_frac_bits, int final_frac_bits)
 }
 
 //============================================================================
+// Clamp used on either side of the opacity logit<->linear transform to avoid
+// log(0)/log(inf) at the domain boundaries.
+static constexpr double kOpacityLogitEpsilon = 1e-6;
+
+static double opacityLogitToLinear(double logit)
+{
+  return 1.0 / (1.0 + std::exp(-logit));
+}
+
+static double opacityLinearToLogit(double linear)
+{
+  double clipped = PCCClip(linear, kOpacityLogitEpsilon, 1.0 - kOpacityLogitEpsilon);
+  return std::log(clipped / (1.0 - clipped));
+}
+
+std::vector<int> getAttrIndices(
+  const AttributeDescription& desc,
+  const std::vector<ply::PropertyInfo>& properties);
 static double computeShAcTop10Correlation(SHBufferView& shView, size_t pointCount) {
   int numSHCoeffs = shView.numBands();
   if (pointCount == 0 || numSHCoeffs <= 1) return 0.0;
@@ -115,11 +142,12 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
     size_t pointCount, std::vector<AttributeDescription>& attrDescs) {  if (pointCount == 0 || !withSHCoefficients) return false;
 
   int numSHCoeffs = shView.numBands();
-  const uint32_t bitDepth = attrDescs[0].bitdepth;
-  const uint32_t max_quant_val = (1u << bitDepth) - 1;
+  auto& firstShParams =
+    getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0).params;
+  const bool shAcScalingEnabled = firstShParams.attr_ac_scaling_enabled_flag;
 
-  const bool useAdaptiveThresholds = attrDescs[0].params.shAdaptiveTpOptEnabled_
-                                   && attrDescs[0].params.dataAdaptiveShTransformEnabled_;
+  const bool useAdaptiveThresholds = firstShParams.shAdaptiveTpOptEnabled_
+                                   && firstShParams.dataAdaptiveShTransformEnabled_;
 
   int thresh1 = 15, thresh2 = 30, thresh3 = 40, thresh4 = 5, thresh5 = 10;
   const int idx3_arr[3] = { 11, 13, 12 };
@@ -133,16 +161,16 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
 
     for (size_t p = 0; p < pointCount; ++p) {
       for (size_t l = 1; l <= 9; ++l) {
-        for (int ch = 0; ch < 3; ++ch) {
-          double val = shView.sh(p, l, ch);
+        for (int c = 0; c < 3; ++c) {
+          double val = shView.sh(p, l, c);
           sum1 += val;
           sumSq1 += val * val;
         }
       }
       for (int i = 0; i < 3; ++i) {
         size_t l = idx3_arr[i];
-        for (int ch = 0; ch < 3; ++ch) {
-          double val = shView.sh(p, l, ch);
+        for (int c = 0; c < 3; ++c) {
+          double val = shView.sh(p, l, c);
           sum3 += val;
           sumSq3 += val * val;
         }
@@ -162,19 +190,49 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
     }
   }
 
-  for (size_t l = 0; l < std::min(numSHCoeffs, 16); ++l) {
-    auto& params = attrDescs[l].params;
-    params.shNumRegionsMinus1_.assign(3, 2);
-    params.shTransitionPoints_.clear();
-    params.shStepSizes_.clear();
-    params.shStepSizesFxp_.clear();
-    params.shNumBitsForTransitionPoint_.assign(3, bitDepth);
+  // NQ skip: signal non-retained channels with M=0.
+  std::vector<bool> shDrRetainedMask;
+  const bool doNqSkip = attrDescs[0].params.enableShDimensionReduction_
+    && attrDescs[0].params.enableShDimensionReductionNqSkipNonretained_
+    && !attrDescs[0].params.shNumRetainComponents_.empty();
+  if (doNqSkip)
+    buildShDimRedRetainedMask(attrDescs[0].params, shDrRetainedMask);
 
-    for (int ch = 0; ch < 3; ++ch) {
+  for (size_t l = 0; l < std::min(numSHCoeffs, 16); ++l) {
+    auto& params =
+      getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l).params;
+    const uint32_t bitDepth =
+      (shAcScalingEnabled && l > 0) ? params.attr_frac_bits : firstShParams.attr_frac_bits;
+    const uint32_t max_quant_val = (1u << bitDepth) - 1;
+
+    for (int c = 0 ; c < 3 ; c++)
+    {
+      params.shNumRegionsMinus1_[c] = 2;
+      params.shNumBitsForTransitionPoint_[c] = bitDepth;
+      params.shTransitionPoints_[c].clear();
+      params.shStepSizes_[c].clear();
+      params.shStepSizesFxp_[c].clear();
+      
+      if (doNqSkip && !shDrRetainedMask[l * 3 + c]) {
+        params.shNumRegionsMinus1_[c] = 0;
+        params.min_offset_fxp[c] = 0; 
+        double minLim = params.attr_offset;
+        double maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
+        double d_code = std::round((maxLim - minLim) * (1 << bitDepth) /
+                                   (double)(1ull << params.attr_frac_bits));
+        double s_uniform = d_code / (double)(max_quant_val + 1);
+        params.shStepSizes_[c].push_back(s_uniform);
+        int64_t s_uniformFxp = (int64_t)round(s_uniform * pow(2.0, SS_SCALE));
+        if (s_uniformFxp == 0) s_uniformFxp = 1;
+        params.shStepSizesFxp_[c].push_back(s_uniformFxp);
+        continue; 
+      }
+
       std::vector<double> values;
+
       values.reserve(pointCount);
       for (size_t p = 0; p < pointCount; ++p) {
-        values.push_back(shView.sh(p, l, ch));
+        values.push_back(shView.sh(p, l, c));
       }
 
       double tp_low, tp_high;
@@ -182,7 +240,7 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
       if (useAdaptiveThresholds) {
         double perc_low, perc_high;
         if ( l == 0 ) {
-          if ( ch == 0 ) {
+          if ( c == 0 ) {
             perc_low  = thresh4;
             perc_high = 100 - thresh4;
           } else {
@@ -237,21 +295,20 @@ bool extractSHQuantRegions(bool withSHCoefficients, SHBufferView& shView,
       int tp_low_quant  = static_cast<int>( std::round( ( tp_low - minLim ) / d_code * max_quant_val ) );
       int tp_high_quant = static_cast<int>( std::round( ( tp_high - minLim ) / d_code * max_quant_val ) );
 
-      params.shTransitionPoints_.push_back( std::max( 0, std::min( static_cast<int>( max_quant_val - 1 ), tp_low_quant ) ) );
-      params.shTransitionPoints_.push_back( std::max( tp_low_quant + 1, std::min( static_cast<int>( max_quant_val ), tp_high_quant ) ) );
+      params.shTransitionPoints_[c].push_back( std::max( 0, std::min( static_cast<int>( max_quant_val - 1 ), tp_low_quant ) ) );
+      params.shTransitionPoints_[c].push_back( std::max( tp_low_quant + 1, std::min( static_cast<int>( max_quant_val ), tp_high_quant ) ) );
 
-      params.shStepSizes_.push_back(s_coarse);
-      params.shStepSizes_.push_back(s_fine);
-      params.shStepSizes_.push_back(s_coarse);
+      params.shStepSizes_[c].push_back(s_coarse);
+      params.shStepSizes_[c].push_back(s_fine);
+      params.shStepSizes_[c].push_back(s_coarse);
       const double ss_scale = pow(2.0, SS_SCALE);
       int64_t s_coarseFxp = (int64_t)round(s_coarse * ss_scale);
       int64_t s_fineFxp = (int64_t)round(s_fine * ss_scale);
       if (s_fineFxp == 0) s_fineFxp = 1;
       if (s_coarseFxp == 0) s_coarseFxp = 1;
-      params.shStepSizesFxp_.push_back(s_coarseFxp);
-      params.shStepSizesFxp_.push_back(s_fineFxp);
-      params.shStepSizesFxp_.push_back(s_coarseFxp);
-
+      params.shStepSizesFxp_[c].push_back(s_coarseFxp);
+      params.shStepSizesFxp_[c].push_back(s_fineFxp);
+      params.shStepSizesFxp_[c].push_back(s_coarseFxp);
     }
   }
 
@@ -520,50 +577,52 @@ AttributeDescription& getAttributeDescription(
 }
 
 inline void dequantShChunk(
-  size_t chunkStart, 
-  size_t chunkCount, 
-  std::vector<GSPoint>& gsChunk, 
-  AttributeParameters& param_sh, 
-  const std::vector<AttributeDescription>& attrDescs, 
-  size_t numSHCoeffs, 
+  size_t chunkStart, size_t chunkCount, std::vector<GSPoint>& gsChunk,
+  AttributeParameters& param_sh,
+  const std::vector<AttributeDescription>& attrDescs, int numSHCoeffs,
   bool useShNQ,
-  std::array<ShQuantRegion, 48>& shRegions,
-  std::array<int, 48>& ssBaseOffsets,
-  const PCCPointSet3& cloud,
-  bool convertColourspace
-  ) {
+  std::array<ShQuantRegion, AttributeParameters::kShDrNumSlots>& shRegions,
+  const PCCPointSet3& cloud, bool convertColourspace)
+{
   for (size_t i = 0; i < chunkCount; ++i) {
     size_t pt = chunkStart + i;
     GSPoint& g = gsChunk[i];
     for (int m = 0; m < numSHCoeffs; m++) {
       g.fxpScale[m] = SH_SCALE;
       auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
+      if (param_sh.enableShDimensionReduction_
+          && !desc.params.attr_default_value.empty()) {
+        g.shFxp[m][0] = 0;
+        g.shFxp[m][1] = 0;
+        g.shFxp[m][2] = 0;
+        continue;
+      }
       auto offset = desc.params.attr_offset;
       auto attr_frac_bits = desc.params.attr_frac_bits;
       auto attr_scale = desc.params.attr_scale_minus1 + 1;
-      for (int k = 0; k < 3; k++) {
-        int32_t attr = int32_t(cloud.getSHCoefficient(m, pt)[k]);
-        if (useShNQ && desc.params.shNumRegionsMinus1_[k] > 0) {
-          int idx = m * 3 + k;
-          int M = desc.params.shNumRegionsMinus1_[k];
+      for (int c = 0; c < 3; c++) {
+        int32_t attr = int32_t(cloud.getSHCoefficient(m, pt)[c]);
+        if (useShNQ && desc.params.shNumRegionsMinus1_[c] > 0) {
+          int idx = m * 3 + c;
+          int M = desc.params.shNumRegionsMinus1_[c];
           const auto& reg = shRegions[idx];
           int region_idx = 0;
           while (region_idx < M && attr > reg.tp_int[region_idx]) { region_idx++; }
           int64_t prev_idx_fxp = (region_idx > 0) ? (reg.tp_int[region_idx - 1] << SH_SCALE) : reg.min_offset_fxp;
-          int64_t step_vec_fxp = desc.params.shStepSizesFxp_[ssBaseOffsets[idx] + region_idx];
+          int64_t step_vec_fxp = desc.params.shStepSizesFxp_[c][region_idx];
           int64_t base_real_fxp = reg.region_start_real_fxp[region_idx] << SS_SCALE;
           int64_t attr_fxp = attr << SH_SCALE;
           int64_t val_fxp = base_real_fxp + (attr_fxp - prev_idx_fxp) * step_vec_fxp;
-          g.shFxp[m][k] = val_fxp >> SS_SCALE;
+          g.shFxp[m][c] = val_fxp >> SS_SCALE;
         } else {
           int64_t val = attr * attr_scale + (offset << attr_frac_bits);
-          g.shFxp[m][k] = adjust_frac_bits(val, attr_frac_bits, SH_SCALE);
+          g.shFxp[m][c] = adjust_frac_bits(val, attr_frac_bits, SH_SCALE);
         }
       }
     }
   }
   sphericalHarmonicsInvTransform(true, gsChunk, chunkCount, param_sh, convertColourspace);
-};
+}
 
 bool
 ply::write(
@@ -631,15 +690,15 @@ ply::write(
 	  fout << "property float f_dc_0" << std::endl;
 	  fout << "property float f_dc_1" << std::endl;
 	  fout << "property float f_dc_2" << std::endl;
-
-	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
+    const int numAcCoeffs = cloud.getNumSHCoeffs() - 1;
+	  for (int i = 0; i < numAcCoeffs; i++)
 		  fout << "property float f_rest_" << i << std::endl;
 
-	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
-		  fout << "property float f_rest_" << 15 + i << std::endl;
+	  for (int i = 0; i < numAcCoeffs; i++)
+		  fout << "property float f_rest_" << numAcCoeffs + i << std::endl;
 
-	  for (int i = 0; i < cloud.getNumSHCoeffs() - 1; i++)
-		  fout << "property float f_rest_" << 30 + i << std::endl;
+	  for (int i = 0; i < numAcCoeffs; i++)
+		  fout << "property float f_rest_" << 2 * numAcCoeffs + i << std::endl;
   }
   if (cloud.hasOpacities()) {
 	  fout << "property float opacity" << std::endl;
@@ -721,7 +780,7 @@ ply::write(
     bool isRealRotCoded = false;
     bool isEulerRot = false;
     double rotScaleValue = 1.0;
-    for (auto desc: attrDescs) {
+    for (const auto& desc: attrDescs) {
       if (desc.attributeLabel == KnownAttributeLabel::kRotation) {
         if (desc.attr_num_dimensions_minus1 == 1) {
           isRealRotCoded = true;
@@ -742,30 +801,28 @@ ply::write(
     int numSHCoeffs = 0;
     std::vector<GSPoint> gsChunk;
     AttributeParameters param_sh{};
-    std::array<ShQuantRegion, 48> shRegions;
-    std::array<int, 48>           ssBaseOffsets;
+    std::array<ShQuantRegion, AttributeParameters::kShDrNumSlots> shRegions;
     if (cloud.hasSHCoefficients()) {
       const AttributeDescription& desc_sh = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
       param_sh = desc_sh.params;
-      useGsdTransform2d = param_sh.gsdTransform2dPresentFlag_;
-      useShNQ = param_sh.enableShNonUniformQuantization_;
+      useGsdTransform2d = param_sh.attr_sh_grp_transform_enabled;
+      useShNQ = param_sh.attr_sh_non_uniform_quant_enabled;
 
       for (auto& desc : attrDescs) {
         if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients)
           numSHCoeffs++;
       }
-      const uint32_t bitDepth_sh = desc_sh.bitdepth;
+      const bool shAcScalingEnabled = desc_sh.params.attr_ac_scaling_enabled_flag;
       if (useShNQ) {
         for (int l = 0; l < numSHCoeffs; ++l) {
           auto& params = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l).params;
+          const uint32_t bitDepth_sh =
+            (shAcScalingEnabled && l > 0) ? params.attr_frac_bits : desc_sh.params.attr_frac_bits;
           int64_t minLim = params.attr_offset;
           int64_t maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
-          int tpOffset = 0;
-          int ssOffset = 0;
-          for (int ch = 0; ch < 3; ++ch) {
-            int idx = l * 3 + ch;
-            int M = params.shNumRegionsMinus1_[ch];
-            ssBaseOffsets[idx] = ssOffset;
+          for (int c = 0; c < 3; ++c) {
+            int idx = l * 3 + c;
+            int M = params.shNumRegionsMinus1_[c];
 
             if (M > 0) {
               int64_t d_code_fxp = ((maxLim - minLim) * (1 << bitDepth_sh) + ((1ull << params.attr_frac_bits) >> 1)) / (1ull << params.attr_frac_bits);
@@ -773,16 +830,14 @@ ply::write(
               shRegions[idx].region_start_real_fxp.resize(M + 1);
               shRegions[idx].region_start_real_fxp[0] = minLim << SH_SCALE;
               for (int m = 0; m < M; ++m) {
-                int tp_val = params.shTransitionPoints_[tpOffset + m];
+                int tp_val = params.shTransitionPoints_[c][m];
                 shRegions[idx].tp_int[m] = tp_val;
                 int64_t buf = (tp_val * d_code_fxp) + (minLim << bitDepth_sh);
                 shRegions[idx].region_start_real_fxp[m + 1] =
                     adjust_frac_bits(buf, bitDepth_sh, SH_SCALE);
               }
-              shRegions[idx].min_offset_fxp = params.min_offset_fxp[ch];
+              shRegions[idx].min_offset_fxp = params.min_offset_fxp[c];
             }
-            tpOffset += M;
-            ssOffset += M + 1;
           }
         }
       }
@@ -790,6 +845,7 @@ ply::write(
         gsChunk.resize(kShChunkSize);
       }
     }
+
     constexpr size_t kScalePowerWriteChunkSize = 65536;
     const AttributeDescription* scaleDesc = nullptr;
     std::vector<Vec3<float>> scalePowerWriteValues;
@@ -803,7 +859,9 @@ ply::write(
     for (size_t i = 0; i < pointCount; ++i) {
       if ((useGsdTransform2d || useShNQ) && (i % kShChunkSize == 0)) {
         size_t chunkCount = std::min(kShChunkSize, pointCount - i);
-        dequantShChunk(i, chunkCount, gsChunk, param_sh, attrDescs, numSHCoeffs, useShNQ, shRegions, ssBaseOffsets, cloud, convertColourspace);
+        dequantShChunk(i, chunkCount, gsChunk, param_sh, attrDescs,
+                       numSHCoeffs, useShNQ, shRegions, cloud,
+                       convertColourspace);
       }
 
       if (scaleDesc && scaleDesc->params.scaleParameterPresent
@@ -872,52 +930,43 @@ ply::write(
 						}
 					}
 				} else {
-					double shdc[3];
-          auto desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, 0);
-          auto offset = desc.params.attr_offset;
-          auto attr_frac_bits = desc.params.attr_frac_bits;
-          auto attr_scale     = desc.params.attr_scale_minus1 + 1;
-          for (int k = 0; k < 3; k++) {
-            int32_t attr = int32_t(cloud.getSHCoefficient(0, i)[k]);
-            double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
-            shdc[k]= buf;
+          const int numShCoeffs = cloud.getNumSHCoeffs();
+          double sh_buffer[numShCoeffs][3];
+          for (int i = 0; i < numShCoeffs; i++)
+            for (int j = 0; j < 3; j++)
+              sh_buffer[i][j] = 0.0;
+              
+          auto& shAttrIds = cloud.getAttrIds(KnownAttributeLabel::kSH_coefficients);
+          // Post-processing
+          for (auto& attrId : shAttrIds)
+          {
+            auto& desc = attrDescs[attrId];
+            int offset = desc.params.attr_offset;
+            int attr_frac_bits = desc.params.attr_frac_bits;
+            int attr_scale = desc.params.attr_scale_minus1 + 1;
+            int numCh = desc.attr_num_dimensions_minus1 + 1;
+
+            int shCoeffIdx = int(desc.params.sh_coefficient_label);
+            const Vec3<attr_t>& attr = cloud.getSHCoefficient(shCoeffIdx, i);
+            for (int c = 0 ; c < numCh ; c++ ) {
+              sh_buffer[shCoeffIdx][c] = double(attr[c]) * attr_scale / (1ll<<attr_frac_bits) + offset;
+            }
+            if (!externalPrePost && convertColourspace){
+              convertToRgb(
+                desc.params.cicp_matrix_coefficients_idx, sh_buffer[shCoeffIdx]);
+            }
           }
 
-          if (!externalPrePost && convertColourspace){
-            convertToRgb(
-              desc.params.cicp_matrix_coefficients_idx, shdc);
-          }
-
-          Vec3<float> val32b_dc{ float(shdc[0])/GS_PROPERTY_SCALE, float(shdc[1])/GS_PROPERTY_SCALE, float(shdc[2])/GS_PROPERTY_SCALE };
+          // write SHDC
+          Vec3<float> val32b_dc{ float(sh_buffer[0][0])/GS_PROPERTY_SCALE, float(sh_buffer[0][1])/GS_PROPERTY_SCALE, float(sh_buffer[0][2])/GS_PROPERTY_SCALE };
           clock->stop();
           fout.write(reinterpret_cast<char*>(&val32b_dc), sizeof(float) * 3);
           clock->start();
 
-					// SH AC
-          double shac[15][3];
+          // write SHAC 
           for (int k = 0; k < 3; k++) {
-            for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
-            desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, m);
-            offset = desc.params.attr_offset;
-            attr_frac_bits = desc.params.attr_frac_bits;
-            attr_scale     = desc.params.attr_scale_minus1 + 1;
-            int32_t attr = int32_t(cloud.getSHCoefficient(m, i)[k]);
-            double buf = double(attr) * attr_scale / (1ll<<attr_frac_bits) + offset;
-            shac[m-1][k] = buf;
-            }
-          }
-          
-          if (!externalPrePost && convertColourspace) {
-            for (size_t m =0 ; m < cloud.getNumSHCoeffs()-1 ; m++)
-            {
-              convertToRgb(
-                desc.params.cicp_matrix_coefficients_idx, shac[m]);
-            }
-          }
-
-          for (int k = 0; k < 3; k++) {
-						for (int m = 1; m < cloud.getNumSHCoeffs(); m++) {
-							float val32b_ac = float(shac[m-1][k])/GS_PROPERTY_SCALE;
+						for (int m = 1; m < numShCoeffs; m++) {
+							float val32b_ac = float(sh_buffer[m][k])/GS_PROPERTY_SCALE;
               clock->stop();
 							fout.write(reinterpret_cast<char*>(&val32b_ac), sizeof(float));
               clock->start();
@@ -932,7 +981,13 @@ ply::write(
         auto attr_scale     = desc.params.attr_scale_minus1 + 1;
 				const int32_t& opacity = cloud.getOpacity(i);
         double _opacity = double(opacity) * attr_scale / (1<<attr_frac_bits) + offset;
-				float buf = (float)_opacity/GS_PROPERTY_SCALE;
+        // If the encoder applied the logit->linear transform (convertOpacity),
+        // invert it here; otherwise the dequantized value is already in the
+        // raw (logit) domain expected by 3DGS PLY files.
+        double _opacityOut = desc.params.opacityDomainTransformEnabled
+          ? opacityLinearToLogit(_opacity)
+          : _opacity;
+				float buf = (float)_opacityOut/GS_PROPERTY_SCALE;
         clock->stop();
 				fout.write(reinterpret_cast<char*>(&buf), sizeof(float));
         clock->start();
@@ -1016,8 +1071,9 @@ ply::write(
 
 //============================================================================
 
-bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx) 
+bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx, int& maxChannelIdx) 
 {
+  maxChannelIdx = 3;
   if (propName == "x")
     channelIdx = 0;
   else if (propName == "y")
@@ -1039,22 +1095,27 @@ bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAtt
   else if (propName == "reflectance") {
     kAttrLabel = KnownAttributeLabel::kReflectance;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "opacity") {
     kAttrLabel = KnownAttributeLabel::kOpacity;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "frame_index" || propName == "frameindex") {
     kAttrLabel = KnownAttributeLabel::kFrameIndex;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "frame_number") {
     kAttrLabel = KnownAttributeLabel::kFrameNumber;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "material_id") {
     kAttrLabel = KnownAttributeLabel::kMaterialId;
     channelIdx = 0;
+    maxChannelIdx = 1;
   } 
   else if (propName == "nx") {
     kAttrLabel = KnownAttributeLabel::kNormal;
@@ -1076,21 +1137,17 @@ bool ply::stringToAttributeLabelAndChannel(const std::string& propName, KnownAtt
     kAttrLabel = KnownAttributeLabel::kRotation;
     channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
   }
-  else if (propName.find("f_dc_") == 0) {
-    kAttrLabel = KnownAttributeLabel::kSH_coefficients;
-    channelIdx = 16 * std::stoi(propName.substr(propName.find_last_of('_') + 1));
-  } else if (propName.find("f_rest_") == 0) {
+  else if (propName.rfind("f_dc_", 0) == 0) {
     kAttrLabel = KnownAttributeLabel::kSH_coefficients;
     channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1));
-    channelIdx = 16 * (channelIdx / 15)  + (channelIdx % 15) + 1;
-    if (channelIdx > 47) {
-      std::cerr << "Error: can not support (" << propName << ")" << std::endl;
-      return false;
-    }
+  } else if (propName.rfind("f_rest_", 0) == 0) {
+    kAttrLabel = KnownAttributeLabel::kSH_coefficients; 
+    channelIdx = std::stoi(propName.substr(propName.find_last_of('_') + 1)) + 3;
   } 
   else {
     kAttrLabel = KnownAttributeLabel::kOid;
     channelIdx = 0;
+    maxChannelIdx = 1;
   }
 
   return true;
@@ -1125,28 +1182,76 @@ bool ply::parseHeader(
       std::string typeStr, nameStr;
       iss >> typeStr >> nameStr;
       
-      KnownAttributeLabel attrLabel;
-      int channel;
-      if (!stringToAttributeLabelAndChannel(nameStr, attrLabel, channel)) {
+      KnownAttributeLabel attrLabel = KnownAttributeLabel::kReflectance;
+      int channel = 0, maxChannel = 0;
+      if (nameStr == "score") {
+        cloud.addScores();
+      } else if (!stringToAttributeLabelAndChannel(nameStr, attrLabel, channel, maxChannel)) {
         return false;
       }
-      properties.push_back({nameStr, attrLabel, channel, stringToPlyType(typeStr)});
+      properties.push_back({nameStr, attrLabel, channel, maxChannel, stringToPlyType(typeStr)});
     }
     else if (token == "end_header") {
       cloud.resize(vertexCount);
-      return vertexCount > 0 && !properties.empty();
+      break;
+      
     }
   }
-  return false;
+
+  // convert SH index from exteral to internal
+  if (cloud.hasSHCoefficients())
+  {
+    int maxShIdx = -1;
+    for (const auto& p : properties) {
+      if (p.attrLabel == KnownAttributeLabel::kSH_coefficients)
+        maxShIdx = std::max(maxShIdx, p.channel);
+    }
+
+    if (maxShIdx >= 0) {
+      int numBands = 1;
+      while (3 * numBands * numBands - 1 < maxShIdx)
+        ++numBands;
+
+      const int maxNumShCoeffs = numBands * numBands;
+      const int numAcCoeffs = maxNumShCoeffs - 1;
+
+      for (auto& p : properties) {
+        if (p.attrLabel != KnownAttributeLabel::kSH_coefficients)
+          continue;
+
+        p.maxChannel = maxNumShCoeffs;
+
+        if (p.channel < 3) {
+          p.channel *= maxNumShCoeffs;
+        } else {
+          const int acIdx = p.channel - 3;
+          p.channel =
+            (acIdx / numAcCoeffs) * maxNumShCoeffs +
+            (acIdx % numAcCoeffs) + 1;
+        }
+      }
+
+      if (maxNumShCoeffs < cloud.getNumSHCoeffs()) {
+        std::cerr << "Error: SH Coefficients are not configured." << std::endl;
+        return false;
+      }
+    }
+  }
+
+  cloud.resize(vertexCount);
+  return vertexCount > 0 && !properties.empty();
 }
 
 bool ply::isRequestedAttribute(PropertyInfo& prop, const std::vector<AttributeDescription>& attrDescs) {
+  if (prop.name == "score")
+    return false;
+    
   for (auto &desc: attrDescs) {
     if (desc.attributeLabel.known_attribute_label == prop.attrLabel)
     {
       if (desc.attributeLabel.known_attribute_label == KnownAttributeLabel::kSH_coefficients)
       {
-        if (int(desc.params.sh_coefficient_label) == (prop.channel % 16))
+        if (int(desc.params.sh_coefficient_label) == (prop.channel % prop.maxChannel))
           return true;
       } else {
         return true;
@@ -1184,6 +1289,8 @@ bool ply::readVertices(
       }
       if (prop.name == "x" || prop.name == "y" || prop.name == "z") {
         cloud[i][prop.channel] = value * positionScale;
+      } else if (prop.name == "score" && cloud.hasScores()) {
+        cloud.setScore(i, value);
       } else if (prop.attr_idx > -1) {
         inputAttrBuf[prop.attr_idx * pointCount + i] = value;
       }
@@ -1208,8 +1315,8 @@ std::vector<int> getAttrIndices(const AttributeDescription& desc, const std::vec
     {
       if (prop.attr_idx < 0) continue;
 
-      if (int(desc.params.sh_coefficient_label) == (prop.channel % 16)) {
-        target_idx = prop.channel / 16;
+      if (int(desc.params.sh_coefficient_label) == (prop.channel % prop.maxChannel)) {
+        target_idx = prop.channel / prop.maxChannel;
       }
     } 
     else if (desc.attributeLabel == KnownAttributeLabel::kRotation)
@@ -1268,7 +1375,7 @@ ply::convertColor (
         && desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
 
       // Skip SH color conversion when 2D transform is enabled — it handles its own column transform
-      if (desc.params.gsdTransform2dPresentFlag_)
+      if (desc.params.attr_sh_grp_transform_enabled)
         continue;
 
       double* buf[3];
@@ -1377,6 +1484,77 @@ ply::convertRotationAndScale (
     bufScale[1][i] = scale[1];
     bufScale[2][i] = scale[2];
   }
+
+  return true;
+}
+
+bool
+ply::convertOpacity (
+  int pointCount,
+  std::vector<double>& inputAttrBuf,
+  std::vector<AttributeDescription>& attrDescs,
+  std::vector<PropertyInfo>& properties,
+  bool convertLogitToLinear,
+  bool enableDeadZone)
+{
+  auto it = std::find_if(
+    attrDescs.begin(), attrDescs.end(),
+    [](const AttributeDescription& d) {
+      return d.attributeLabel == KnownAttributeLabel::kOpacity;
+    });
+  if (it == attrDescs.end())
+    return false;
+
+  std::vector<int> indices = getAttrIndices(*it, properties);
+  if (indices.empty() || indices[0] < 0)
+    return false;
+
+  double* buf = &inputAttrBuf[indices[0] * pointCount];
+
+  int numModifiedValues = 0;
+  if (convertLogitToLinear) {
+    for (int i = 0; i < pointCount; ++i)
+      buf[i] = opacityLogitToLinear(buf[i]);
+
+    std::vector<int> scaleIndices =
+      getAttrIndices(KnownAttributeLabel::kScale, properties);
+    const bool hasScale = scaleIndices.size() >= 3
+      && scaleIndices[0] >= 0 && scaleIndices[1] >= 0
+      && scaleIndices[2] >= 0;
+    const double* scale0 = hasScale
+      ? &inputAttrBuf[scaleIndices[0] * pointCount] : nullptr;
+    const double* scale1 = hasScale
+      ? &inputAttrBuf[scaleIndices[1] * pointCount] : nullptr;
+    const double* scale2 = hasScale
+      ? &inputAttrBuf[scaleIndices[2] * pointCount] : nullptr;
+
+    const int maxCode = (1 << it->bitdepth) - 1;
+    const double baseStep = maxCode > 0
+      ? (1.0) / maxCode : 0.0;
+    constexpr double kOpacitySplit = 0.5;
+    constexpr double kSmallGaussianScale = -8.0;
+
+    if (enableDeadZone && baseStep > 0.0) {
+      for (int i = 0; i < pointCount; ++i) {
+        const bool transparent = buf[i] < kOpacitySplit;
+        const bool small = hasScale && std::max(
+          scale0[i], std::max(scale1[i], scale2[i])) < kSmallGaussianScale;
+        const int deadZoneMultiplier = transparent
+          ? (small ? 128 : 32)
+          : (small ? 8 : 1);
+        if (buf[i] <= deadZoneMultiplier * baseStep) {
+          buf[i] = 0.0;
+          ++numModifiedValues;
+        }
+      }
+    }
+  }
+
+  Stats opacityStat;
+  for (int i = 0; i < pointCount; i++)
+    opacityStat.update(buf[i]);
+
+  it->params.opacityDomainTransformEnabled = convertLogitToLinear;
 
   return true;
 }
@@ -1518,7 +1696,9 @@ ply::read(
   std::vector<AttributeDescription>& attrDescs,
   bool convertColourspace,
   bool externalPrePost,
-  Stopwatch* clock)
+  Stopwatch* clock,
+  bool convertOpacityLogitToLinear,
+  bool enableOpacityDeadZone)
 {
   std::ifstream ifs(fileName,std::ifstream::in | std::ios::binary);
   if (!ifs.is_open()) {
@@ -1543,8 +1723,8 @@ ply::read(
   bool enableShNonUniformQuantization = false;
   for (auto& desc : attrDescs) {
     if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients) {
-      if (desc.params.gsdTransform2dPresentFlag_) gsdTransform2dPresentFlag = true;
-      if (desc.params.enableShNonUniformQuantization_) enableShNonUniformQuantization = true;
+      if (desc.params.attr_sh_grp_transform_enabled) gsdTransform2dPresentFlag = true;
+      if (desc.params.attr_sh_non_uniform_quant_enabled) enableShNonUniformQuantization = true;
     }
   }
 
@@ -1557,6 +1737,12 @@ ply::read(
 
     // Rotation and Scale conversion
     convertRotationAndScale(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
+
+    // Opacity: logit (raw 3DGS PLY domain) -> linear, prior to quantization.
+    // The inverse (linear -> logit) is applied in ply::write.
+    convertOpacity(
+      cloud.getPointCount(), inputAttrBuf, attrDescs, properties,
+      convertOpacityLogitToLinear, enableOpacityDeadZone);
 
     // Analyze Min-Max
     analyzeMinMax(cloud.getPointCount(), inputAttrBuf, attrDescs, properties);
@@ -1579,8 +1765,8 @@ ply::read(
     for (int l = 0; l < numSHCoeffs; ++l) {
       auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l);
       shIndices[l] = getAttrIndices(desc, properties);
-      for (int ch = 0; ch < 3; ++ch) {
-        shBuffers[l * 3 + ch] = &inputAttrBuf[shIndices[l][ch] * pointCount];
+      for (int c = 0; c < 3; ++c) {
+        shBuffers[l * 3 + c] = &inputAttrBuf[shIndices[l][c] * pointCount];
       }
     }
 
@@ -1599,6 +1785,9 @@ ply::read(
 
       initializeShTransformParams(shParams);
       sphericalHarmonicsTransform(witSHCoefficients, shView, pointCount, shParams, convertColourspace);
+      computeShDimensionReductionParams(shParams);
+      shParams.shAcRangeShared_ = useSharedAc;
+      applyShDimensionReduction(shView, pointCount, shParams);
 
       if (useSharedAc) {
         // Shared AC + lround: one DC range (band 0) + one AC range (bands 1-15)
@@ -1661,27 +1850,65 @@ ply::read(
       }
     }
 
+    if (shParams.shLowVarPcaGateOpen_ && numSHCoeffs > 1) {
+      double scaleTab[16][3];
+      for (int b = 0; b < 16; ++b)
+        scaleTab[b][0] = scaleTab[b][1] = scaleTab[b][2] = 1.0;
+      int kiF = 0;
+      for (size_t gi = 0; gi < shParams.shTrGrpRow_.size(); ++gi) {
+        if (shParams.shKltFlag_[gi] != 1) continue;
+        auto&       klt = shParams.shKltParams_[kiF++];
+        const auto& grp = shParams.shTrGrpRow_[gi];
+        if (grp.size() == 1 && grp[0] == 0) continue;
+        int fullSize = int(grp.size()) * 3;
+        for (int j = 0; j < fullSize; ++j) {
+          double rowL2sq = 0.0;
+          for (int i = 0; i < fullSize; ++i)
+            rowL2sq += klt.eigvec[j][i] * klt.eigvec[j][i];
+          scaleTab[grp[j / 3]][j % 3] = std::sqrt(std::max(rowL2sq, 1e-24));
+        }
+      }
+      Stats acVan;
+      const int acBandCount = std::min(numSHCoeffs, 16);
+      for (int l = 1; l < acBandCount; ++l)
+        for (int ch = 0; ch < 3; ++ch) {
+          const double* buf = &inputAttrBuf[shIndices[l][ch] * pointCount];
+          const double  sc = scaleTab[l][ch];
+          for (int p = 0; p < pointCount; ++p) acVan.update(buf[p] * sc);
+        }
+      int rmin = int(std::floor(acVan.min));
+      int rmax = int(std::ceil(acVan.max));
+      if (rmax <= rmin) rmax = rmin + 1;
+      for (auto& desc : attrDescs) {
+        if (desc.attributeLabel != KnownAttributeLabel::kSH_coefficients) continue;
+        if (int(desc.params.sh_coefficient_label) == 0) continue;
+        int64_t fb = 1ll << desc.params.attr_frac_bits;
+        int64_t bs = (1ll << desc.bitdepth) - 1ll;
+        int64_t dcode = int64_t(rmax) - int64_t(rmin);
+        int64_t asc = (dcode * fb + (bs >> 1)) / bs;
+        if (asc <= 0) asc = 1;
+        desc.params.attr_offset = rmin;
+        desc.params.attr_scale_minus1 = asc - 1;
+      }
+    }
+
     if (enableShNonUniformQuantization) {
       extractSHQuantRegions(witSHCoefficients, shView, pointCount, attrDescs);
 
-      std::array<ShQuantRegion, 48> shRegions;
-      std::array<int, 48>           ssBaseOffsets;
-      const uint32_t bitDepth_sh = attrDescs[0].bitdepth;
-      const uint32_t max_index_sh = 1u << bitDepth_sh;
-
+      std::array<ShQuantRegion, AttributeParameters::kShDrNumSlots> shRegions;
+      const bool shAcScalingEnabled = shParams.attr_ac_scaling_enabled_flag;
       for (int l = 0; l < numSHCoeffs; ++l) {
         auto& desc = getAttributeDescription(attrDescs, KnownAttributeLabel::kSH_coefficients, l);
         auto& params = desc.params;
-        int tpOffset = 0;
-        int ssOffset = 0;
-        for (int ch = 0; ch < 3; ++ch) {
-          int idx = l * 3 + ch;
-          int M = params.shNumRegionsMinus1_[ch];
+        const uint32_t bitDepth_sh = (shAcScalingEnabled && l > 0) ? params.attr_frac_bits : shParams.attr_frac_bits;
+        const uint32_t max_index_sh = 1u << bitDepth_sh;
+        for (int c = 0; c < 3; ++c) {
+          int idx = l * 3 + c;
+          int M = params.shNumRegionsMinus1_[c];
           double minLim = params.attr_offset;
           double maxLim = params.attr_offset + params.attr_scale_minus1 + 1;
           double Range = maxLim - minLim;
           double d_code = std::round(Range * (1 << bitDepth_sh) / (double)(1ull << params.attr_frac_bits));
-          ssBaseOffsets[idx] = ssOffset;
 
           if (M > 0) {
             shRegions[idx].tp_int.resize(M);
@@ -1689,18 +1916,17 @@ ply::read(
             shRegions[idx].region_start_real[0] = minLim;
 
             for (int m = 0; m < M; ++m) {
-              int tp_val = params.shTransitionPoints_[tpOffset + m];
+              int tp_val = params.shTransitionPoints_[c][m];
               shRegions[idx].tp_int[m] = tp_val;
               shRegions[idx].region_start_real[m + 1] = tp_val * d_code / static_cast<double>(max_index_sh) + minLim;
             }
             shRegions[idx].min_offset =
-                shRegions[idx].tp_int[0] - (shRegions[idx].region_start_real[1] - minLim) / params.shStepSizes_[ssOffset];
+                shRegions[idx].tp_int[0] - (shRegions[idx].region_start_real[1] - minLim) / params.shStepSizes_[c][0];
+
             const double sh_scale = (1 << SH_SCALE);
-            params.min_offset_fxp[ch] = (int64_t)round(shRegions[idx].min_offset * sh_scale);
-            params.min_offset[ch] = shRegions[idx].min_offset;
+            params.min_offset_fxp[c] = (int64_t)round(shRegions[idx].min_offset * sh_scale);
+            params.min_offset[c] = shRegions[idx].min_offset;
           }
-          tpOffset += M;
-          ssOffset += M + 1;
         }
       }
 
@@ -1712,16 +1938,16 @@ ply::read(
         int64_t offset = params.attr_offset;
         int64_t attr_scale = params.attr_scale_minus1 + 1;
 
-        for (int ch = 0; ch < 3; ++ch) {
-          double* src = &inputAttrBuf[getAttrIndices(desc, properties)[ch] * pointCount];
+        for (int c = 0; c < 3; ++c) {
+          double* src = &inputAttrBuf[getAttrIndices(desc, properties)[c] * pointCount];
           auto& dst = cloud.getAttrVec(desc);
 
           for (int i = 0; i < pointCount; i++) {
             double attr = src[i];
-            int idx = l * 3 + ch;
-            int M = params.shNumRegionsMinus1_[ch];
+            int idx = l * 3 + c;
+            int M = params.shNumRegionsMinus1_[c];
             if (M == 0) {
-              dst[i][ch] = attr_t(PCCClip(
+              dst[i][c] = attr_t(PCCClip(
                   std::llround((attr - offset) * attr_frac_bits_scale / attr_scale),
                   0, clip_max));
             } else {
@@ -1729,10 +1955,10 @@ ply::read(
               int region_idx = 0;
               while (region_idx < M && attr > reg.region_start_real[region_idx + 1]) { region_idx++; }
               double prev_idx = (region_idx > 0) ? reg.tp_int[region_idx - 1] : reg.min_offset;
-              double step_vec = params.shStepSizes_[ssBaseOffsets[idx] + region_idx];
+              double step_vec = params.shStepSizes_[c][region_idx];
               double base_real = reg.region_start_real[region_idx];
               double q_vals = std::round((attr - base_real) / step_vec + prev_idx);
-              dst[i][ch] = attr_t(PCCClip(static_cast<int64_t>(q_vals), int64_t(0), clip_max));
+              dst[i][c] = attr_t(PCCClip(static_cast<int64_t>(q_vals), int64_t(0), clip_max));
             }
           }
         }
@@ -1807,7 +2033,7 @@ ply::read(
       }
     }
   }
-  
+
   clock->stop();
 
   return true;

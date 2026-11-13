@@ -145,6 +145,18 @@ bool sphericalHarmonicsTransform(bool withSHCoefficients, SHBufferView& shView,
 bool sphericalHarmonicsInvTransform(bool withSHCoefficients, SHBufferView& shView,
     size_t pointCount, AttributeParameters& params, bool convertColourspace);
 
+// Compute per-KLT-group retain counts (variance threshold).
+void computeShDimensionReductionParams(AttributeParameters& params);
+
+// Zero non-retained components in shView. 
+void applyShDimensionReduction(SHBufferView& shView, size_t pointCount,
+    const AttributeParameters& params);
+
+// Build the retained-component mask (kShDrNumSlots) from the DR params; used
+// by NQ skip to zero the M of non-retained components. 
+void buildShDimRedRetainedMask(const AttributeParameters& params,
+    std::vector<bool>& mask);
+
 // Original GSPoint-based interface (deprecated, kept for backward compatibility)
 bool extractSHQuantRegions(bool withSHCoefficients, const std::vector<GSPoint>& gsBuf,
     size_t pointCount, std::vector<AttributeDescription>& attrDescs,
@@ -171,6 +183,10 @@ void quantizeScalePowerTransform(
 void inverseScalePowerTransform(
     const AttributeDescription& desc, const Vec3<attr_t>* src,
     Vec3<float>* dst, int pointCount);
+
+// Inverse power transform for a single quantized code value (per component).
+double inverseScalePowerTransformValue(
+    const AttributeDescription& desc, int c, int code);
 
 namespace ply {
 
@@ -223,7 +239,9 @@ namespace ply {
     std::vector<AttributeDescription>& attrDescs,
     bool convertColourspace,
     bool externalPrePost,
-    Stopwatch* clock
+    Stopwatch* clock,
+    bool convertOpacityLogitToLinear = false,
+    bool enableOpacityDeadZone = true
   );
   
   enum class Format { ASCII, BINARY };
@@ -285,11 +303,12 @@ namespace ply {
     std::string name;
     KnownAttributeLabel attrLabel;
     int channel;
+    int maxChannel;
     PlyType type;
     int attr_idx;
   };
 
-  bool stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx);
+  bool stringToAttributeLabelAndChannel(const std::string& propName, KnownAttributeLabel& kAttrLabel, int& channelIdx, int& maxChannelIdx);
 
   bool parseHeader(std::ifstream& ifs, PCCPointSet3& cloud, Format& format, std::vector<PropertyInfo>& properties);
 
@@ -312,6 +331,19 @@ namespace ply {
     std::vector<double>& inputAttrBuf,
     std::vector<AttributeDescription>& attrDescs, 
     std::vector<PropertyInfo>& properties);
+
+  // Converts opacity from the raw logit domain (as stored by 3DGS PLY
+  // files) to linear [0,1] domain prior to quantization.  The inverse
+  // (linear -> logit) is applied in ply::write.  apsList (when provided)
+  // supplies the configured QP so the decision can be rate-aware.
+  bool
+  convertOpacity (
+    int pointCount,
+    std::vector<double>& inputAttrBuf,
+    std::vector<AttributeDescription>& attrDescs,
+    std::vector<PropertyInfo>& properties,
+    bool convertLogitToLinear = false,
+    bool enableDeadZone = true);
 
   bool
   analyzeMinMax (
