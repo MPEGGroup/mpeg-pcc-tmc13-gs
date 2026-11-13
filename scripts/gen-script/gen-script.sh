@@ -50,7 +50,7 @@ WRITE() { echo "$2" >> "$1"; }
 MKDIRCK() { [[ -d "$1" ]] || mkdir -p "$1"; }
 
 ## Experiment name
-JOBNAME="TM13-GS-v3.0-rc2"
+JOBNAME="TM13-GS-v4.0-rc1"
 
 ## Encoder flags
 enc_flags=""

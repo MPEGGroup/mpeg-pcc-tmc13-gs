@@ -241,10 +241,10 @@ All simulation outputs are organized under:
     │   ├── ...                                   
     │   └── ManWithFruit
     └── metrics/
-        ├── 1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs-TM13-GS-v3.0-rc2.csv
-        ├── 1F_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs-TM13-GS-v3.0-rc2.csv
+        ├── 1F_TMC13-GS-octree-hybrid-lossless-geom-lossy-attrs-TM13-GS-v4.0-rc1.csv
+        ├── 1F_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs-TM13-GS-v4.0-rc1.csv
         │   # Raw results data in CSV format
-        └── 1F_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs-TM13-GS-v3.0-rc2.xlsm
+        └── 1F_TMC13-GS-octree-predlift-lossless-geom-lossless-attrs-TM13-GS-v4.0-rc1.xlsm
             # XLSM comparing Anchor vs Proposed results
 ```
 

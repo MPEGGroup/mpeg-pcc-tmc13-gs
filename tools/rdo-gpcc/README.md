@@ -54,7 +54,7 @@ This project depends on the following third-party libraries. Clone and build eac
 
 | Library | Repository | Tested version |
 |---|---|---|
-| mpeg-pcc-tmc13-gs | https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs | `release-v3.0-rc2` |
+| mpeg-pcc-tmc13-gs | https://git.mpeg.expert/MPEG/3dgh/g-pcc/software/tm/mpeg-pcc-tmc13-gs | `release-v4.0-rc1` |
 | mpeg-gsc-metrics | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-metrics | `release_mpeg155` |
 | mpeg-gsc-tools | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-tools | `release_mpeg155` |
 | mpeg-gsc-importance | https://git.mpeg.expert/MPEG/Explorations/GSC/gsc-software/mpeg-gsc-importance | `release_mpeg155` |
