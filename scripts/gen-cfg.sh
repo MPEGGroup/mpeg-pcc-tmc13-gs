@@ -102,6 +102,15 @@ if [[ -n "$frame_id" ]]; then
 	cfg_octree_predlift=(
 		octree-predt-ctc-lossless-geom-lossless-attrs-frameid.yaml
 	)
+
+	cfg_predgeom_hybrid=(
+		octree-hybrid-ctc-lossless-geom-lossy-attrs-frameid.yaml
+		cfg-predgeom.yaml
+	)
+	cfg_predgeom_predlift=(
+		octree-predt-ctc-lossless-geom-lossless-attrs-frameid.yaml
+		cfg-predgeom.yaml
+	)
 fi
 
 do_one_cfgset() {

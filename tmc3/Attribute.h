@@ -135,4 +135,22 @@ int estimateDist2(
 
 //============================================================================
 
+void applyShAcInterAttributeScaling(
+  pcc::PCCPointSet3& pointCloud,
+  const std::vector<AttributeDescription>& attributeSets,
+  bool isForwardTransform);
+
+// Validate the attribute order required by SH AC inter-attribute scaling:
+// opacity and scale must precede the SH coefficients attribute. Returns false
+// (after reporting an error) when a required attribute is missing or ordered
+// incorrectly.
+bool validateShAcScalingAttributeOrder(
+  const std::vector<AttributeDescription>& attributeSets);
+
+// Returns true when SH AC scaling is enabled for the given attribute
+// (i.e. it is an SH coefficient attribute with the scaling flag set).
+bool isShAcScalingEnabled(const AttributeDescription& attributeSet);
+
+//============================================================================
+
 }  // namespace pcc

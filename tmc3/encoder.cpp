@@ -46,6 +46,7 @@
 #include "geometry_params.h"
 #include "hls.h"
 #include "pointset_processing.h"
+#include "RAHT.h"
 #include "geometry.h"
 #include "geometry_octree.h"
 #include "geometry_predictive.h"
@@ -83,6 +84,54 @@ PCCTMC3Encoder3::PCCTMC3Encoder3() : _frameCounter(-1)
 
 PCCTMC3Encoder3::~PCCTMC3Encoder3() = default;
 
+static int
+chooseFpBitsMinExact(double m, int maxBits = 16)
+{
+  for (int b = 0; b <= maxBits; ++b) {
+    const double x = (m - 1.0) * (1 << b);
+
+    if (std::abs(x - std::round(x)) < 1e-12)
+      return b;
+  }
+
+  return maxBits;
+}
+
+static
+void deriveGlobalScale(
+  double seqGeomScale,
+  double codedGeomScale,
+  SequenceParameterSet::GlobalScale& globalScale)
+{
+  const double val = seqGeomScale / codedGeomScale;
+
+  int exp = static_cast<int>(std::floor(std::log2(val)));
+  const double mant = val / std::ldexp(1.0, exp);
+  int fpBits = chooseFpBitsMinExact(mant, 16);
+
+  int rem =
+    static_cast<int>(
+      std::llround((mant - 1.0) * (1 << fpBits)));
+
+  const int maxRem = (1 << fpBits) - 1;
+
+  if (rem > maxRem) {
+    ++exp;
+    rem = 0;
+  }
+  
+  globalScale.numeratorMulLog2 = exp;
+  globalScale.denominatorLog2 = fpBits;
+  globalScale.numeratorModDenominator = rem;
+
+  const double recon =  (1.0 + globalScale.numeratorModDenominator / double(1 << globalScale.denominatorLog2)) 
+                        * std::ldexp(1.0, globalScale.numeratorMulLog2);
+
+  assert(globalScale.numeratorMulLog2 >= 0);
+  assert(globalScale.denominatorLog2 >= 0);
+  assert(std::abs(recon - val) < 1e-12);
+}
+
 //============================================================================
 int
 PCCTMC3Encoder3::compress(
@@ -91,6 +140,8 @@ PCCTMC3Encoder3::compress(
   PCCTMC3Encoder3::Callbacks* callback,
   CloudFrame* reconCloud)
 {
+  params->pruningPostPartitionRemovedPointCount = 0;
+
   // start of frame
   _frameCounter++;
 
@@ -142,43 +193,10 @@ PCCTMC3Encoder3::compress(
       int64_t seqSizeGlobal = (seqMaxGlobal - seqOriginGlobal);
 
       params->codedGeomScale = (double)std::pow(2, params->geomMinMaxBitDepth ) / (inputscale*(double)seqSizeGlobal);
-      params->sps.globalScale = Rational(params->seqGeomScale / params->codedGeomScale);
-
-      
-
-      const double val = params->seqGeomScale / params->codedGeomScale;  
-
-      int exp = static_cast<int>(std::floor(std::log2(val)));
-      const double mant = val / std::ldexp(1.0, exp);  
-
-      auto choose_fp_bits_min_exact = [](double m, int maxBits = 16) -> int {
-        for (int b = 0; b <= maxBits; ++b) {
-          const double x = (m - 1.0) * (1 << b);
-          if (std::abs(x - std::round(x)) < 1e-12)
-            return b;
-        }
-        return maxBits;  
-      };
-
-      int fp_bits = choose_fp_bits_min_exact(mant, 16);
-      int rem = static_cast<int>(std::llround((mant - 1.0) * (1 << fp_bits)));
-
-      const int maxRem = (1 << fp_bits) - 1;
-      if (rem > maxRem) {
-        // carry into exponent
-        ++exp;
-        rem = 0;
+      if (params->codedGeomScale > params->seqGeomScale) {
+        params->codedGeomScale = params->seqGeomScale;
       }
-
-      params->sps.globalScale.numeratorMulLog2 = exp;     // mul_log2 (ue)
-      params->sps.globalScale.denominatorLog2 = fp_bits;  // fp_bits (ue)
-      params->sps.globalScale.numeratorModDenominator = rem;  // rem     (u(fp_bits))
-
-      const double recon =  (1.0 + params->sps.globalScale.numeratorModDenominator / double(1 << params->sps.globalScale.denominatorLog2)) * std::ldexp(1.0, params->sps.globalScale.numeratorMulLog2);
-
-      assert(params->sps.globalScale.numeratorMulLog2 >= 0);
-      assert(params->sps.globalScale.denominatorLog2 >= 0);
-      assert(std::abs(recon - val) < 1e-12);
+      deriveGlobalScale(params->seqGeomScale, params->codedGeomScale, params->sps.globalScale);
 
       for (int k = 0; k < 3; ++k) {
         params->sps.seqBoundingBoxOrigin[k] = (int)seqOriginGlobal* inputscale;
@@ -186,16 +204,10 @@ PCCTMC3Encoder3::compress(
       }
 
       auto gs = Rational(params->sps.globalScale);  
-      int64_t L = gs.numerator; 
-      
-      seqOriginGlobal *= inputscale;
-      seqMaxGlobal *= inputscale;
-      seqSizeGlobal *= inputscale;
 
       for (int k = 0; k < 3; ++k) {
-        _originInSeqCoords_rem[k] = (int)(seqOriginGlobal % L);
-        _originInCodingCoords[k] = (double)seqOriginGlobal;
-        _originInCodingCoords[k] /= (double)gs; 
+        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k] / (double)gs;
+        _originInSeqCoords_rem[k] = params->sps.seqBoundingBoxOrigin[k] - ((_originInCodingCoords[k] * (double)gs));
       }
     }
     else{    
@@ -216,16 +228,10 @@ PCCTMC3Encoder3::compress(
         // as P_c is reconstructed as (0,0,0):
         //   0 = P_c * globalScale + seqOrigin
         auto gs = Rational(params->sps.globalScale);
-        /* int rem = params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
-      rem += rem < 0 ? gs.numerator : 0;
-      params->sps.seqBoundingBoxOrigin[k] -= rem;
-      params->sps.seqBoundingBoxSize[k] += rem;*/
-        _originInSeqCoords_rem[k] =
-          params->sps.seqBoundingBoxOrigin[k] % gs.numerator;
-
         // Convert the origin to coding coordinate system
-        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k];
-        _originInCodingCoords[k] /= double(gs);
+        _originInCodingCoords[k] = params->sps.seqBoundingBoxOrigin[k] / (double)gs;
+        _originInSeqCoords_rem[k] = params->sps.seqBoundingBoxOrigin[k] - ((_originInCodingCoords[k] * (double)gs));
+
       }
     }
 
@@ -284,6 +290,7 @@ PCCTMC3Encoder3::compress(
   // initial geometry IDs
   _tileId = 0;
   _sliceId = 0;
+  _scoreSliceId = -1;
   _sliceOrigin = Vec3<int>{0};
   _firstSliceInFrame = true;
 
@@ -305,12 +312,41 @@ PCCTMC3Encoder3::compress(
   PartitionSet partitions;
   SrcMappedPointSet quantizedInput = quantization(inputPointCloud);
 
+  // Fully-discarded SH bands (no retained component) force DADU with a 0 default.
+  // Must run before the SPS write below so attr_default_value lands in the SPS.
+  for (int attrIdx = 0; attrIdx < (int)_sps->attributeSets.size(); attrIdx++) {
+    auto& attr_sps = const_cast<AttributeDescription&>(_sps->attributeSets[attrIdx]);
+    if (attr_sps.attributeLabel.known_attribute_label != KnownAttributeLabel::kSH_coefficients)
+      continue;
+    const AttributeParameters* dr = &attr_sps.params;
+    for (const auto& a : _sps->attributeSets) {
+      if (a.attributeLabel.known_attribute_label == KnownAttributeLabel::kSH_coefficients
+          && int(a.params.sh_coefficient_label) == 0) { dr = &a.params; break; }
+    }
+    if (!dr->enableShDimensionReduction_
+        || dr->shNumRetainComponents_.empty())
+      continue;
+    const int shBand = int(attr_sps.params.sh_coefficient_label);
+    // Zero-out keeps the source layout, so a band is skippable only when none
+    // of its own components is retained.
+    bool skipBand = true;
+    for (size_t g = 0; g < dr->shNumRetainComponents_.size() && skipBand; ++g) {
+      const int retain = dr->shNumRetainComponents_[g];
+      const auto& groupidx = dr->shTrGrpRow_[g];
+      for (int j = 0; j < retain; ++j) {
+        if (groupidx[j / 3] == shBand) { skipBand = false; break; }
+      }
+    }
+    if (skipBand && dr->enableShDimensionReductionDaduSkip_) {
+      params->attr_DU_modes[attrIdx] = 2;  // DADU
+      attr_sps.params.attr_default_value.assign(3, 0);
+      attr_sps.params.input_attr_default_value.assign(3, 0.0);
+    }
+  }
+
   // write out all parameter sets prior to encoding
   callback->onOutputBuffer(write(*_sps));
   callback->onOutputBuffer(write(*_sps, *_gps));
-  for (auto aps : _aps) {
-    callback->onOutputBuffer(write(*_sps, *aps));
-  }
 
   std::vector<std::vector<int32_t>> tileMaps;
   if (params->partition.tileSize) {
@@ -409,7 +445,8 @@ PCCTMC3Encoder3::compress(
 
       // don't partition if partitioning would result in a single slice.
       auto partitionMethod = params->partition.method;
-      if (tileCloud.getPointCount() < params->partition.sliceMaxPoints)
+      if (params->partition.method != PartitionMethod::kImportanceScore
+          && tileCloud.getPointCount() < params->partition.sliceMaxPoints)
         partitionMethod = PartitionMethod::kNone;
 
       // use the largest trisoup node size as a partitioning boundary for
@@ -445,7 +482,28 @@ PCCTMC3Encoder3::compress(
       case PartitionMethod::kNpoints:
         curSlices = partitionByNpts(params->partition, tileCloud, tile_id);
         break;
+      case PartitionMethod::kImportanceScore:
+        curSlices = partitionByImportanceScore(
+          params->partition, tileCloud, tile_id);
+        {
+          size_t keptPoints = 0;
+          for (const auto& slice : curSlices)
+            keptPoints += slice.pointIndexes.size();
+          params->pruningPostPartitionRemovedPointCount +=
+            tileCloud.getPointCount() - keptPoints;
+        }
+        break;
       }
+      
+      std::vector<Partition> refinedSlices;
+      for (int i = 0; i < curSlices.size(); i++) {
+        splitSliceByExtentRecursive(
+          tileCloud,
+          curSlices[i],
+          refinedSlices);
+      }
+      curSlices.swap(refinedSlices);
+
       // Map slice indexes to tile indexes(the original indexes)
       for (int i = 0; i < curSlices.size(); i++) {
         for (int p = 0; p < curSlices[i].pointIndexes.size(); p++) {
@@ -459,6 +517,18 @@ PCCTMC3Encoder3::compress(
     std::cout << "Slice number: " << partitions.slices.size() << std::endl;
   } while (0);
 
+  if (params->maxRahtPrecisionDerivationEnabled) {
+    int maxSlicePoints = 0;
+    for (const auto& partition : partitions.slices) {
+      maxSlicePoints = std::max(maxSlicePoints, int(partition.pointIndexes.size()));
+    }
+    deriveRahtPrecision(params, maxSlicePoints);
+  }
+
+  for (auto aps : _aps) {
+    callback->onOutputBuffer(write(*_sps, *aps));
+  }
+
   // Encode each partition:
   //  - create a pointset comprising just the partitioned points
   //  - compress
@@ -471,6 +541,8 @@ PCCTMC3Encoder3::compress(
       getPartition(inputPointCloud, quantizedInput, partition.pointIndexes);
 
     _tileId = partition.tileId;
+    _scoreSliceId = params->partition.method == PartitionMethod::kImportanceScore
+      ? partition.location[0] : -1;
     _sliceOrigin = sliceCloud.computeBoundingBox().min;
     compressPartition(sliceCloud, sliceSrcCloud, params, callback, reconCloud);
   }
@@ -512,8 +584,7 @@ PCCTMC3Encoder3::deriveParameterSets(EncoderParams* params)
   // NB: globalScale is constrained, eg 1.1 is not representable
   // todo: consider adjusting seqGeomScale to make a valid globalScale
   // todo: consider adjusting codedGeomScale to make a valid globalScale
-  params->sps.globalScale =
-    Rational(params->seqGeomScale / params->codedGeomScale);
+  deriveGlobalScale(params->seqGeomScale, params->codedGeomScale, params->sps.globalScale);
 }
 
 //----------------------------------------------------------------------------
@@ -634,6 +705,52 @@ PCCTMC3Encoder3::fixupParameterSets(EncoderParams* params)
 }
 
 //----------------------------------------------------------------------------
+// Derive the RAHT fixed-point precision signalled by each APS.
+
+void
+PCCTMC3Encoder3::deriveRahtPrecision(
+  const EncoderParams* params, int maxSlicePoints)
+{
+  // Later frames or trisoup may produce larger slices than this frame
+  if (params->frameCount != 1 || _gps->trisoup_enabled_flag)
+    maxSlicePoints =
+      std::max(maxSlicePoints, params->partition.sliceMaxPoints);
+
+  std::vector<int> precisions(_aps.size());
+  int minPrecision = std::numeric_limits<int>::max();
+  for (int attrIdx = 0; attrIdx < _aps.size(); attrIdx++) {
+    const auto& attr_sps = _sps->attributeSets[attrIdx];
+    if (_aps[attrIdx]->attr_encoding != AttributeEncoding::kRAHTransform)
+      continue;
+    precisions[attrIdx] = maxRahtPrecision(maxSlicePoints, attr_sps.bitdepth);
+    minPrecision = std::min(minPrecision, precisions[attrIdx]);
+  }
+
+  // jointly transformed attributes must use the same precision
+  if (params->maxAttributeNumberPerGroup > 1)
+    std::fill(precisions.begin(), precisions.end(), minPrecision);
+
+  for (int attrIdx = 0; attrIdx < _aps.size(); attrIdx++) {
+    auto& attr_aps = *_aps[attrIdx];
+    if (attr_aps.attr_encoding != AttributeEncoding::kRAHTransform)
+      continue;
+
+    // Parameter sets cannot change during the sequence
+    if (_frameCounter > 0) {
+      int precision = attr_aps.raht_fixed_point_precision_minus15 + 15;
+      if (precisions[attrIdx] < precision)
+        throw std::runtime_error(
+          std::string("slice point count (")
+          + std::to_string(maxSlicePoints)
+          + ") exceeds the limit of the signalled RAHT precision");
+      continue;
+    }
+
+    attr_aps.raht_fixed_point_precision_minus15 = precisions[attrIdx] - 15;
+  }
+}
+
+//----------------------------------------------------------------------------
 
 void
 PCCTMC3Encoder3::compressPartition(
@@ -744,6 +861,7 @@ PCCTMC3Encoder3::compressPartition(
     }
   }
 
+  bool shAcScalingEnabled = false;
   // for each attribute
   for (int attrIdx = 0; attrIdx < _sps->attributeSets.size(); attrIdx++ ) {
     const auto& attr_sps = _sps->attributeSets[attrIdx];
@@ -766,8 +884,14 @@ PCCTMC3Encoder3::compressPartition(
     abh.attr_attr_parameter_set_id_v1 = abh.attr_attr_parameter_set_id - (abh.attr_attr_parameter_set_id_extension_2bits << 4);
     abh.attr_sps_attr_idx = attrIdx;
     abh.attr_geom_slice_id = _sliceId;
-    abh.attr_qp_delta_luma = 0;
-    abh.attr_qp_delta_chroma = 0;
+    int sliceQpDeltaLuma = 0;
+    if (params->partition.method == PartitionMethod::kImportanceScore
+        && !attr_enc.qpSliceOffsetsLuma.empty()
+        && _scoreSliceId >= 0
+        && _scoreSliceId < int(attr_enc.qpSliceOffsetsLuma.size()))
+      sliceQpDeltaLuma = attr_enc.qpSliceOffsetsLuma[_scoreSliceId];
+    abh.attr_qp_delta_luma = sliceQpDeltaLuma;
+    abh.attr_qp_delta_chroma = sliceQpDeltaLuma;
     if (params->adjustQPLayerOffsetsEnabled) {
       abh.attr_layer_qp_delta_luma = qpLayers;
       abh.attr_layer_qp_delta_chroma = qpLayers;
@@ -847,6 +971,15 @@ PCCTMC3Encoder3::compressPartition(
       attrEncoder = makeAttributeEncoder();
 
     auto& ctxtMemAttr = _ctxtMemAttrs.at(abh.attr_sps_attr_idx);
+
+    // Only the SH DC attribute that carries the scaling flag triggers the
+    // forward scaling: it must be applied once, just before the SH
+    // coefficients are coded, and only for the attribute that enables it.
+    if (isShAcScalingEnabled(attr_sps)) {
+      shAcScalingEnabled = true;
+      applyShAcInterAttributeScaling(pointCloud, _sps->attributeSets, true);
+    }
+
     attrEncoder->encode(
       *_sps, attr_sps, attr_aps, abh, ctxtMemAttr, pointCloud, payload, &bufferRahtCoefficients);
 
@@ -913,6 +1046,8 @@ PCCTMC3Encoder3::compressPartition(
     }
   }
 
+  if (shAcScalingEnabled)
+    applyShAcInterAttributeScaling(pointCloud, _sps->attributeSets, false);
   // Note the current slice id for loss detection with entropy continuation
   _prevSliceId = _sliceId;
 
@@ -1096,12 +1231,15 @@ PCCPointSet3
 getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 {
   PCCPointSet3 dst;
+  dst.copyAttrIds(src);
   if (src.hasSHCoefficients())
 	  dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(
     src.hasColors(), src.hasReflectances(), src.hasOpacities(),
     src.hasScales(), src.hasScalarRotations(), src.hasRotations(),
     src.hasSHCoefficients(), src.hasFrameIndex());
+  if (src.hasScores())
+    dst.addScores();
 
   int partitionSize = indexes.size();
   dst.resize(partitionSize);
@@ -1137,6 +1275,9 @@ getPartition(const PCCPointSet3& src, const std::vector<int32_t>& indexes)
 			for (int k = 0; k < src.getNumSHCoeffs(); k++)
 				dst.setSHCoefficient(k, i, src.getSHCoefficient(k, inputIdx));
 		}
+
+    if (src.hasScores())
+      dst.setScore(i, src.getScore(inputIdx));
   }
 
   return dst;
@@ -1168,6 +1309,7 @@ getPartition(
   }
 
   PCCPointSet3 dst;
+  dst.copyAttrIds(src);
   if (src.hasSHCoefficients())
     dst.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.addRemoveAttributes(src.hasColors(), src.hasReflectances(),

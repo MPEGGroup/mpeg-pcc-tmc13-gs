@@ -38,6 +38,7 @@
 #include <memory>
 
 #include "PCCTMC3Encoder.h"
+#include "PCCGaussianSplatPruning.h"
 #include "PCCTMC3Decoder.h"
 #include "constants.h"
 #include "ply.h"
@@ -109,11 +110,20 @@ struct Parameters {
   // Filename for saving pre inverse scaled point cloud (decoder).
   std::string preInvScalePath;
 
+  // Filename of the importance scores for each point/splat.
+  std::string importanceScoreTxtPath;
+
   pcc::EncoderParams encoder;
   pcc::DecoderParams decoder;
 
   // perform attribute colourspace conversion on ply input/output.
   bool convertColourspace;
+
+  // convert input opacity from logit to linear domain before coding.
+  bool convertOpacityLogitToLinear;
+
+  // enable hierarchical dead-zone processing for linear opacity coding.
+  bool enableOpacityDeadZone;
 
   // resort the input points by azimuth angle
   bool sortInputByAzimuth;
@@ -539,6 +549,7 @@ operator<<(std::ostream& out, const PartitionMethod& val)
   case PartitionMethod::kOctreeUniform: out << "3 (UniformOctree)"; break;
   case PartitionMethod::kUniformSquare: out << "4 (UniformSquare)"; break;
   case PartitionMethod::kNpoints: out << "5 (NPointSpans)"; break;
+  case PartitionMethod::kImportanceScore: out << "6 (ImportanceScore)"; break;
   default: out << int(val) << " (Unknown)"; break;
   }
   return out;
@@ -685,9 +696,21 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.preInvScalePath, {},
     "Pre inverse scaled pointcloud file path (decoder only)")
 
+  ("importanceScoreTxtPath",
+    params.importanceScoreTxtPath, {},
+    "Path to the file containing importance scores for each splat")
+
   ("convertPlyColourspace",
     params.convertColourspace, true,
     "Convert ply colourspace according to attribute colourMatrix")
+
+  ("convertOpacityLogitToLinear",
+    params.convertOpacityLogitToLinear, false,
+    "Convert ply opacity from logit to linear domain before coding")
+
+  ("enableOpacityDeadZone",
+    params.enableOpacityDeadZone, true,
+    "Enable hierarchical dead-zone processing for linear opacity coding")
 
   ("outputBinaryPly",
     params.outputBinaryPly, false,
@@ -765,6 +788,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params.encoder.geomMinMaxBitDepth, 21,
     "Bitdepth used to geometry min-max quantization.\n")
 
+  ("maxRahtPrecisionDerivationEnabled",
+    params.encoder.maxRahtPrecisionDerivationEnabled, false,
+    "Enable encoder-side derivation of the maximum RAHT fixed-point precision.\n")
+
   (po::Section("Decoder"))
 
   ("skipOctreeLayers",
@@ -834,7 +861,24 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  2: n Uniform-geometry partition bins along the longest edge\n"
     "  3: Uniform geometry partition at n octree depth\n"
     "  4: Uniform square partition\n"
-    "  5: n-point spans of input")
+    "  5: n-point spans of input\n"
+    "  6: importance-score ranked slices")
+
+  ("pruningPercentage",
+    params.encoder.pruningPercentage, 0.0,
+    "Score-based pruning percentage before partitioning")
+
+  ("scoreSlicePointPercentages",
+    params.encoder.partition.scoreSlicePointPercentages, {},
+    "Point percentages per importance-score slice, summing to 100")
+
+  ("scoreSliceSuppressionEnabled",
+    params.encoder.partition.scoreSliceSuppressionEnabled, false,
+    "Drop score slices below scoreSliceMinAvgScore")
+
+  ("scoreSliceMinAvgScore",
+    params.encoder.partition.scoreSliceMinAvgScore, 1e-6,
+    "Minimum average score for a retained slice")
 
   ("partitionOctreeDepth",
     params.encoder.partition.octreeDepth, 1,
@@ -859,10 +903,6 @@ ParseParameters(int argc, char* argv[], Parameters& params)
   ("entropyContinuationEnabled",
     params.encoder.sps.entropy_continuation_enabled_flag, false,
     "Propagate context state between slices")
-
-  ("gsShRemapEnabled",
-    params.encoder.sps.gs_sh_remap_enabled_flag, false,
-    "Controls Remapping of Spherical Harmonics Coefficients.")
 
   ("disableAttributeCoding",
     params.disableAttributeCoding, false,
@@ -1119,6 +1159,14 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     params_attr.desc.bitdepth, 8,
     "Attribute bitdepth")
 
+  ("attr_ac_scaling_enabled_flag",
+    params_attr.desc.params.attr_ac_scaling_enabled_flag, false,
+    "Enable SH AC scaling")
+
+  ("attr_ac_scaling_Coefficient",
+    params_attr.desc.params.attr_ac_scaling_Coefficient,  400,
+    "SH AC scaling Coefficient")
+
   ("defaultValue",
     params_attr.desc.params.input_attr_default_value, {},
     "Default attribute component value(s) in case of data omission")
@@ -1133,7 +1181,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "  8: YCgCo")
 
 	("numSHCoeffBandsMinus1", 
-		params_attr.desc.params.num_sh_coefficient_degrees_minus1, 3,
+		params_attr.desc.params.attr_num_sh_coeff_degrees_minus1, 3,
     "number of SH coefficient bands.\n"
     "   <0: Clipped to 0.\n"
     " 0-16: Force coding up to the specified degree.\n"
@@ -1173,7 +1221,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 		"  1: Degree")
 
   ("gsdTransform2dPresentFlag",
-    params_attr.desc.params.gsdTransform2dPresentFlag_, false,
+    params_attr.desc.params.attr_sh_grp_transform_enabled, false,
     "Enable 2D transform for SH coefficients (0: simple RGB->YUV, 1: 2D KLT/DCT)")
 
   ("dataAdaptiveShTransform",
@@ -1185,20 +1233,44 @@ ParseParameters(int argc, char* argv[], Parameters& params)
     "Enable PCA for DC component of SH")
 
   ("enableShNonUniformQuantization",
-    params_attr.desc.params.enableShNonUniformQuantization_, false,
+    params_attr.desc.params.attr_sh_non_uniform_quant_enabled, false,
     "Enable non-uniform quantization for SH coefficients")
+
+  ("enableShDimensionReduction",
+    params_attr.desc.params.enableShDimensionReduction_, false,
+    "Enable dimension reduction for SH KLT (retain components >= 0.995 variance per group)")
+
+  ("enableShDimensionReductionNqSkipNonretained",
+    params_attr.desc.params.enableShDimensionReductionNqSkipNonretained_, false,
+    "With SH dimRed, signal non-retained components with M=0 (skip their NQ TP/SS)")
+
+  ("enableShDimensionReductionDaduSkip",
+    params_attr.desc.params.enableShDimensionReductionDaduSkip_, true,
+    "With SH dimRed, force fully-discarded SH bands to DADU (attr_DU_modes=2) so their DU payload is not coded")
+
+  ("shDimRedVarianceThreshold",
+    params_attr.desc.params.shDimRedVarianceThreshold_, 0.995,
+    "SH dimRed cumulative-variance ratio for choosing retained components per KLT group (encoder-only, e.g. 0.9, 0.99, 1.0)")
 
   ("shNqRangeMode",
     params_attr.desc.params.shNqRangeMode_, 0,
     "NQ range mode for SH: 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band")
 
+  ("shLowVarPca",
+    params_attr.desc.params.shLowVarPca_, false,
+    "On low-variance SH Coefficients (meanStd < 0.05) keep the grouped PCA")
+
   ("shAdaptiveTpOpt",
     params_attr.desc.params.shAdaptiveTpOptEnabled_, false,
     "Enable adaptive transition point optimization")
 
-  ("nonUniformQuantScale",
-    params_attr.desc.params.scaleParameterPresent, false,
+  ("attrScaleNonUniformQuantEnabled",
+    params_attr.desc.params.attr_scale_non_uniform_quant_enabled, false,
     "Enable non-uniform quantization for Scale pre- and post-processing")
+
+  ("gsShRemapEnabled",
+    params_attr.desc.params.attr_sh_remap_enabled, false,
+    "Controls Remapping of Spherical Harmonics Coefficients.")
 
   ("transformType",
     params_attr.aps.attr_encoding, AttributeEncoding::kPredictingTransform,
@@ -1353,6 +1425,10 @@ ParseParameters(int argc, char* argv[], Parameters& params)
       params_attr.encoder.abh.attr_layer_qp_delta_chroma, {},
       "Attribute's per layer chroma QP offsets")
 
+    ("qpSliceOffsetsLuma",
+      params_attr.encoder.qpSliceOffsetsLuma, {},
+      "Attribute's per importance-score slice luma QP offsets")
+
    ("calcQPLayerOffsetsEnabled",
     params.encoder.adjustQPLayerOffsetsEnabled, false,
     "automatically calculate QP layer offsets.")
@@ -1459,6 +1535,7 @@ ParseParameters(int argc, char* argv[], Parameters& params)
 
   params.encoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
   params.decoder.maxAttributeNumberPerGroup = params.maxAttributeNumberPerGroup;
+  params.encoder.frameCount = params.frameCount;
   // report the current configuration (only in the absence of errors so
   // that errors/warnings are more obvious and in the same place).
   if (err.is_errored)
@@ -1661,18 +1738,18 @@ sanitizeEncoderOpts(
 
 		// Gaussian Splat Compression
 		if (it.first == "opacity") {
+      attrMeta.opacityParameterPresent = true;
 			attr_sps.attr_num_dimensions_minus1 = 0;
 			attr_sps.attributeLabel = KnownAttributeLabel::kOpacity;
 			attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
 		}
 
     if (it.first == "scale") {
+      attrMeta.scaleParameterPresent = true;
       attr_sps.attr_num_dimensions_minus1 = 2;
       attr_sps.attributeLabel = KnownAttributeLabel::kScale;
       attrMeta.cicp_matrix_coefficients_idx = ColourMatrix::kUnspecified;
-    } else {
-      attrMeta.scaleParameterPresent = false;
-    }
+    } 
 
 		if (!it.first.compare(0, 8, "rotation")) {
 			attr_sps.attributeLabel = KnownAttributeLabel::kRotation;
@@ -1698,22 +1775,22 @@ sanitizeEncoderOpts(
       attrMeta.cicpParametersPresent = true;
 
 			if (attrMeta.sh_coefficient_label == SHCoefficientLabel::kBand0_Order0) 
-				attrMeta.sh_dc_coefficient_flag = true;
+				attrMeta.attr_sh_coeff_type = true;
 			else 
-				attrMeta.sh_dc_coefficient_flag = false;
+				attrMeta.attr_sh_coeff_type = false;
 			attrMeta.shCoefficientParameterPresent = true;
 		  
-      int numShBandMinus1 = attrMeta.num_sh_coefficient_degrees_minus1;
+      int numShBandMinus1 = attrMeta.attr_num_sh_coeff_degrees_minus1;
       if (numShBandMinus1 > 16)
-        attrMeta.num_sh_coefficient_degrees_minus1 = 16;
+        attrMeta.attr_num_sh_coeff_degrees_minus1 = 16;
       else if (numShBandMinus1 < 0)
-        attrMeta.num_sh_coefficient_degrees_minus1 = 0;
+        attrMeta.attr_num_sh_coeff_degrees_minus1 = 0;
       
       int numShCoefficients = ((numShBandMinus1+1) * (numShBandMinus1+1));
       if (int(attrMeta.sh_coefficient_label) >= numShCoefficients)
       {
         const auto& SH_label = attr_sps.params.sh_coefficient_label;
-        err.error() << "Invalid numSHCoeffBandsMinus1 ("<< attrMeta.num_sh_coefficient_degrees_minus1 <<") for " << attr_sps << "s_" << (int)SH_label <<".\n";
+        err.error() << "Invalid numSHCoeffBandsMinus1 ("<< attrMeta.attr_num_sh_coeff_degrees_minus1 <<") for " << attr_sps << "s_" << (int)SH_label <<".\n";
       }
 		}
 
@@ -2064,6 +2141,9 @@ SequenceEncoder::SequenceEncoder(Parameters* params) : SequenceCodec(params)
 int
 SequenceEncoder::compress(Stopwatch* clock)
 {
+  if (!validateShAcScalingAttributeOrder(params->encoder.sps.attributeSets))
+    return -1;
+
   bytestreamFile.open(params->compressedStreamPath, ios::binary);
   if (!bytestreamFile.is_open()) {
     return -1;
@@ -2083,6 +2163,42 @@ SequenceEncoder::compress(Stopwatch* clock)
 
 //----------------------------------------------------------------------------
 
+static void
+deriveShAcCenters(
+  const PCCPointSet3& pointCloud, std::vector<AttributeDescription>& attrDescs)
+{
+  if (!pointCloud.hasSHCoefficients() || !pointCloud.getPointCount())
+    return;
+
+  const int numPoints = int(pointCloud.getPointCount());
+  for (auto& desc : attrDescs) {
+    auto& params = desc.params;
+    if (desc.attributeLabel != KnownAttributeLabel::kSH_coefficients || !params.attr_sh_coeff_type 
+      || params.attr_dc_only_present || !params.attr_ac_scaling_enabled_flag) {
+      continue;
+    }
+
+    const int numComponents = desc.attr_num_dimensions_minus1 + 1;
+    const int numSHCoeffs = pointCloud.getNumSHCoeffs();
+    params.attr_ac_scaling_center.resize(numComponents * (numSHCoeffs - 1));
+    for (int m = 1; m < numSHCoeffs; m++) {
+      std::vector<int64_t> sum(numComponents);
+      for (int i = 0; i < numPoints; i++) {
+        auto sh = pointCloud.getSHCoefficient(m, i);
+        for (int k = 0; k < numComponents; k++)
+          sum[k] += sh[k];
+      }
+
+      for (int k = 0; k < numComponents; k++)
+        params.attr_ac_scaling_center[(m - 1) * numComponents + k] =
+          int((sum[k] + numPoints / 2) / numPoints);
+    }
+  }
+}
+
+//----------------------------------------------------------------------------
+bool readImportance(const std::string& fileName, PCCPointSet3& pointcloud);
+
 int
 SequenceEncoder::compressOneFrame(Stopwatch* clock)
 {
@@ -2091,15 +2207,25 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   std::string srcName{expandNum(params->uncompressedDataPath, frameNum)};
   PCCPointSet3 pointCloud;
 
-	for (auto& desc: params->encoder.sps.attributeSets) {
-    pointCloud.activateAttribute(desc);
+	for (int attrId = 0 ; attrId < params->encoder.sps.attributeSets.size() ; attrId++ ) {
+    auto& desc = params->encoder.sps.attributeSets[attrId];
+    pointCloud.activateAttribute(desc, attrId);
 	}
 
   if (
-    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->convertColourspace, params->encoder.externalPrePost, clock)
+    !ply::read(srcName, _plyAttrNames, params->inputScale, pointCloud, params->encoder.sps.attributeSets, params->convertColourspace, params->encoder.externalPrePost, clock, params->convertOpacityLogitToLinear, params->enableOpacityDeadZone)
     || pointCloud.getPointCount() == 0) {
     cout << "Error: can't open input file!" << endl;
     return -1;
+  }
+  
+  if (pointCloud.hasScores() == false &&
+      params->importanceScoreTxtPath.empty() == false) 
+  {
+    std::string importanceName{expandNum(params->importanceScoreTxtPath, frameNum)};
+    if (!readImportance(importanceName, pointCloud)) {
+      return -1;
+    }
   }
 
   // Some evaluations wish to scan the points in azimuth order to simulate
@@ -2108,6 +2234,20 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (params->sortInputByAzimuth)
     sortByAzimuth(
       pointCloud, 0, pointCloud.getPointCount(), 0., _angularOrigin);
+
+    params->encoder.pruningInputPointCount = pointCloud.getPointCount();
+    params->encoder.pruningPrePartitionRemovedPointCount = 0;
+    params->encoder.pruningPostPartitionRemovedPointCount = 0;
+    params->encoder.pruningRemainingPointCount = pointCloud.getPointCount();
+    if (params->encoder.pruningPercentage > 0.) {
+      if (!pruneGaussianSplatsByScore(
+            pointCloud, params->encoder.pruningPercentage)) {
+        cout << "Error: can't apply score-based pruning!" << endl;
+        return -1;
+      }
+      params->encoder.pruningPrePartitionRemovedPointCount =
+        params->encoder.pruningInputPointCount - pointCloud.getPointCount();
+    }
 
   auto hasAttr = [&](const std::string& name) {
       return std::find_if(params->encoder.attributeIdxMap.begin(), 
@@ -2164,8 +2304,18 @@ SequenceEncoder::compressOneFrame(Stopwatch* clock)
   if (params->convertColourspace)
     convertFromGbr(params->encoder.sps.attributeSets, pointCloud);
   scaleAttributesForInput(params->encoder.sps.attributeSets, pointCloud);
+  if (frameNum == params->firstFrameNum)
+    deriveShAcCenters(pointCloud, params->encoder.sps.attributeSets);
 
-  if (params->encoder.sps.gs_sh_remap_enabled_flag) {
+  bool attr_sh_remap_enabled = false;
+  for (auto& desc : params->encoder.sps.attributeSets) {
+    if (desc.attributeLabel == KnownAttributeLabel::kSH_coefficients && 
+        desc.params.attr_sh_coeff_type == 1) {
+      attr_sh_remap_enabled = desc.params.attr_sh_remap_enabled;
+    }
+  }
+
+  if (attr_sh_remap_enabled) {
     const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
     std::vector<std::pair<int, int>> gs_sh_remap_pairs =
       {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 
@@ -2286,7 +2436,7 @@ SequenceDecoder::onOutputCloud(const CloudFrame& frame)
   // copy the point cloud in order to modify it according to the output options
   PCCPointSet3 pointCloud(frame.cloud);
 
-  if (frame.gs_sh_remap_enabled_flag) {
+  if (frame.attr_sh_remap_enabled) {
     const int numShCoeffs = pointCloud.getNumSHCoeffs(); 
     std::vector<std::pair<int, int>> gs_sh_remap_pairs =
       {{ 5, 17}, { 6, 18},  {7, 19}, { 9, 20}, {10, 36}, 
@@ -2535,3 +2685,43 @@ SequenceCodec::scaleAttributesForOutput(
 }
 
 //============================================================================
+
+bool readImportance(const std::string& fileName, PCCPointSet3& pointcloud) {
+  std::ifstream ifs(fileName);
+  if (!ifs.is_open()) {
+    std::cerr << "Error: can not open file (" << fileName << ")" << std::endl;
+    return false;
+  }
+
+  pointcloud.addScores();
+  const size_t pointCount = pointcloud.getPointCount();
+  
+  std::string line;
+  float value = 0.0f;
+  size_t i = 0;
+
+  while (std::getline(ifs, line)) {
+    if (line.empty()) continue;
+
+    std::istringstream iss(line);
+    if (!(iss >> value)) {
+      std::cerr << "Error: invalid float value at line " << (i + 1) << std::endl;
+      return false;
+    }
+
+    if (i >= pointCount) {
+      std::cerr << "Error: too many importance scores in file (" << fileName << ")" << std::endl;
+      return false;
+    }
+    std::cout << value << std::endl;
+    pointcloud.setScore(i++, value);
+  }
+
+  if (i != pointCount) {
+    std::cerr << "Error: the number of importance score values (" << i 
+              << ") is mismatched with the number of point/splat (" << pointCount << ")" << std::endl;
+    return false;
+  }
+
+  return true;
+}

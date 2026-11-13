@@ -9,6 +9,11 @@ categories:
        - !conditional '"${group}" =~ m{^catGS}'
        - mainProfileCompliant: 0
        - gsProfileCompliant: 1
+       - partitionMethod: 6
+       - scoreSlicePointPercentages: '45,30,15,10'
+       - pruningPercentage: 0
+       - scoreSliceSuppressionEnabled: 0
+       - scoreSliceMinAvgScore: 1e-10
        - ""
 
      -
@@ -134,25 +139,63 @@ categories:
        - sequenceScale: 1
        - externalScale: 0
        - geomMinMaxBitDepth: '${geomBD}'
+       - maxRahtPrecisionDerivationEnabled: 1
        - attrFracBits: 12
        - "# All attributes have the same bitdepth"
        - bitdepth: 12
+       - aps_slice_qp_deltas_present_flag: 1
+       - qpSliceOffsetsLuma: '0,2,4,6'
        - calcQPLayerOffsetsEnabled: 0
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}' 
        - numSHCoeffBandsMinus1: 3
-       - ""  
+       - "# SH pre-/post-processing parameters ----------"  
        - gsdTransform2dPresentFlag: 1 
        - dataAdaptiveShTransform: 1
        - enableGsdPcaDc: 1
        - enableShNonUniformQuantization: 1
        - shNqRangeMode: 0 
        - shAdaptiveTpOpt: 1
+       - attr_ac_scaling_enabled_flag: 1
+       - shLowVarPca: 1
+       - "# ---------------------------------------------"  
        - raht_adaptive_block_size_enabled: 1
-       - nonUniformQuantScale: 1
+       - attrScaleNonUniformQuantEnabled: 1
        - colourMatrix: 1
        - ""
+       - "# Opacity ----------"
+       - transformType: 1
+       - qp:
+           r01: 46
+           r02: 38
+           r03: 30
+           r04: 22
+       - attribute: opacity
+
+       - ""
+       - "# Scale ------------"
+       - qp:
+           r01: 38
+           r02: 30
+           r03: 22
+           r04: 14
+       - qpChromaOffset: 0
+       - attribute: scale
+
+       - ""
+       - "# Rotation ---------"
+       - qp:
+           r01: 38
+           r02: 30
+           r03: 22
+           r04: 14
+       - qpChromaOffset: 0
+       - rotationLabel: 0
+       - attribute: rotationXYZ
+
+       - ""
        - "# SH coefficients : band 0 (DC) ----------"
+       - transformType: 0
        - qp:
            r01: 26
            r02: 18
@@ -295,37 +338,6 @@ categories:
        - qpChromaOffset: 4
        - shCoefficientLabel: 15
        - attribute: SHCoefficient15
-
-       - ""
-       - "# Opacity ----------"
-       - transformType: 1
-       - qp:
-           r01: 46
-           r02: 38
-           r03: 30
-           r04: 22
-       - attribute: opacity
-
-       - ""
-       - "# Scale ------------"
-       - qp:
-           r01: 38
-           r02: 30
-           r03: 22
-           r04: 14
-       - qpChromaOffset: 0
-       - attribute: scale
-
-       - ""
-       - "# Rotation ---------"
-       - qp:
-           r01: 38
-           r02: 30
-           r03: 22
-           r04: 14
-       - qpChromaOffset: 0
-       - rotationLabel: 0
-       - attribute: rotationXYZ
 
     decflags:
      - mode: 1

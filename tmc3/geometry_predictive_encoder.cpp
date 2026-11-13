@@ -761,6 +761,7 @@ encodePredictiveGeometry(
 
   // storage for reordering the output point cloud
   PCCPointSet3 outCloud;
+  outCloud.copyAttrIds(cloud);
   if (cloud.hasSHCoefficients())
     outCloud.setNumSHCoeffs(cloud.getNumSHCoeffs());
   outCloud.addRemoveAttributes(cloud.hasColors(), cloud.hasReflectances(), 

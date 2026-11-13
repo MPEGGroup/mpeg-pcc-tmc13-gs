@@ -57,6 +57,17 @@ struct UrahtNode {
 };
 
 //============================================================================
+
+int
+maxRahtPrecision(int numPoints, int bitdepth)
+{
+  int ptCntLog2 = ceillog2(uint32_t(std::max(1, numPoints)));
+  int precision = (126 - 2 * bitdepth - ptCntLog2) >> 2;
+
+  return PCCClip(precision, 15, 21);
+}
+
+//============================================================================
 // remove any non-unique leaves from a level in the uraht tree
 
 int

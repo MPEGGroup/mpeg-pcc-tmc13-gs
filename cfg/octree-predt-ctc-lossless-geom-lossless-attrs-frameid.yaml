@@ -129,6 +129,7 @@ categories:
        - sequenceScale: 1
        - externalScale: 0
        - geomMinMaxBitDepth: '${geomBD}'
+       - maxRahtPrecisionDerivationEnabled: 1
        - attrFracBits: 12
        - "# All attributes have the same bitdepth"
        - bitdepth: 12
@@ -136,7 +137,7 @@ categories:
        - refResolutionWidth: '${width}' 
        - refResolutionHeight: '${height}'    
        - numSHCoeffBandsMinus1: 3
-       - ""       
+       - "# SH pre-/post-processing parameters ----------"
        - gsdTransform2dPresentFlag: 1 
        -
          - !conditional '"${group}" eq "catGS-FF"'
@@ -149,8 +150,10 @@ categories:
        - enableShNonUniformQuantization: 1
        - shNqRangeMode: 0 
        - shAdaptiveTpOpt: 0
+       - shLowVarPca: 1
+       - "# ---------------------------------------------"  
        - raht_adaptive_block_size_enabled: 0
-       - nonUniformQuantScale: 1
+       - attrScaleNonUniformQuantEnabled: 1
        - colourMatrix: 1
        - ""
        - "# SH coefficients : band 0 (DC) ----------"

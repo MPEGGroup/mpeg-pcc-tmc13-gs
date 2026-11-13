@@ -92,6 +92,7 @@ reducePointSet(const PCCPointSet3& src, UniqueFn uniqueFn, QFn qFn)
   }
 
   // Add attribute storage to match src
+  dst.cloud.copyAttrIds(src);
   if (src.hasSHCoefficients())
     dst.cloud.setNumSHCoeffs(src.getNumSHCoeffs());
   dst.cloud.addRemoveAttributes(src.hasColors(), src.hasReflectances(),
@@ -181,12 +182,15 @@ quantizePositions(
   // In case dst and src point clouds are the same, don't destroy src.
   if (&src != dst) {
     dst->clear();
+    dst->copyAttrIds(src);
     if (src.hasSHCoefficients())
       dst->setNumSHCoeffs(src.getNumSHCoeffs());
 		dst->addRemoveAttributes(
       src.hasColors(), src.hasReflectances(), src.hasOpacities(), 
 		  src.hasScales(), src.hasScalarRotations(), src.hasRotations(), 
       src.hasSHCoefficients(), src.hasFrameIndex());
+    if (src.hasScores())
+      dst->addScores();
     dst->resize(numSrcPoints);
   }
 
@@ -245,6 +249,11 @@ quantizePositions(
 		  for (int k = 0; k < src.getNumSHCoeffs(); k++)
 			  dst->setSHCoefficient(k, i, src.getSHCoefficient(k, i));
 	  }
+  }
+
+  if (src.hasScores()) {
+    for (int i = 0; i < numSrcPoints; ++i)
+      dst->setScore(i, src.getScore(i));
   }
 }
 

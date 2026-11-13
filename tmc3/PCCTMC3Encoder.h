@@ -59,6 +59,8 @@ struct EncoderAttributeParams {
   // NB: this only makes sense for setting configurable parameters
   AttributeBrickHeader abh;
 
+  std::vector<int> qpSliceOffsetsLuma;
+
   // Threshold for choosing dist2 out of the population of nearest neighbour
   // distances.
   float dist2PercentileEstimate;
@@ -106,6 +108,9 @@ struct EncoderParams {
   // Maximum number of attribute groups merged into one RAHT encoding pass.
   int maxAttributeNumberPerGroup;
 
+  // Number of frames in the sequence to be coded.
+  int frameCount;
+
   // Encoder specific parameters for geometry
   OctreeEncOpts geom;
 
@@ -114,6 +119,12 @@ struct EncoderParams {
 
   // Parameters that control partitioning
   PartitionParams partition;
+
+  double pruningPercentage = 0.0;
+  size_t pruningInputPointCount = 0;
+  size_t pruningPrePartitionRemovedPointCount = 0;
+  size_t pruningPostPartitionRemovedPointCount = 0;
+  size_t pruningRemainingPointCount = 0;
 
   // attribute recolouring parameters
   RecolourParams recolour;
@@ -152,6 +163,8 @@ struct EncoderParams {
 	int refImageHeight;
 
   int geomMinMaxBitDepth; 
+
+  bool maxRahtPrecisionDerivationEnabled;
 };
 
 //============================================================================
@@ -185,6 +198,8 @@ public:
 
 private:
   void appendSlice(PCCPointSet3& cloud);
+
+  void deriveRahtPrecision(const EncoderParams* params, int maxSlicePoints);
 
   void encodeGeometryBrick(const EncoderParams*, PayloadBuffer* buf);
 
@@ -236,6 +251,8 @@ private:
 
   // Identifies the current tile
   int _tileId;
+
+  int _scoreSliceId;
 
   // Current frame number.
   // NB: only the log2_max_frame_ctr LSBs are sampled for frame_ctr

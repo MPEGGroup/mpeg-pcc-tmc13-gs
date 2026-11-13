@@ -38,6 +38,7 @@
 #include "PCCMath.h"
 
 #include <cstdint>
+#include <limits>
 #include <ostream>
 #include <vector>
 
@@ -234,6 +235,7 @@ enum class AttributeParameterType : uint8_t
   kSHCoefficientLabel = 5,
   kRotationLabel = 6,
   kScaleLabel = 7,
+  kOpacityDomainTransform = 8,
   /* [3, 127] are reserved for future use */
   /* [128, 255] are specified according to the attribute label */
 };
@@ -339,6 +341,7 @@ struct PCCKltParameters {
     std::vector<std::vector<int64_t>> eigvecFxp;
     std::vector<int64_t>              meanFxp;
     std::vector<int64_t>              sigmaFxp;
+    std::vector<double>              eigvals;  // sorted descending, for dimension reduction
 };
 
 //============================================================================
@@ -385,9 +388,13 @@ struct AttributeParameters {
   std::vector<double> input_attr_default_value;
 
   // Gaussian Splat Compression
-  bool sh_dc_coefficient_flag = false;
-  bool dc_only_flag = false;
-  int num_sh_coefficient_degrees_minus1 = -1;
+  bool attr_sh_coeff_type = 1; // SH type: 0 (AC), 1 (DC)
+  bool attr_dc_only_present = false;
+  int attr_num_sh_coeff_degrees_minus1 = -1;
+  bool attr_sh_remap_enabled = false;
+  bool attr_ac_scaling_enabled_flag = false;
+  int attr_ac_scaling_Coefficient = 0;
+  std::vector<int> attr_ac_scaling_center;
 
   bool shCoefficientParameterPresent = false;
   SHCoefficientLabel sh_coefficient_label;
@@ -397,10 +404,17 @@ struct AttributeParameters {
   EulerAngleUnitType euler_angle_unit_type;
 
   bool scaleParameterPresent = false;
+  bool attr_scale_non_uniform_quant_enabled = false;
   PCCScalePowerParameters scalePowerParams;
 
+  // Encoder-decided, content-adaptive: whether opacity was converted from
+  // its raw (logit) domain to linear [0,1] prior to quantization.  Absent
+  // (default false) means opacity is coded directly in its raw domain.
+  bool opacityParameterPresent = false;
+  bool opacityDomainTransformEnabled = false;
+
   // SH 2D Transform
-  bool gsdTransform2dPresentFlag_ = false;
+  bool attr_sh_grp_transform_enabled = false;
   bool dataAdaptiveShTransformEnabled_ = true;
   /// DC PCA Flag
   bool gsdPcaDcFlag_ = false;
@@ -411,16 +425,40 @@ struct AttributeParameters {
   std::vector<PCCKltParameters> shKltParams_;
 
   // SH Non-Uniform Quantization
-  bool enableShNonUniformQuantization_ = false;
+  bool attr_sh_non_uniform_quant_enabled = false;
   bool shAdaptiveTpOptEnabled_ = false;
   int shNqRangeMode_ = 0;  // 0=auto (top10corr>0.5 -> shared, else per-band), 1=shared AC, 2=per-band
-  std::vector<int> shNumRegionsMinus1_;
-  std::vector<int> shTransitionPoints_;
-  std::vector<double> shStepSizes_;
-  std::vector<int64_t> shStepSizesFxp_;
-  int64_t min_offset_fxp[3] = {};
+  int shNumRegionsMinus1_[3];
+  int shNumBitsForTransitionPoint_[3];
+  std::vector<int> shTransitionPoints_[3];
+  std::vector<int64_t> shStepSizesFxp_[3];
+  std::vector<double> shStepSizes_[3];
   double min_offset[3] = {};
-  std::vector<int> shNumBitsForTransitionPoint_;
+
+  // Result of the auto range-mode decision (set at encode time): all AC bands
+  // share one (offset, scale).
+  bool shAcRangeShared_ = false;
+
+  // Parameters of the low variance SH coefficients
+  bool shLowVarPca_ = false;
+  bool shLowVarPcaGateOpen_ = false;
+
+  int64_t min_offset_fxp[3] = {};
+
+
+  // SH Dimension Reduction 
+  bool enableShDimensionReduction_ = false;
+  // Variance ratio deciding retained components per KLT group
+  double shDimRedVarianceThreshold_ = 0.995;
+  bool enableShDimensionReductionNqSkipNonretained_ = false;
+  // With DR, force fully-discarded SH bands to DADU (attr_DU_modes = 2) with a
+  // zero default so their DU payload is not coded.
+  bool enableShDimensionReductionDaduSkip_ = true;
+  std::vector<int> shNumRetainComponents_;  // per shKltParams_ entry
+  int shTotalRetainedComponents_ = 0;
+  static constexpr int kShNumCoefficients = 16;   // SH degree 3 (1+3+5+7)
+  static constexpr int kShNumChannels     = 3;    // RGB colour channels
+  static constexpr int kShDrNumSlots = kShNumCoefficients * kShNumChannels;  // = 48
 
   // Unknown attribute parameters
   std::vector<OpaqueAttributeParameter> opaqueParameters;
@@ -430,7 +468,7 @@ struct AttributeParameters {
     int count = opaqueParameters.size() + cicpParametersPresent
       + scalingParametersPresent + !attr_default_value.empty()
       + shCoefficientParameterPresent + rotationParameterPresent
-      + scaleParameterPresent;
+      + scaleParameterPresent + opacityParameterPresent;
     return count;
   }
 
@@ -445,8 +483,13 @@ struct AttributeParameters {
     rotationParameterPresent = false;
     scaleParameterPresent = false;
     scalePowerParams.clear();
+    opacityParameterPresent = false;
+    opacityDomainTransformEnabled = false;
+    attr_ac_scaling_enabled_flag = false;
+    attr_ac_scaling_Coefficient = 0;
+    attr_ac_scaling_center.clear();
 
-    gsdTransform2dPresentFlag_ = false;
+    attr_sh_grp_transform_enabled = false;
     dataAdaptiveShTransformEnabled_ = false;
     gsdPcaDcFlag_ = false;
     shTrTypeCol_.clear();
@@ -454,14 +497,26 @@ struct AttributeParameters {
     shTrTypeRow_.clear();
     shKltFlag_.clear();
     shKltParams_.clear();
-    enableShNonUniformQuantization_ = false;
+    attr_sh_non_uniform_quant_enabled = false;
     shAdaptiveTpOptEnabled_ = false;
     shNqRangeMode_ = 0;
-    shNumRegionsMinus1_.clear();
-    shNumBitsForTransitionPoint_.clear();
-    shTransitionPoints_.clear();
-    shStepSizes_.clear();
-    shStepSizesFxp_.clear();
+    shAcRangeShared_ = false;
+    for (int c = 0; c < 3; c++) {
+      shNumRegionsMinus1_[c] = -1;
+      shNumBitsForTransitionPoint_[c] = 0;
+      shTransitionPoints_[c].clear();
+      shStepSizes_[c].clear();
+      shStepSizesFxp_[c].clear();
+    }
+
+    enableShDimensionReduction_ = false;
+    enableShDimensionReductionNqSkipNonretained_ = false;
+    enableShDimensionReductionDaduSkip_ = true;
+    shDimRedVarianceThreshold_ = 0.995;
+    shNumRetainComponents_.clear();
+    shTotalRetainedComponents_ = 0;
+    shLowVarPca_ = false;
+    shLowVarPcaGateOpen_ = false;
   }
 };
 
@@ -650,7 +705,6 @@ struct SequenceParameterSet {
   // Indicates that context state may be propagated between slices.
   bool entropy_continuation_enabled_flag;
   
-  bool gs_sh_remap_enabled_flag = false;
 };
 
 //============================================================================

@@ -1,0 +1,11 @@
+./batch_embed_data.sh \
+    --dataset-path /path/to/dataset \
+    --config ./testset_inputs/dataset.config.ctc.sh \
+    --gstools-bin /path/to/gstools \
+    --embed-scores \
+    --scores-subfolder scores \
+    --scores-suffix .impScores.txt \
+    --scores-output-suffix .camerapos.ply \
+    --score-name score \
+    --score-percentile 1.0 \
+    --overwrite
